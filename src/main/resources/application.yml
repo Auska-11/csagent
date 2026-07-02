@@ -1,0 +1,18 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: smart-cs-agent
+
+langchain4j:
+  open-ai:
+    chat-model:
+      api-key: tp-s7zeb8hkmqb7xxmo224kbtp5urwga80eqpy7ir6y5gwhj3un
+      base-url: https://token-plan-sgp.xiaomimimo.com/v1
+      model-name: mimo-v2.5-pro
+      temperature: 0.7
+      max-tokens: 2000
+      timeout: PT60S
+      log-requests: true
+      log-responses: true
