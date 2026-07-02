@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart CS Agent</title>
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-light: #818cf8;
+            --primary-dark: #4f46e5;
+            --bg: #f8fafc;
+            --sidebar-bg: #1e1b4b;
+            --sidebar-text: #e0e7ff;
+            --card: #ffffff;
+            --text: #1e293b;
+            --text-light: #64748b;
+            --border: #e2e8f0;
+            --success: #10b981;
+            --user-bubble: #6366f1;
+            --assistant-bubble: #ffffff;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            height: 100vh;
+            display: flex;
+            color: var(--text);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 280px;
+            background: linear-gradient(180deg, #1e1b4b 0%, #312e81 100%);
+            display: flex;
+            flex-direction: column;
+            padding: 0;
+            box-shadow: 4px 0 20px rgba(0,0,0,0.1);
+        }
+
+        .sidebar-header {
+            padding: 24px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .sidebar-header h2 {
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--sidebar-text);
+            opacity: 0.7;
+            margin-bottom: 4px;
+        }
+
+        .sidebar-header .logo {
+            font-size: 22px;
+            font-weight: 700;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .sidebar-header .logo span {
+            background: linear-gradient(135deg, #818cf8, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .user-section {
+            padding: 20px 16px;
+            flex: 1;
+        }
+
+        .section-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--sidebar-text);
+            opacity: 0.5;
+            margin-bottom: 12px;
+            padding: 0 8px;
+        }
+
+        .user-item {
+            padding: 14px 16px;
+            border-radius: 12px;
+            cursor: pointer;
+            margin-bottom: 6px;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .user-item:hover {
+            background: rgba(255,255,255,0.1);
+        }
+
+        .user-item.active {
+            background: rgba(99, 102, 241, 0.3);
+            box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.5);
+        }
+
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            font-weight: 600;
+            color: white;
+            flex-shrink: 0;
+        }
+
+        .user-avatar.zhang { background: linear-gradient(135deg, #f59e0b, #ef4444); }
+        .user-avatar.li { background: linear-gradient(135deg, #10b981, #06b6d4); }
+
+        .user-info .name {
+            font-weight: 600;
+            color: white;
+            font-size: 14px;
+        }
+
+        .user-info .id {
+            font-size: 11px;
+            color: var(--sidebar-text);
+            opacity: 0.6;
+            margin-top: 2px;
+        }
+
+        /* Debug Panel */
+        .debug-section {
+            padding: 16px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .debug-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 8px;
+            transition: background 0.2s;
+        }
+
+        .debug-toggle:hover {
+            background: rgba(255,255,255,0.1);
+        }
+
+        .debug-toggle span {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--sidebar-text);
+            opacity: 0.7;
+        }
+
+        .debug-toggle .icon {
+            color: var(--sidebar-text);
+            opacity: 0.5;
+            transition: transform 0.3s;
+        }
+
+        .debug-toggle.open .icon {
+            transform: rotate(180deg);
+        }
+
+        .debug-log {
+            background: rgba(0,0,0,0.2);
+            border-radius: 10px;
+            padding: 12px;
+            font-size: 11px;
+            color: var(--sidebar-text);
+            max-height: 180px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            margin-top: 10px;
+            display: none;
+        }
+
+        .debug-log.show {
+            display: block;
+            animation: slideDown 0.3s ease;
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .debug-log .entry {
+            margin-bottom: 6px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            line-height: 1.4;
+        }
+
+        .debug-log .time {
+            color: rgba(255,255,255,0.3);
+            margin-right: 8px;
+        }
+
+        .debug-log .info { color: #818cf8; }
+        .debug-log .success { color: #34d399; }
+        .debug-log .error { color: #f87171; }
+
+        /* Main */
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: var(--bg);
+        }
+
+        .header {
+            background: var(--card);
+            padding: 16px 28px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            backdrop-filter: blur(10px);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .header .badge {
+            padding: 4px 12px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-light);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Chat */
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 28px;
+            scroll-behavior: smooth;
+        }
+
+        .welcome-message {
+            text-align: center;
+            padding: 60px 20px;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .welcome-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        .welcome-message h2 {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text);
+            margin-bottom: 8px;
+        }
+
+        .welcome-message p {
+            color: var(--text-light);
+            font-size: 14px;
+            max-width: 400px;
+            margin: 0 auto;
+            line-height: 1.6;
+        }
+
+        .quick-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 24px;
+            flex-wrap: wrap;
+        }
+
+        .quick-btn {
+            padding: 10px 18px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            font-size: 13px;
+            color: var(--text);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .quick-btn:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15);
+        }
+
+        .message {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 12px;
+            animation: messageIn 0.3s ease;
+        }
+
+        @keyframes messageIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            flex-direction: row-reverse;
+        }
+
+        .msg-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .message.user .msg-avatar {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        }
+
+        .message.assistant .msg-avatar {
+            background: linear-gradient(135deg, #10b981, #06b6d4);
+        }
+
+        .msg-content {
+            max-width: 70%;
+        }
+
+        .msg-bubble {
+            padding: 14px 18px;
+            border-radius: 16px;
+            font-size: 14px;
+            line-height: 1.6;
+            position: relative;
+        }
+
+        .message.user .msg-bubble {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            border-bottom-right-radius: 4px;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        }
+
+        .message.assistant .msg-bubble {
+            background: var(--card);
+            color: var(--text);
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            border: 1px solid var(--border);
+        }
+
+        .msg-time {
+            font-size: 11px;
+            color: var(--text-light);
+            margin-top: 6px;
+            opacity: 0.7;
+        }
+
+        .message.user .msg-time {
+            text-align: right;
+        }
+
+        /* Loading */
+        .typing-indicator {
+            display: none;
+            padding: 0 28px 20px;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .typing-indicator.show {
+            display: flex;
+        }
+
+        .typing-indicator .msg-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #10b981, #06b6d4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        .typing-dots {
+            background: var(--card);
+            padding: 14px 20px;
+            border-radius: 16px;
+            border-bottom-left-radius: 4px;
+            border: 1px solid var(--border);
+            display: flex;
+            gap: 6px;
+        }
+
+        .typing-dots span {
+            width: 8px;
+            height: 8px;
+            background: var(--primary);
+            border-radius: 50%;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+            30% { transform: translateY(-8px); opacity: 1; }
+        }
+
+        /* Input */
+        .input-area {
+            background: var(--card);
+            padding: 20px 28px;
+            border-top: 1px solid var(--border);
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            background: var(--bg);
+            border: 2px solid var(--border);
+            border-radius: 16px;
+            padding: 6px 6px 6px 20px;
+            transition: all 0.3s;
+        }
+
+        .input-wrapper:focus-within {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+        }
+
+        .input-wrapper input {
+            flex: 1;
+            border: none;
+            background: transparent;
+            font-size: 14px;
+            color: var(--text);
+            outline: none;
+            padding: 10px 0;
+        }
+
+        .input-wrapper input::placeholder {
+            color: var(--text-light);
+        }
+
+        .send-btn {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .send-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+        }
+
+        .send-btn:active {
+            transform: translateY(0);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .send-btn svg {
+            width: 18px;
+            height: 18px;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(0,0,0,0.1);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <span>🤖</span>
+                <span>Smart CS Agent</span>
+            </div>
+        </div>
+
+        <div class="user-section">
+            <div class="section-title">选择用户</div>
+            <div id="userList"></div>
+        </div>
+
+        <div class="debug-section">
+            <div class="debug-toggle" onclick="toggleDebug()">
+                <span>调试控制台</span>
+                <span class="icon">▼</span>
+            </div>
+            <div class="debug-log" id="debugLog"></div>
+        </div>
+    </div>
+
+    <div class="main">
+        <div class="header">
+            <div class="header-left">
+                <h1>智能客服</h1>
+                <span class="badge">AI Agent</span>
+            </div>
+            <div class="status-indicator">
+                <span class="status-dot"></span>
+                <span id="status">就绪</span>
+            </div>
+        </div>
+
+        <div class="chat-container" id="chatContainer">
+            <div class="welcome-message" id="welcome">
+                <div class="welcome-icon">👋</div>
+                <h2>欢迎使用智能客服</h2>
+                <p>我是您的 AI 客服助手，可以帮您查询订单、了解商品信息、处理退换货等。</p>
+                <div class="quick-actions">
+                    <button class="quick-btn" onclick="quickSend('帮我查一下订单 ORD-001')">📦 查询订单</button>
+                    <button class="quick-btn" onclick="quickSend('有什么产品推荐吗')">🛍️ 商品咨询</button>
+                    <button class="quick-btn" onclick="quickSend('我想退 ORD-004 这个订单')">↩️ 申请退换</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="typing-indicator" id="loading">
+            <div class="msg-avatar">🤖</div>
+            <div class="typing-dots">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        </div>
+
+        <div class="input-area">
+            <div class="input-wrapper">
+                <input type="text" id="messageInput" placeholder="输入您的消息..." autocomplete="off">
+                <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+                    发送
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentUser = null;
+        let users = [];
+        let debugOpen = false;
+
+        async function loadUsers() {
+            try {
+                const res = await fetch('/api/chat/users');
+                users = await res.json();
+                renderUsers();
+                if (users.length > 0) selectUser(users[0].userId);
+            } catch (err) {
+                console.error('Failed to load users:', err);
+            }
+        }
+
+        function renderUsers() {
+            const container = document.getElementById('userList');
+            container.innerHTML = users.map(u => {
+                const isActive = currentUser?.userId === u.userId;
+                const avatarClass = u.userId === 'USER-001' ? 'zhang' : 'li';
+                const initial = u.name.charAt(0);
+                return `
+                    <div class="user-item ${isActive ? 'active' : ''}" onclick="selectUser('${u.userId}')">
+                        <div class="user-avatar ${avatarClass}">${initial}</div>
+                        <div class="user-info">
+                            <div class="name">${u.name}</div>
+                            <div class="id">${u.userId}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function selectUser(userId) {
+            currentUser = users.find(u => u.userId === userId);
+            renderUsers();
+            addDebugLog('用户: ' + currentUser.name + ' (' + currentUser.userId + ')', 'info');
+        }
+
+        function toggleDebug() {
+            debugOpen = !debugOpen;
+            document.querySelector('.debug-toggle').classList.toggle('open', debugOpen);
+            document.getElementById('debugLog').classList.toggle('show', debugOpen);
+        }
+
+        function quickSend(text) {
+            document.getElementById('messageInput').value = text;
+            sendMessage();
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            if (!message) return;
+
+            // Hide welcome
+            const welcome = document.getElementById('welcome');
+            if (welcome) welcome.style.display = 'none';
+
+            // Add user message
+            addMessage('user', message);
+            input.value = '';
+
+            // Show loading
+            document.getElementById('loading').classList.add('show');
+            document.getElementById('sendBtn').disabled = true;
+            document.getElementById('status').textContent = '思考中...';
+            addDebugLog('发送: ' + message.substring(0, 50) + (message.length > 50 ? '...' : ''), 'info');
+
+            try {
+                const res = await fetch('/api/chat/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message, userId: currentUser?.userId || 'anonymous' })
+                });
+                const data = await res.json();
+                addMessage('assistant', data.reply);
+                addDebugLog('收到回复: ' + data.reply.substring(0, 50) + '...', 'success');
+            } catch (err) {
+                addMessage('assistant', '抱歉，出了点问题，请稍后再试。');
+                addDebugLog('错误: ' + err.message, 'error');
+            }
+
+            document.getElementById('loading').classList.remove('show');
+            document.getElementById('sendBtn').disabled = false;
+            document.getElementById('status').textContent = '就绪';
+        }
+
+        function addMessage(role, content) {
+            const container = document.getElementById('chatContainer');
+            const div = document.createElement('div');
+            div.className = 'message ' + role;
+
+            const avatar = role === 'user' ? (currentUser?.name?.charAt(0) || 'U') : '🤖';
+            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            div.innerHTML = `
+                <div class="msg-avatar">${avatar}</div>
+                <div class="msg-content">
+                    <div class="msg-bubble">${content.replace(/\n/g, '<br>')}</div>
+                    <div class="msg-time">${time}</div>
+                </div>
+            `;
+
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function addDebugLog(text, type = 'info') {
+            const log = document.getElementById('debugLog');
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'entry';
+            entry.innerHTML = `<span class="time">${time}</span> <span class="${type}">${text}</span>`;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        document.getElementById('messageInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        loadUsers();
+    </script>
+</body>
+</html>
