@@ -1,0 +1,45 @@
+# Skill 元数据
+name: customer-service
+version: 1.0.0
+description: 智能客服 Skill，处理订单、产品、退换货等业务
+
+# 能力声明
+capabilities:
+  - name: order_query
+    description: 查询订单状态和物流信息
+    tools:
+      - OrderTools.queryOrderStatus
+      - OrderTools.queryUserOrders
+
+  - name: product_query
+    description: 查询产品信息和搜索产品
+    tools:
+      - ProductTools.queryProductInfo
+      - ProductTools.searchProducts
+
+  - name: return_service
+    description: 退换货申请和查询
+    tools:
+      - ReturnTools.applyReturn
+      - ReturnTools.queryReturnStatus
+
+  - name: user_info
+    description: 查询用户信息
+    tools:
+      - UserTools.queryUserInfo
+
+# 意图分类
+intents:
+  - ORDER_QUERY      # 查询订单
+  - PRODUCT_QUERY    # 查询产品
+  - RETURN_APPLY     # 申请退换货
+  - RETURN_QUERY     # 查询退换货
+  - USER_INFO        # 查询用户信息
+  - CHITCHAT         # 闲聊
+  - OTHER            # 其他
+
+# 配置
+config:
+  max_retries: 3           # 工具调用最大重试次数
+  timeout_ms: 30000        # 工具调用超时时间
+  confidence_threshold: 0.7  # 意图识别置信度阈值
