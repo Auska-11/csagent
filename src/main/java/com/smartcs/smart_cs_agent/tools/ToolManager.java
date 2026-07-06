@@ -37,7 +37,7 @@ public class ToolManager {
             case "return_query":
                 return returnTools.queryReturnStatus((String) arguments.get("return_id"));
             case "user_lookup":
-                return userTools.queryUserInfo((String) arguments.get("token"));
+                return userTools.queryUserInfo((String) arguments.getOrDefault("token", arguments.get("user_id")));
             default:
                 return "Unknown capability: " + capability;
         }

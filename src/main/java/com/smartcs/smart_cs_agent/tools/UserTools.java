@@ -41,13 +41,16 @@ public class UserTools {
      */
     @Tool("query user info by token, return user id, name and phone")
     public String queryUserInfo(
-            @P("user login token") String token) {
+            @P("user login token or user id") String token) {
 
-        // 通过 token 查找用户
+        // 通过 token 查找用户；演示前端当前传 userId，这里兼容两种身份标识。
         User user = userRepository.findByToken(token);
+        if (user == null) {
+            user = userRepository.findByUserId(token);
+        }
 
         if (user == null) {
-            return "User not found, please check the token.";
+            return "User not found, please check the token or user id.";
         }
 
         // 返回用户信息
