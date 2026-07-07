@@ -141,6 +141,7 @@ Adapter 的好处是：
   - Monitor 聚合反馈数和有用率。
   - 无用反馈自动生成 Eval 待审核候选样本。
   - 候选样本可以人工审核为 `APPROVED` 或 `REJECTED`。
+  - 审核通过的候选样本可以导出为 Eval case 草稿。
 - 前端增加 Monitor 卡片。
 
 当前第一版实现：
@@ -151,15 +152,19 @@ Adapter 的好处是：
 - 新增 `FeedbackRating` 和 `FeedbackRecord`，记录用户有用/无用反馈。
 - 新增 `FeedbackEvalCandidate`，把无用反馈沉淀成待审核评测候选。
 - 新增 `FeedbackEvalCandidateStatus`，明确候选样本审核状态。
+- 新增 `FeedbackEvalCaseDraft`，承载审核通过后的评测草稿。
 - 新增 `GET /api/monitor/summary`。
 - 新增 `POST /api/monitor/feedback`。
 - 新增 `GET /api/monitor/feedback/candidates`。
 - 新增 `POST /api/monitor/feedback/candidates/{candidateId}/review`。
+- 新增 `GET /api/monitor/feedback/candidates/export`。
 - `ChatApiController` 在每轮聊天成功后调用 `monitorService.recordTurn(response)`。
 - 前端 Agent Inspector 新增 Monitor Tab。
 - 前端普通 Agent 回复下方新增有用/无用反馈按钮。
 - 前端 Monitor 面板新增 Eval Candidates 列表。
 - 前端 Monitor 面板新增候选样本通过/拒绝审核按钮。
+- 前端 Monitor 面板新增导出样本草稿按钮。
+- Monitor Summary 新增 `PENDING_REVIEW` / `APPROVED` / `REJECTED` 候选样本状态数量。
 - 新增 `MonitorServiceTest` 和 `MonitorControllerTest`。
 
 ### 4.3 验收标准
@@ -171,6 +176,7 @@ Adapter 的好处是：
 - 用户点击反馈后，Monitor 能展示反馈总数、有用率和最近反馈。
 - 用户点击无用后，Monitor 能展示待审核 Eval 候选样本。
 - 用户审核候选样本后，Monitor 能展示审核状态和备注。
+- 审核通过的样本能导出为 JSON 草稿。
 
 ## 5. 模块三：RAG 检索增强
 
@@ -342,7 +348,7 @@ Adapter 的好处是：
 | 模块 | 状态 |
 | --- | --- |
 | 工具协议与 MCP 边界增强 | 第一版已完成 |
-| Monitor 指标与 Eval 闭环增强 | Trace 指标、用户反馈、候选样本和审核第一版已完成 |
+| Monitor 指标与 Eval 闭环增强 | Trace 指标、用户反馈、候选样本、审核和草稿导出第一版已完成 |
 | RAG 检索增强 | 第一版已完成 |
 | 多轮记忆管理升级 | 第一版已完成 |
 | LLM-as-Judge 评测 | 第一版已完成 |

@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.monitor.FeedbackEvalCaseDraft;
 import com.smartcs.smart_cs_agent.monitor.FeedbackEvalCandidate;
 import com.smartcs.smart_cs_agent.monitor.FeedbackEvalCandidateStatus;
 import com.smartcs.smart_cs_agent.monitor.FeedbackRating;
@@ -98,5 +99,16 @@ public class MonitorController {
         );
 
         return new EvalCandidateReviewResponse(true, "Eval candidate reviewed", candidate);
+    }
+
+    /**
+     * 导出审核通过的 Eval case 草稿。
+     *
+     * 这个接口不会直接修改测试资源文件，只返回 JSON 草稿。
+     * 这样可以避免把不完整样本自动写进正式评测集。
+     */
+    @GetMapping("/feedback/candidates/export")
+    public List<FeedbackEvalCaseDraft> exportApprovedEvalCaseDrafts() {
+        return monitorService.exportApprovedEvalCaseDrafts();
     }
 }

@@ -20,7 +20,8 @@
   -> 自动生成 FeedbackEvalCandidate
   -> Monitor 面板展示待审核候选样本
   -> 人工审核为 APPROVED / REJECTED
-  -> 后续把 APPROVED 样本整理成正式 Eval case
+  -> 导出 APPROVED 样本为 Eval case 草稿
+  -> 后续人工补齐断言并整理成正式 Eval case
 ```
 
 这让项目形成一个更完整的闭环：
@@ -29,7 +30,8 @@
 离线 Eval 保证版本质量
 在线 Monitor 发现真实问题
 用户负反馈沉淀成 Eval 候选样本
-人工审核后补进评测集
+人工审核后导出 Eval case 草稿
+人工补齐断言后补进评测集
 ```
 
 ## 2. 为什么不直接写入正式评测集
@@ -48,7 +50,8 @@
 - `UNHELPFUL` 反馈自动生成候选样本。
 - 候选初始状态为 `PENDING_REVIEW`。
 - 人工审核后可以变成 `APPROVED` 或 `REJECTED`。
-- 后续由开发者人工审核，再决定是否补进正式 Eval case。
+- `APPROVED` 样本可以导出为 Eval case 草稿。
+- 后续由开发者补齐 `requiredKeywords` 等断言，再决定是否补进正式 Eval case。
 
 这个设计更符合真实工程流程，也更容易在面试中解释清楚。
 
@@ -91,6 +94,30 @@ src/main/java/com/smartcs/smart_cs_agent/monitor/FeedbackEvalCandidateStatus.jav
 - `reviewedAt`：审核时间，未审核时为 0。
 - `timestamp`：生成时间。
 
+### 3.3 FeedbackEvalCaseDraft
+
+```text
+src/main/java/com/smartcs/smart_cs_agent/monitor/FeedbackEvalCaseDraft.java
+```
+
+这是审核通过样本导出的评测草稿。
+
+字段：
+
+- `id`：建议评测 case id。
+- `sourceCandidateId`：来源候选样本。
+- `sourceFeedbackId`：来源反馈。
+- `conversationId` / `userId`：方便回查上下文。
+- `suggestedEvalType`：建议评测类型。
+- `candidateReply`：被用户评价的回复。
+- `requiredKeywords`：第一版留空，后续人工补齐。
+- `forbiddenKeywords`：默认带常见危险承诺和内部工具词。
+- `expectedPass`：默认 `false`，因为负反馈通常先作为负例草稿。
+- `feedbackReason`：用户反馈原因。
+- `reviewNote`：人工审核备注。
+- `manualTodo`：提醒开发者补齐断言。
+- `generatedAt`：草稿生成时间。
+
 ## 4. 后端链路
 
 ### 4.1 提交反馈
@@ -130,6 +157,9 @@ GET /api/monitor/feedback/candidates
 同时，`GET /api/monitor/summary` 也会返回：
 
 - `evalCandidateCount`
+- `pendingEvalCandidateCount`
+- `approvedEvalCandidateCount`
+- `rejectedEvalCandidateCount`
 - `recentEvalCandidates`
 
 这样前端 Monitor 面板可以直接在一个摘要接口里展示所有在线质量信号。
@@ -155,6 +185,24 @@ Content-Type: application/json
 
 不允许前端把样本重新改回 `PENDING_REVIEW`，因为 `PENDING_REVIEW` 表示“还没有审核”，不是一个审核结果。
 
+### 4.4 导出 Eval case 草稿
+
+接口：
+
+```http
+GET /api/monitor/feedback/candidates/export
+```
+
+这个接口只导出 `APPROVED` 候选样本。
+
+为什么不直接写入 `src/test/resources/eval/response_quality_eval_cases.json`？
+
+- 正式评测 case 需要明确的 `requiredKeywords` 和 `forbiddenKeywords`。
+- 用户负反馈只能说明这条回复可能不好，不一定能自动推断完整断言。
+- 自动写入测试文件容易把不稳定样本混入正式回归测试。
+
+所以第一版选择返回 JSON 草稿，由开发者复制后人工整理。
+
 ## 5. 前端展示
 
 前端聊天区：
@@ -165,6 +213,7 @@ Content-Type: application/json
 Monitor 面板新增：
 
 - `Eval Cand.` 指标卡。
+- `Pending` / `Approved` / `Rejected` 状态数量指标卡。
 - `Eval Candidates` 列表。
 
 列表里展示：
@@ -177,6 +226,7 @@ Monitor 面板新增：
 - 被评价的助手回复。
 - 审核按钮：`通过` / `拒绝`。
 - 审核后的状态和备注。
+- `导出样本` 按钮：复制所有 `APPROVED` 样本的 Eval case 草稿 JSON。
 
 ## 6. 测试覆盖
 
@@ -193,8 +243,10 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 - `UNHELPFUL` 反馈会生成 `FeedbackEvalCandidate`。
 - 候选样本能保留 `feedbackId`、`reason`、`assistantReply` 和 `status`。
 - 候选样本能从 `PENDING_REVIEW` 审核为 `APPROVED` 或 `REJECTED`。
+- 只有 `APPROVED` 候选样本会导出为 Eval case 草稿。
 - Controller 能返回候选样本列表。
 - Controller 能拒绝非法审核状态。
+- Controller 能返回导出草稿列表。
 
 ## 7. 面试表达
 
@@ -202,7 +254,7 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 
 可以这样回答：
 
-> 我没有把用户负反馈直接写进正式评测集，因为正式 Eval case 需要稳定输入、期望行为和明确判定标准。我的做法是先把用户的 `UNHELPFUL` 反馈沉淀成 `FeedbackEvalCandidate`，初始状态是 `PENDING_REVIEW`，并保存来源会话、反馈原因和被评价的助手回复。然后我提供了候选样本审核接口，可以把样本标记为 `APPROVED` 或 `REJECTED`，并记录审核备注。这样线上反馈会进入待审核候选池，开发者确认后再整理成正式评测样本。这个链路把 Monitor 和 Eval 接起来，能让真实用户问题逐步变成回归测试资产。
+> 我没有把用户负反馈直接写进正式评测集，因为正式 Eval case 需要稳定输入、期望行为和明确判定标准。我的做法是先把用户的 `UNHELPFUL` 反馈沉淀成 `FeedbackEvalCandidate`，初始状态是 `PENDING_REVIEW`，并保存来源会话、反馈原因和被评价的助手回复。然后我提供了候选样本审核接口，可以把样本标记为 `APPROVED` 或 `REJECTED`，并记录审核备注。审核通过的样本可以导出为 `FeedbackEvalCaseDraft`，但不会直接写入正式评测集，而是让开发者补齐 requiredKeywords 等断言后再纳入回归测试。这个链路把 Monitor 和 Eval 接起来，能让真实用户问题逐步变成可维护的评测资产。
 
 ## 8. 后续优化
 
@@ -210,6 +262,7 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 
 - 记录用户问题和完整上下文，而不仅是助手回复。
 - 给候选样本增加人工审核接口，例如 `APPROVED` / `REJECTED`。已完成第一版。
-- 支持导出候选样本为 JSON，供 Eval Runner 读取。
+- 支持导出候选样本为 JSON 草稿，供开发者整理为 Eval case。已完成第一版。
+- 支持把审核通过的草稿半自动合并到正式评测文件。
 - 按意图、工具链路、知识库文档统计负反馈来源。
 - 接入数据库，支持候选样本跨服务重启保留。

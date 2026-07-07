@@ -934,6 +934,7 @@
             <div class="panel-toolbar">
                 <button class="small-action" id="refreshMonitorBtn">刷新指标</button>
                 <button class="small-action" id="copyMonitorBtn">复制指标</button>
+                <button class="small-action" id="exportEvalDraftBtn">导出样本</button>
             </div>
             <div class="metric-list" id="monitorMetrics"></div>
             <div class="eval-section-title">Tool Stats</div>
@@ -1034,6 +1035,7 @@
         demoStatus: document.getElementById('demoStatus'),
         refreshMonitorBtn: document.getElementById('refreshMonitorBtn'),
         copyMonitorBtn: document.getElementById('copyMonitorBtn'),
+        exportEvalDraftBtn: document.getElementById('exportEvalDraftBtn'),
         refreshMemoryBtn: document.getElementById('refreshMemoryBtn'),
         copyMemoryBtn: document.getElementById('copyMemoryBtn'),
         clearConversationMemoryBtn: document.getElementById('clearConversationMemoryBtn'),
@@ -1088,6 +1090,7 @@
         els.clearUserMemoryBtn.addEventListener('click', clearUserMemory);
         els.refreshMonitorBtn.addEventListener('click', loadMonitorSummary);
         els.copyMonitorBtn.addEventListener('click', copyMonitorSummary);
+        els.exportEvalDraftBtn.addEventListener('click', exportEvalCaseDrafts);
         els.monitorPanel.addEventListener('click', event => {
             const button = event.target.closest('.candidate-review-button');
             if (button) {
@@ -1773,6 +1776,9 @@
             ['Feedback', summary.feedbackCount ?? 0],
             ['Helpful', formatPercent(summary.helpfulFeedbackRate || 0)],
             ['Eval Cand.', summary.evalCandidateCount ?? 0],
+            ['Pending', summary.pendingEvalCandidateCount ?? 0],
+            ['Approved', summary.approvedEvalCandidateCount ?? 0],
+            ['Rejected', summary.rejectedEvalCandidateCount ?? 0],
             ['Avg Tool', (summary.averageToolDurationMs || 0) + 'ms'],
             ['Avg LLM', (summary.averageLlmDurationMs || 0) + 'ms'],
             ['Updated', lastUpdated]
@@ -2120,6 +2126,30 @@
             return;
         }
         copyText(JSON.stringify(state.monitorSummary, null, 2), 'Monitor 指标 JSON 已复制。');
+    }
+
+    async function exportEvalCaseDrafts() {
+        try {
+            const response = await fetch('/api/monitor/feedback/candidates/export');
+            const payload = await readJson(response);
+            if (!response.ok) {
+                appendSystemMessage(payload.message || 'Eval 样本草稿导出失败');
+                return;
+            }
+
+            const drafts = Array.isArray(payload) ? payload : [];
+            if (!drafts.length) {
+                appendSystemMessage('当前没有 APPROVED 的 Eval 样本草稿可导出。');
+                return;
+            }
+
+            await copyText(
+                    JSON.stringify(drafts, null, 2),
+                    '已复制 ' + drafts.length + ' 条 Eval 样本草稿 JSON。'
+            );
+        } catch (error) {
+            appendSystemMessage('Eval 样本草稿导出异常：' + error.message);
+        }
     }
 
     async function submitFeedback(messageId, rating) {

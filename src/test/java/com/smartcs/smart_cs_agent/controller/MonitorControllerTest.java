@@ -103,6 +103,32 @@ class MonitorControllerTest {
         assertTrue(response.isSuccess());
         assertEquals("APPROVED", response.getCandidate().getStatus().name());
         assertEquals("可以进入回复质量评测", response.getCandidate().getReviewNote());
+        assertEquals(0, controller.getSummary().getPendingEvalCandidateCount());
+        assertEquals(1, controller.getSummary().getApprovedEvalCandidateCount());
+        assertEquals(0, controller.getSummary().getRejectedEvalCandidateCount());
+    }
+
+    @Test
+    void shouldExportApprovedEvalCaseDrafts() {
+        MonitorService service = new MonitorService();
+        MonitorController controller = new MonitorController(service);
+        controller.recordFeedback(new FeedbackRequest(
+                "conv-1",
+                "USER-001",
+                "UNHELPFUL",
+                "没有说明退货时效",
+                "可以为您申请退货"
+        ));
+        controller.reviewFeedbackEvalCandidate(
+                "EVAL-CAND-000001",
+                new EvalCandidateReviewRequest("APPROVED", "可以作为负例")
+        );
+
+        assertEquals(1, controller.exportApprovedEvalCaseDrafts().size());
+        assertEquals(
+                "feedback_eval_cand_000001",
+                controller.exportApprovedEvalCaseDrafts().get(0).getId()
+        );
     }
 
     @Test

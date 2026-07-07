@@ -37,6 +37,17 @@ public class MonitorService {
     /** 助手回复可能很长，Monitor 里只保留适合调试和人工审核的长度 */
     private static final int ASSISTANT_REPLY_LIMIT = 1000;
 
+    /** 导出负反馈草稿时默认携带的危险词，开发者后续可以在正式 case 中调整 */
+    private static final List<String> DEFAULT_FORBIDDEN_KEYWORDS = List.of(
+            "一定可以退款",
+            "保证退款",
+            "无条件退款",
+            "一定赔偿",
+            "保证赔偿",
+            "Tool",
+            "tool_"
+    );
+
     private long totalTurns;
     private long toolCallCount;
     private long failedToolCallCount;
@@ -138,6 +149,9 @@ public class MonitorService {
                 tools,
                 feedbacks,
                 evalCandidateCount,
+                countEvalCandidates(candidates, FeedbackEvalCandidateStatus.PENDING_REVIEW),
+                countEvalCandidates(candidates, FeedbackEvalCandidateStatus.APPROVED),
+                countEvalCandidates(candidates, FeedbackEvalCandidateStatus.REJECTED),
                 candidates
         );
     }
@@ -260,6 +274,25 @@ public class MonitorService {
         recentEvalCandidates.addAll(updated);
         lastUpdatedAt = now;
         return reviewed;
+    }
+
+    /**
+     * 导出审核通过的 Eval case 草稿。
+     *
+     * 当前只导出 APPROVED 样本，REJECTED 和 PENDING_REVIEW 都不会进入草稿。
+     * 这能保证后续评测集只吸收人工确认过的线上问题。
+     */
+    public synchronized List<FeedbackEvalCaseDraft> exportApprovedEvalCaseDrafts() {
+        List<FeedbackEvalCaseDraft> drafts = new ArrayList<>();
+        long now = System.currentTimeMillis();
+
+        for (FeedbackEvalCandidate candidate : recentEvalCandidates) {
+            if (candidate.getStatus() == FeedbackEvalCandidateStatus.APPROVED) {
+                drafts.add(toEvalCaseDraft(candidate, now));
+            }
+        }
+
+        return drafts;
     }
 
     private void collectEvent(TraceEvent event, TurnAccumulator turn) {
@@ -391,6 +424,22 @@ public class MonitorService {
         return value == null ? "unknown_tool" : value.toString();
     }
 
+    /**
+     * 统计当前候选池里某个审核状态的数量。
+     *
+     * 第一版候选池保存在内存 recentEvalCandidates 中，所以这里直接基于快照列表计算，
+     * 可以避免“候选样本已经审核了，但计数器忘记同步更新”的问题。
+     */
+    private long countEvalCandidates(List<FeedbackEvalCandidate> candidates, FeedbackEvalCandidateStatus status) {
+        long count = 0;
+        for (FeedbackEvalCandidate candidate : candidates) {
+            if (candidate.getStatus() == status) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private long average(long total, long count) {
         if (count <= 0) {
             return 0;
@@ -434,6 +483,25 @@ public class MonitorService {
         while (recentEvalCandidates.size() > RECENT_EVAL_CANDIDATE_LIMIT) {
             recentEvalCandidates.removeLast();
         }
+    }
+
+    private FeedbackEvalCaseDraft toEvalCaseDraft(FeedbackEvalCandidate candidate, long generatedAt) {
+        return new FeedbackEvalCaseDraft(
+                "feedback_" + candidate.getCandidateId().toLowerCase().replace("-", "_"),
+                candidate.getCandidateId(),
+                candidate.getFeedbackId(),
+                candidate.getConversationId(),
+                candidate.getUserId(),
+                candidate.getSuggestedEvalType(),
+                candidate.getAssistantReply(),
+                List.of(),
+                DEFAULT_FORBIDDEN_KEYWORDS,
+                false,
+                candidate.getReason(),
+                candidate.getReviewNote(),
+                "请人工补充 requiredKeywords，并确认 candidateReply 是否作为负例加入 response_quality_eval_cases.json。",
+                generatedAt
+        );
     }
 
     private String trimToLimit(String text, int limit) {

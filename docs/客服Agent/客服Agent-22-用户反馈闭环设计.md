@@ -21,6 +21,7 @@
   -> MonitorService 记录反馈
   -> 无用反馈生成 Eval 候选样本
   -> 人工审核候选样本
+  -> 审核通过后导出 Eval case 草稿
   -> MonitorSummary 聚合满意度
   -> 前端 Monitor 面板展示最近反馈和候选样本
 ```
@@ -122,6 +123,12 @@ Content-Type: application/json
 }
 ```
 
+审核通过的候选样本可以导出为 Eval case 草稿：
+
+```http
+GET /api/monitor/feedback/candidates/export
+```
+
 ## 3. 为什么放在 MonitorService
 
 反馈发生在 Agent 已经回答之后。
@@ -147,6 +154,9 @@ Content-Type: application/json
 - `helpfulFeedbackRate`：有用反馈率。
 - `recentFeedbacks`：最近 10 条反馈。
 - `evalCandidateCount`：累计 Eval 候选样本数。
+- `pendingEvalCandidateCount`：当前候选池中待审核样本数。
+- `approvedEvalCandidateCount`：当前候选池中已审核通过样本数。
+- `rejectedEvalCandidateCount`：当前候选池中已拒绝样本数。
 - `recentEvalCandidates`：最近 10 条由无用反馈生成的候选样本。
 
 第一版只保留内存中的最近反馈，后续可以替换为数据库或日志平台。
@@ -171,6 +181,7 @@ POST /api/monitor/feedback
 - Monitor 面板展示最近反馈列表。
 - 如果点击无用，Monitor 面板展示 Eval Candidates 待审核样本。
 - 候选样本可以点击 `通过` 或 `拒绝`，审核后展示状态和备注。
+- 点击 `导出样本` 可以复制所有审核通过样本的 JSON 草稿。
 
 系统提示消息不显示反馈按钮，避免把错误提示、复制成功提示也算成 Agent 回复质量。
 
@@ -190,9 +201,11 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 - 能统计反馈总数、有用数、无用数和有用率。
 - 能把 `UNHELPFUL` 反馈生成 Eval 候选样本。
 - 能审核 Eval 候选样本状态。
+- 能导出审核通过的 Eval case 草稿。
 - Controller 能接收反馈请求并写入 Monitor。
 - Controller 能返回候选样本列表。
 - Controller 能拒绝非法审核状态。
+- Controller 能返回导出草稿列表。
 
 前端脚本使用 Node 做语法检查，避免单文件页面因为 JS 语法错误无法加载。
 
@@ -200,7 +213,7 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 
 可以这样讲：
 
-> 我把 Agent 的质量闭环拆成离线 Eval 和在线 Monitor 两部分。Eval 用固定测试集验证版本质量；Monitor 基于真实请求 Trace 统计工具成功率、LLM 失败率和转人工次数。后面我又加了用户反馈闭环，用户可以对每次回复点有用或无用，反馈会进入 MonitorSummary，形成满意度指标和最近反馈列表。对于无用反馈，我会额外生成 Eval 候选样本，保存反馈原因和被评价的助手回复，再通过审核接口标记为 APPROVED 或 REJECTED。这样项目不只是能回答，还能持续收集“用户是否觉得回答有用”的信号，并把真实问题沉淀成回归测试资产。
+> 我把 Agent 的质量闭环拆成离线 Eval 和在线 Monitor 两部分。Eval 用固定测试集验证版本质量；Monitor 基于真实请求 Trace 统计工具成功率、LLM 失败率和转人工次数。后面我又加了用户反馈闭环，用户可以对每次回复点有用或无用，反馈会进入 MonitorSummary，形成满意度指标和最近反馈列表。对于无用反馈，我会额外生成 Eval 候选样本，保存反馈原因和被评价的助手回复，再通过审核接口标记为 APPROVED 或 REJECTED。审核通过的样本可以导出为 Eval case 草稿，由开发者补齐断言后加入正式评测集。这样项目不只是能回答，还能持续收集“用户是否觉得回答有用”的信号，并把真实问题沉淀成回归测试资产。
 
 ## 8. 后续优化
 
@@ -213,6 +226,7 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 - 按工具调用链路关联反馈，分析哪些工具结果容易导致无用回复。
 - 将负反馈样本自动导出为 Eval 候选样本。已完成第一版。
 - 增加候选样本人工审核接口。已完成第一版。
-- 将审核通过的候选样本导出为正式 Eval case。
+- 将审核通过的候选样本导出为 Eval case 草稿。已完成第一版。
+- 将 Eval case 草稿半自动合并到正式评测文件。
 - 持久化到 MySQL 或日志系统，支持跨服务重启保留。
 - 当某类意图负反馈升高时，触发人工复核或降级策略。

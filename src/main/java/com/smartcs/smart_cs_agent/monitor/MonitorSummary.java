@@ -35,6 +35,16 @@ public class MonitorSummary {
     private final List<ToolMonitorSnapshot> toolStats;
     private final List<FeedbackRecord> recentFeedbacks;
     private final long evalCandidateCount;
+
+    /** 当前候选池中仍然等待人工审核的样本数量 */
+    private final long pendingEvalCandidateCount;
+
+    /** 当前候选池中已经审核通过、可以导出为 Eval 草稿的样本数量 */
+    private final long approvedEvalCandidateCount;
+
+    /** 当前候选池中已经被人工拒绝、不进入评测草稿的样本数量 */
+    private final long rejectedEvalCandidateCount;
+
     private final List<FeedbackEvalCandidate> recentEvalCandidates;
 
     public MonitorSummary(long totalTurns,
@@ -57,6 +67,9 @@ public class MonitorSummary {
                           List<ToolMonitorSnapshot> toolStats,
                           List<FeedbackRecord> recentFeedbacks,
                           long evalCandidateCount,
+                          long pendingEvalCandidateCount,
+                          long approvedEvalCandidateCount,
+                          long rejectedEvalCandidateCount,
                           List<FeedbackEvalCandidate> recentEvalCandidates) {
         this.totalTurns = totalTurns;
         this.toolCallCount = toolCallCount;
@@ -78,6 +91,9 @@ public class MonitorSummary {
         this.toolStats = toolStats == null ? List.of() : List.copyOf(toolStats);
         this.recentFeedbacks = recentFeedbacks == null ? List.of() : List.copyOf(recentFeedbacks);
         this.evalCandidateCount = evalCandidateCount;
+        this.pendingEvalCandidateCount = pendingEvalCandidateCount;
+        this.approvedEvalCandidateCount = approvedEvalCandidateCount;
+        this.rejectedEvalCandidateCount = rejectedEvalCandidateCount;
         this.recentEvalCandidates = recentEvalCandidates == null ? List.of() : List.copyOf(recentEvalCandidates);
     }
 
@@ -159,6 +175,18 @@ public class MonitorSummary {
 
     public long getEvalCandidateCount() {
         return evalCandidateCount;
+    }
+
+    public long getPendingEvalCandidateCount() {
+        return pendingEvalCandidateCount;
+    }
+
+    public long getApprovedEvalCandidateCount() {
+        return approvedEvalCandidateCount;
+    }
+
+    public long getRejectedEvalCandidateCount() {
+        return rejectedEvalCandidateCount;
     }
 
     public List<FeedbackEvalCandidate> getRecentEvalCandidates() {

@@ -68,6 +68,9 @@ class MonitorServiceTest {
         assertEquals(1, summary.getRecentTurns().size());
         assertEquals("conv-1", summary.getRecentTurns().get(0).getConversationId());
         assertEquals(3, summary.getToolStats().size());
+        assertEquals(0, summary.getPendingEvalCandidateCount());
+        assertEquals(0, summary.getApprovedEvalCandidateCount());
+        assertEquals(0, summary.getRejectedEvalCandidateCount());
         assertEquals(1.0, findTool(summary, "order_lookup").getSuccessRate());
         assertEquals(0.0, findTool(summary, "return_apply").getSuccessRate());
         assertEquals(5, findTool(summary, "handoff_create").getAverageDurationMs());
@@ -115,6 +118,9 @@ class MonitorServiceTest {
         assertEquals(1, summary.getEvalCandidateCount());
         assertEquals(2, summary.getRecentFeedbacks().size());
         assertEquals(FeedbackRating.UNHELPFUL, summary.getRecentFeedbacks().get(0).getRating());
+        assertEquals(1, summary.getPendingEvalCandidateCount());
+        assertEquals(0, summary.getApprovedEvalCandidateCount());
+        assertEquals(0, summary.getRejectedEvalCandidateCount());
     }
 
     @Test
@@ -141,6 +147,7 @@ class MonitorServiceTest {
 
         assertEquals(1, summary.getEvalCandidateCount());
         assertEquals(1, summary.getRecentEvalCandidates().size());
+        assertEquals(1, summary.getPendingEvalCandidateCount());
         assertEquals("EVAL-CAND-000001", candidate.getCandidateId());
         assertEquals("FDB-000002", candidate.getFeedbackId());
         assertEquals("response_quality_candidate", candidate.getSuggestedEvalType());
@@ -169,6 +176,51 @@ class MonitorServiceTest {
         assertEquals(FeedbackEvalCandidateStatus.APPROVED, reviewed.getStatus());
         assertEquals("信息完整，可以补进回复质量评测", reviewed.getReviewNote());
         assertEquals(reviewed.getStatus(), service.getFeedbackEvalCandidates().get(0).getStatus());
+        assertEquals(0, service.getSummary().getPendingEvalCandidateCount());
+        assertEquals(1, service.getSummary().getApprovedEvalCandidateCount());
+        assertEquals(0, service.getSummary().getRejectedEvalCandidateCount());
+    }
+
+    @Test
+    void shouldExportOnlyApprovedEvalCaseDrafts() {
+        MonitorService service = new MonitorService();
+        service.recordFeedback(
+                "conv-1",
+                "USER-001",
+                FeedbackRating.UNHELPFUL,
+                "回答缺少退货时效",
+                "可以为您申请退货"
+        );
+        service.recordFeedback(
+                "conv-2",
+                "USER-002",
+                FeedbackRating.UNHELPFUL,
+                "用户误点，不适合作为样本",
+                "您的订单已经发货"
+        );
+
+        service.reviewFeedbackEvalCandidate(
+                "EVAL-CAND-000001",
+                FeedbackEvalCandidateStatus.APPROVED,
+                "可以作为负例"
+        );
+        service.reviewFeedbackEvalCandidate(
+                "EVAL-CAND-000002",
+                FeedbackEvalCandidateStatus.REJECTED,
+                "误点，不导出"
+        );
+
+        List<FeedbackEvalCaseDraft> drafts = service.exportApprovedEvalCaseDrafts();
+
+        assertEquals(1, drafts.size());
+        assertEquals("feedback_eval_cand_000001", drafts.get(0).getId());
+        assertEquals("EVAL-CAND-000001", drafts.get(0).getSourceCandidateId());
+        assertEquals("可以为您申请退货", drafts.get(0).getCandidateReply());
+        assertEquals(false, drafts.get(0).isExpectedPass());
+        assertEquals("可以作为负例", drafts.get(0).getReviewNote());
+        assertEquals(0, service.getSummary().getPendingEvalCandidateCount());
+        assertEquals(1, service.getSummary().getApprovedEvalCandidateCount());
+        assertEquals(1, service.getSummary().getRejectedEvalCandidateCount());
     }
 
     private ToolMonitorSnapshot findTool(MonitorSummary summary, String toolName) {
