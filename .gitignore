@@ -33,3 +33,6 @@ build/
 .vscode/
 app.log
 .m2/
+.env
+.env.*
+!.env.example

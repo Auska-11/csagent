@@ -8,6 +8,7 @@ import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -111,6 +112,25 @@ public class OrderTools {
     }
 
     /**
+     * 查询订单结构化数据。
+     *
+     * 这个方法不加 @Tool，因为它主要给我们自己的 ToolRegistry 用。
+     * LLM 仍然可以使用上面的 queryOrderStatus(...) 字符串工具；
+     * Agent Runtime / Trace / 评测则可以读取这里返回的 DTO。
+     */
+    public OrderToolData queryOrderStatusData(String orderId) {
+        String normalizedOrderId = orderId == null ? "" : orderId.toUpperCase();
+        Order order = orderRepository.findByOrderId(normalizedOrderId);
+
+        if (order == null) {
+            return OrderToolData.notFound(orderId);
+        }
+
+        Product product = productRepository.findByProductId(order.getProductId());
+        return OrderToolData.found(order, product);
+    }
+
+    /**
      * 查询用户的所有订单
      *
      * 【什么时候调用？】
@@ -157,5 +177,23 @@ public class OrderTools {
         }
 
         return result.toString();
+    }
+
+    /**
+     * 查询用户订单结构化数据。
+     *
+     * 这里返回 UserOrdersToolData，而不是 Map。
+     * 这样后续要新增字段时，编译器和测试都能帮我们发现哪里需要同步调整。
+     */
+    public UserOrdersToolData queryUserOrdersData(String userId) {
+        List<Order> orders = orderRepository.findByUserId(userId);
+        List<OrderToolData> orderItems = new ArrayList<>();
+
+        for (Order order : orders) {
+            Product product = productRepository.findByProductId(order.getProductId());
+            orderItems.add(OrderToolData.found(order, product));
+        }
+
+        return new UserOrdersToolData(userId, orderItems);
     }
 }

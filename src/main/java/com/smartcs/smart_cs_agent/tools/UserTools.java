@@ -59,4 +59,22 @@ public class UserTools {
                "- Name: " + user.getName() + "\n" +
                "- Phone: " + user.getPhone();
     }
+
+    /**
+     * 查询用户结构化数据。
+     *
+     * 注意：这里不把 token 放进返回数据，避免把登录凭证暴露到 Trace 或前端调试面板。
+     */
+    public UserToolData queryUserInfoData(String token) {
+        User user = userRepository.findByToken(token);
+        if (user == null) {
+            user = userRepository.findByUserId(token);
+        }
+
+        if (user == null) {
+            return UserToolData.notFound();
+        }
+
+        return UserToolData.found(user);
+    }
 }

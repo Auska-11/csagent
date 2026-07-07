@@ -14,11 +14,11 @@ Smart CS Agent 是一个面向电商客服场景的任务型 Agent 项目。
 - 能基于客服知识库回答政策类问题
 - 能保留多轮任务状态
 - 能记录 Agent 每一步执行轨迹
-- 能通过测试集评估端到端效果
+- 能通过测试集评估路由、知识库召回、回复质量规则和 Agent 链路回复
 
 最终希望在简历中表达为：
 
-> 基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，将意图识别、工具调用、业务查询、知识库检索和回复生成解耦；支持多轮任务状态、工具调用 Trace、人工转接和端到端评测，提升客服场景下大模型应用的可控性和可观测性。
+> 基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，将意图识别、工具调用、业务查询、知识库检索和回复生成解耦；支持多轮任务状态、工具调用 Trace、人工转接、接口参数校验、知识库召回评测、回复质量规则评测和评测趋势报告，提升客服场景下大模型应用的可控性、可观测性和可验证性。
 
 ## 2. 当前项目基础
 
@@ -33,24 +33,32 @@ Smart CS Agent 是一个面向电商客服场景的任务型 Agent 项目。
   - `LLMAction`
   - `CapabilityAction`
   - `AskUserAction`
+  - `HandoffAction`
   - `FinalAnswerAction`
 - 业务工具：
   - `OrderTools`
   - `ProductTools`
   - `ReturnTools`
   - `UserTools`
+  - `KnowledgeTools`
+  - `HandoffTools`
 - Repository 模拟数据层
 - 静态前端聊天页面
 - 初步 Skill 文档和客服参考资料
 
 当前最主要的问题：
 
-- 每轮请求都会新建 `ConversationState`，还不是真正的多轮对话。
-- 当前输入、跨轮状态和本轮执行过程还没有拆开，后续需要引入 `ChatRequest`、`ConversationState`、`TurnContext` 三个概念。
-- `CustomerServiceSkill` 职责偏重，后续需要逐步拆分。
-- `ToolManager` 使用字符串和 `Map` 调工具，类型安全和错误处理还比较弱。
-- 前端只能看到最终回复，看不到 Agent 执行过程。
-- 还没有知识库检索、人工转接和评测集。
+- 已经引入 `ChatRequest`、`ConversationStore`、`TurnContext` 和 `TraceEvent`，Agent Trace 第一版已经落地，并已补充三级会话记忆第一版。
+- `ConversationState.message` 仍作为兼容旧入口的过渡字段保留。
+- `ConversationState.messages` 已升级为短期记忆窗口，较早消息会压缩进 `summaryMemory`。
+- `CustomerServiceSkill` 已完成第一轮拆分：槽位抽取、意图规则和 Prompt 构造已经分别拆到 `CustomerServiceSlotExtractor`、`CustomerServiceIntentRules`、`CustomerServicePromptBuilder`。
+- 工具层已经引入 `ToolDefinition`、`ToolParameterDefinition`、`ToolCall`、`ToolResult` 和 `ToolRegistry`，并已完成结构化 `data`、参数 `inputSchema` 和返回 `outputSchema` 第一版；订单、商品、退货、用户和人工转接等业务工具已经升级为明确 DTO，并新增 MCP Adapter 第一版，支持 `/api/mcp/tools` 和 `/api/mcp/tools/call`，后续可以继续补充嵌套 outputSchema，并迁移为独立 MCP Server。
+- 前端调试控制台已经升级为 Agent Inspector，支持典型 Demo 脚本、Trace 过滤、Trace 指标摘要、复制 Trace JSON、复制单条 Trace、工具搜索、展示和复制工具 inputSchema / outputSchema，以及 Eval 评测报告看板。
+- 知识库检索第一版已经完成，并已补充 RAG 检索增强第一版：查询改写、多路召回、简单 rerank、`knowledge_miss` Trace；知识库召回评测已扩展到 8 条。
+- 人工转接第一版已经完成，后续可以接真实工单系统和失败触发规则。
+- 聊天接口已经完成明确 DTO、Spring Validation、统一错误响应和 MVC 层测试。
+- Runtime 已支持 LLM 调用失败降级：模型异常时记录 `llm_failed`，并基于工具结果返回模板化客服回复。
+- 离线路由评测、知识库召回评测、回复质量规则评测、Agent 链路回复评测和 LLM-as-Judge 第一版已经完成，并已支持 JSON 指标、历史快照、趋势报告和前端 Eval 看板；Monitor 第一版已经基于 Trace 聚合在线指标；后续需要接入真实模型输出评测。
 
 ## 3. 参考项目吸收点
 
@@ -122,11 +130,11 @@ EchoMind 提到的能力：
 | 能力 | 是否纳入 | 当前策略 |
 | --- | --- | --- |
 | 意图识别 | 纳入 | 先做规则 + LLM，后续再做融合 |
-| 工具调用 | 纳入 | 先做本地 ToolManager，再演进为 MCP-style |
-| 多轮记忆 | 纳入 | 先做会话级任务状态，再做短期/长期记忆 |
+| 工具调用 | 纳入 | 已完成 MCP-style 第一版，后续再演进为独立 MCP Server |
+| 多轮记忆 | 纳入 | 会话级任务状态、短期记忆、任务记忆、摘要记忆和长期商品偏好第一版已完成 |
 | Multi-Agent | 二期纳入 | 先做单客服 Skill，后面拆售前/售后/投诉 |
 | Monitor 闭环 | 暂缓 | 没有真实线上数据，先做 Trace 和统计 |
-| LLM-as-Judge | 后期纳入 | 先做规则评测，再补 LLM Judge |
+| LLM-as-Judge | 纳入 | 四维度评分第一版已完成，当前用 Fake Judge 保持测试稳定 |
 
 ## 4. 开发原则
 
@@ -167,7 +175,7 @@ EchoMind 提到的能力：
 - `查一下 RET-001 的状态`
 - `查看我的信息`
 
-状态：进行中。
+状态：第一版已完成。当前基础客服链路已经能覆盖订单、商品、退货、用户信息、知识库和人工转接等核心场景，并已补充 LLM 失败时的基础降级回复。
 
 ## Phase 2：多轮会话状态与槽位填充
 
@@ -175,24 +183,25 @@ EchoMind 提到的能力：
 
 核心任务：
 
-- 新增 `ChatRequest`，表示当前这一轮请求：
+- 新增 `ChatRequest`，表示当前这一轮请求。已完成：
   - conversationId
   - userId
   - message
-- 引入会话存储，例如 `ConversationStore`。
-- 使用 `conversationId` 保存每个用户的会话状态。
-- 调整 `ConversationState`，让它只保存跨轮状态：
+- 引入会话存储，例如 `ConversationStore`。已完成第一版。
+- 使用 `conversationId` 保存每个用户的会话状态。已完成第一版。
+- 调整 `ConversationState`，让它只保存跨轮状态。部分完成：
   - 当前意图
   - 最近消息
   - 任务槽位
   - 等待用户补充的信息
-- 新增 `TurnContext`，表示本轮执行上下文：
+- 新增 `TurnContext`，表示本轮执行上下文。已完成第一版：
   - 当前请求
   - 当前会话状态
   - 本轮观察结果
   - 本轮最终回复
-- 支持退货申请多轮流程。
-- 支持订单查询多轮流程。
+- 支持退货申请多轮流程。已完成第一版。
+- 支持订单查询多轮流程。已完成第一版。
+- 增加 `CustomerServiceSkillTest` 覆盖退货多轮槽位填充。已完成。
 
 示例流程：
 
@@ -213,7 +222,7 @@ Agent：已为你提交退货申请。
 - 会话状态可以按 `userId + conversationId` 区分。
 - 当前输入和跨轮状态不会混在同一个字段里。
 
-优先级：最高。
+状态：第一版核心链路已完成，并已接入 `TraceEvent`，可以把每一步 Action 和 Observation 暴露给接口和前端调试控制台。当前还新增了 Memory 快照接口和前端 Memory 面板，可以查看短期记忆、任务记忆和摘要记忆。
 
 ## Phase 3：Agent Trace 调用链
 
@@ -221,18 +230,19 @@ Agent：已为你提交退货申请。
 
 核心任务：
 
-- 新增 `TraceEvent` 模型。
-- 基于 `TurnContext` 记录本轮执行过程。
-- 在 `AgentRuntime` 中记录：
+- 新增 `TraceEvent` 模型。已完成。
+- 基于 `TurnContext` 记录本轮执行过程。已完成。
+- 在 `AgentRuntime` 中记录。已完成第一版：
   - turn_started
   - skill_selected
   - action_planned
   - tool_called
   - tool_observed
   - llm_called
+  - llm_observed
   - final_answer
-- API 返回 `reply` 的同时返回 `trace`。
-- 前端调试面板展示 Trace。
+- API 返回 `reply` 的同时返回 `trace`。已完成。
+- 前端调试面板展示 Trace。已完成第一版。
 
 示例 Trace：
 
@@ -261,9 +271,12 @@ Agent：已为你提交退货申请。
 
 - 每次对话能看到意图、动作、工具、参数、结果。
 - 工具失败也能被记录。
+- 工具、LLM 和人工转接工具调用耗时能被记录。
 - 前端调试面板可以展示执行链路。
 
 优先级：高。
+
+状态：第一版已完成，并已接入 `ToolResult`。Trace 中现在可以看到工具是否成功、错误码、结果预览和 `durationMs`；LLM 与人工转接工具也已经记录耗时，LLM 异常时会额外记录 `llm_failed`。
 
 ## Phase 4：工具调用标准化
 
@@ -283,10 +296,13 @@ public class ToolResult {
 }
 ```
 
-- 定义工具名称常量或枚举，避免字符串散落。
-- 参数缺失时返回标准错误。
-- 工具失败时给 Agent 明确的下一步建议。
-- 将 `ToolManager` 从简单 `switch` 逐步升级为工具注册表。
+- 新增 `ToolDefinition` 描述工具元信息。已完成第一版。
+- 新增 `ToolCall` 表示标准工具调用请求。已完成第一版。
+- 新增 `ToolResult` 统一工具返回结构。已完成第一版。
+- 新增 `ToolRegistry` 集中注册和执行工具。已完成第一版。
+- 参数缺失时返回标准错误。已完成第一版。
+- 工具失败时给 Agent 明确的下一步建议。已完成第一版。
+- 将 `ToolManager` 从简单 `switch` 逐步升级为工具注册表门面。已完成第一版。
 
 验收标准：
 
@@ -295,6 +311,8 @@ public class ToolResult {
 - 新增工具时不需要大改 Runtime。
 
 优先级：高。
+
+状态：第一版已完成。当前工具层已经具备 MCP-style 的工具定义、参数 schema、调用请求、统一响应和注册表，并且订单、商品、退货、用户、知识库、人工转接工具已经优先返回结构化 `data`。其中订单、商品、退货、用户和人工转接等业务工具已经升级为明确 DTO，项目也新增了 `GET /api/tools` 只读调试接口，用来查看当前工具列表、`inputSchema` 和 `outputSchema`。后续可以继续补充嵌套 outputSchema，并进一步迁移成独立 MCP Server。
 
 ## Phase 5：客服知识库与 RAG
 
@@ -317,12 +335,17 @@ knowledge/
 ```
 
 - 实现 `KnowledgeTools`：
-  - `knowledge_search`
+  - `knowledge_search`。已完成第一版。
 - 第一版使用轻量本地检索：
-  - 标题匹配
-  - 关键词匹配
-  - 正文片段匹配
-- 后续再考虑向量检索、查询改写和 rerank。
+  - 标题匹配。已完成第一版。
+  - 关键词匹配。已完成第一版。
+  - 正文片段匹配。已完成第一版。
+  - 查询改写。已完成第一版。
+  - 多路召回。已完成第一版。
+  - 简单 rerank。已完成第一版。
+- 召回失败 Trace：
+  - `knowledge_miss`。已完成第一版。
+- 后续再考虑向量检索和 LLM rerank。
 
 示例问题：
 
@@ -333,11 +356,13 @@ knowledge/
 
 验收标准：
 
-- 政策类问题必须调用知识库工具。
-- 回复中不能编造知识库不存在的政策。
-- 找不到知识时要说明未找到，并建议转人工或补充信息。
+- 政策类问题必须调用知识库工具。已完成第一版。
+- 回复中不能编造知识库不存在的政策。已在检索文本中加入约束，后续评测继续验证。
+- 找不到知识时要说明未找到，并建议转人工或补充信息。已完成第一版工具文本。
 
 优先级：高。
+
+状态：第一版和检索增强第一版已完成。当前已经新增 Markdown 知识库、`KnowledgeTools`、`KnowledgeDocument`、`KnowledgeSearchResult`，并把 `knowledge_search` 注册进 `ToolRegistry`。`CustomerServiceSkill` 已支持退换货政策、发票、保修、配送、转人工规则等问题的知识库路由。`KnowledgeTools` 现在支持查询改写、多路召回、简单 rerank，检索结果会返回命中词、命中字段、查询变体和排序原因；当知识库没有可靠命中时，Runtime 会记录 `knowledge_miss` Trace。
 
 ## Phase 6：人工转接机制
 
@@ -345,15 +370,15 @@ knowledge/
 
 核心任务：
 
-- 新增 `HandoffAction`。
-- 新增 `HandoffTools` 或 `TicketTools`。
+- 新增 `HandoffAction`。已完成第一版。
+- 新增 `HandoffTools` 或 `TicketTools`。已完成第一版：当前实现为 `HandoffTools`。
 - 定义转人工规则：
-  - 用户主动要求人工
-  - 强投诉或威胁维权
-  - 涉及赔偿、敏感信息、复杂纠纷
+  - 用户主动要求人工。已完成第一版。
+  - 强投诉或威胁维权。已完成第一版。
+  - 涉及赔偿、敏感信息、复杂纠纷。已完成第一版中的赔偿/维权规则。
   - 工具连续失败
   - Agent 多轮无法解决
-- 生成转人工摘要。
+- 生成转人工摘要。已完成第一版规则摘要。
 
 示例：
 
@@ -364,7 +389,7 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 
 验收标准：
 
-- 投诉类问题能识别并转人工。
+- 投诉类问题能识别并转人工。已完成第一版。
 - 转人工时包含摘要：
   - 用户诉求
   - 已提供信息
@@ -373,27 +398,37 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 
 优先级：中高。
 
+状态：第一版已完成。当前支持用户主动要求人工、投诉、赔偿/维权类表达触发 `HandoffAction`，由 Runtime 调用 `handoff_create` 创建模拟工单，并在 Trace 中记录 `handoff_requested` 和 `handoff_created`。
+
 ## Phase 7：端到端评测集
 
 目标：用测试证明 Agent 能力，而不是只靠手动试。
 
 核心任务：
 
-- 新建 `eval_cases.json`。
+- 新建 `eval_cases.json`。已完成第一版：`src/test/resources/eval/customer_service_eval_cases.json`。
 - 每个 case 包含：
-  - 用户输入
-  - 期望意图
-  - 期望工具
-  - 期望关键词
-  - 是否应该转人工
-  - 是否多轮
-- 编写评测 Runner。
+  - 用户输入。已完成。
+  - 期望意图。已完成。
+  - 期望工具。已完成。
+  - 期望关键词。已在回复质量规则评测中完成第一版。
+  - 是否应该转人工。已完成。
+  - 是否多轮。已完成。
+- 编写评测 Runner。已完成第一版：`CustomerServiceEvaluationTest`。
+- 新增知识库召回评测。已完成第一版：`KnowledgeRecallEvaluationTest`。
+- 新增回复质量规则评测。已完成第一版：`ResponseQualityEvaluationTest`。
+- 新增 Agent 链路回复评测。已完成第一版：`AgentResponseEvaluationTest`。
 - 输出指标：
-  - 意图准确率
-  - 工具命中率
-  - 转人工准确率
-  - 关键词覆盖率
-  - 多轮流程完成率
+  - 意图准确率。已完成。
+  - 工具命中率。已完成。
+  - 转人工准确率。已完成。
+  - 知识库文档召回率。已完成。
+  - 知识库关键词覆盖率。已完成。
+  - 回复质量关键词覆盖和危险承诺拦截。已完成第一版。
+  - Agent 链路最终回复质量和 Trace 事件覆盖率。已完成第一版。
+  - 多轮流程完成率。第一版通过多轮 case 间接覆盖。
+  - JSON 指标报告。已完成第一版，输出到 `target/eval-reports/`。
+  - 历史快照和趋势报告。已完成第一版，输出 `history/` 和 `trend.json`。
 
 示例 case：
 
@@ -410,11 +445,13 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 
 验收标准：
 
-- 至少 20 条评测用例。
-- 可以一键运行评测。
-- 输出可读报告。
+- 至少 20 条评测样本。当前路由 16 条、知识召回 8 条、静态回复质量 6 条、Agent 链路回复 3 条、LLM-as-Judge 3 条，共 36 条评测样本。
+- 可以一键运行评测。已完成，随 `mvn test` 运行。
+- 输出可读报告。已完成控制台报告、JSON 指标报告，并新增 `docs/客服Agent/客服Agent-08-评测报告.md`。
 
 优先级：中高。
+
+状态：第一版已完成，并从单一路由评测升级为五类评测。当前路由评测 16/16 通过，知识库召回评测 8/8 通过，回复质量规则评测 6/6 判断一致，Agent 链路回复评测 3/3 通过，LLM-as-Judge 评测 3/3 判断一致。最近一次完整测试会随当前代码继续更新，并已输出五类 JSON 指标报告、历史快照和趋势报告到 `target/eval-reports/`。
 
 ## Phase 8：轻量 Multi-Agent 路由
 
@@ -446,23 +483,30 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 核心任务：
 
 - 短期记忆：
-  - 当前会话的最近消息
-  - 当前任务槽位
+  - 当前会话的最近消息。已完成第一版。
+  - 当前任务槽位。已完成第一版。
+- 任务记忆：
+  - 当前意图。已完成第一版。
+  - pendingSlot。已完成第一版。
+  - 订单号、退货原因等业务槽位。已完成第一版。
+- 摘要记忆：
+  - 长对话超过阈值时压缩成 summary。已完成第一版规则压缩。
 - 长期记忆：
-  - 用户偏好
+  - 用户商品偏好。已完成第一版。
   - 常用地址
   - 历史投诉倾向
   - 常咨询商品类型
-- 自动摘要：
-  - 长对话超过阈值时压缩成 summary
 
 验收标准：
 
-- 用户之前说过“我喜欢蓝牙耳机”，后续推荐商品时能参考。
-- 长对话不会无限增长 prompt。
-- 记忆内容可查看、可清空。
+- 长对话不会无限增长 prompt。已完成第一版。
+- 记忆内容可查看。已完成第一版：前端 Memory Tab。
+- 用户之前说过“我喜欢蓝牙耳机”，后续推荐商品时能参考。已完成第一版。
+- 记忆内容可清空。待做。
 
 优先级：中。
+
+状态：第一版已完成。当前 `ConversationState` 支持短期消息窗口、任务记忆快照和规则摘要记忆；`AgentRuntime` 会记录 `memory_loaded` 和 `memory_compressed` Trace；`UserMemoryStore` 支持按 userId 保存长期商品偏好；`ChatApiController` 提供 `GET /api/chat/conversations/{conversationId}/memory` 和 `GET /api/chat/users/{userId}/memory`；前端 Agent Inspector 已新增 Memory Tab，并能展示 User Long-Term Memory。
 
 ## Phase 10：LLM-as-Judge 与 Monitor
 
@@ -471,10 +515,10 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 核心任务：
 
 - LLM-as-Judge 四维度评分：
-  - 回答质量
-  - 工具调用合理性
-  - 是否忠实于工具/知识库结果
-  - 是否符合客服语气
+  - 回答质量。已完成第一版。
+  - 工具调用合理性。第一版通过参考事实间接评估。
+  - 是否忠实于工具/知识库结果。已完成第一版。
+  - 是否符合客服语气。已完成第一版。
 - Monitor 统计：
   - 工具成功率
   - 意图识别失败率
@@ -484,9 +528,26 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 
 注意：
 
-这一阶段不急做。没有真实线上数据时，不要过度包装“在线闭环调权”。可以先做离线统计和评测报告。
+这一阶段不急做。没有真实线上数据时，不要过度包装“在线闭环调权”。当前已先做离线统计、评测报告、Monitor 指标和 Fake Judge 版本的 LLM-as-Judge。
 
 优先级：中低。
+
+状态：LLM-as-Judge 第一版已完成。当前新增 Judge Prompt、结构化 JSON 解析、Fake Judge 测试样例和 `llm-as-judge.json` 报告；真实模型 Judge 后续作为可选评测接入。
+
+## Phase 11：Docker 与部署工程化
+
+目标：让项目具备可复现运行能力，方便面试演示和后续 CI/CD 扩展。
+
+核心任务：
+
+- 多阶段 Docker 构建。已完成第一版。
+- `docker-compose.yml` 一键启动。已完成第一版。
+- `.env.example` 示例配置。已完成第一版。
+- 模型 API Key、baseUrl、模型名通过环境变量注入。已完成第一版。
+- `/api/health` 健康检查接口。已完成第一版。
+- README 和部署文档补充启动步骤。已完成第一版。
+
+状态：第一版已完成。当前可以通过 `docker compose up --build` 启动服务，并访问 `http://localhost:8080` 和 `http://localhost:8080/api/health` 验证服务状态。后续可以继续补 CI 镜像构建、生产 profile 和日志目录挂载。
 
 ## 6. MVP 范围
 
@@ -548,23 +609,42 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 
 建议最近开发顺序：
 
-1. 新增 `ChatRequest`，把当前输入从会话状态中拆出来。
-2. 实现 `ConversationStore`，支持按 `conversationId` 保存多轮状态。
-3. 调整 `ConversationState`，让它聚焦跨轮状态和任务槽位。
-4. 新增 `TurnContext`，承载本轮请求、状态、观察结果和最终回复。
-5. 改造 `CustomerServiceAgent` 和 `ChatApiController`。
-6. 实现退货申请多轮流程。
-7. 增加 `TraceEvent` 和接口返回 trace。
-8. 前端调试面板展示 trace。
-9. 定义 `ToolResult`，统一工具返回。
-10. 新增 `KnowledgeTools` 和 Markdown 知识库。
-11. 新增评测集和评测 Runner。
+1. 新增 `ChatRequest`，把当前输入从会话状态中拆出来。已完成。
+2. 实现 `ConversationStore`，支持按 `conversationId` 保存多轮状态。已完成。
+3. 调整 `ConversationState`，让它聚焦跨轮状态和任务槽位。已完成第一版。
+4. 改造 `CustomerServiceAgent` 和 `ChatApiController`。已完成第一版。
+5. 实现退货申请多轮流程。已完成第一版。
+6. 新增 `TurnContext`，承载本轮请求、状态、观察结果和最终回复。已完成第一版。
+7. 增加 `TraceEvent` 和接口返回 trace。已完成第一版。
+8. 前端调试面板展示 trace。已完成第一版。
+9. 定义 `ToolResult`，统一工具返回。已完成第一版。
+10. 引入 `ToolDefinition`、`ToolCall` 和 `ToolRegistry`，形成 MCP-style 工具层。已完成第一版。
+11. 新增 `KnowledgeTools` 和 Markdown 知识库。已完成第一版。
+12. 新增人工转接机制。已完成第一版。
+13. 新增评测集和评测 Runner。已完成第一版。
+14. 拆分 `CustomerServiceSkill` 中的槽位抽取、意图规则和 Prompt 构造。已完成第一版。
+15. 将聊天接口请求体从 `Map` 改成明确的 `ChatApiRequest` DTO。已完成第一版。
+16. 将空消息错误从临时 `Map` 改成明确的 `ApiErrorResponse`。已完成第一版。
+17. 新增 `GlobalExceptionHandler`，统一 Controller 异常响应。已完成第一版。
+18. 给 `ChatApiRequest` 增加 Spring Validation，并补充 MVC 层接口测试。已完成第一版。
+19. 给评测报告增加 `history/` 历史快照和 `trend.json` 趋势入口。已完成第一版。
+20. 将订单和商品工具的结构化输出从 Map 升级为明确 DTO。已完成第一版。
+21. 将退货、用户和人工转接工具的结构化输出升级为明确 DTO。已完成第一版。
+22. 增加 LLM 调用失败降级回复，并补充 Runtime Trace 测试。已完成第一版。
+23. 为工具定义补充 outputSchema，并在前端 Tools 面板展示 input/output schema。已完成第一版。
+24. 增强前端 Agent Inspector：Demo 脚本、Trace 过滤、Trace 指标摘要、Trace 复制、工具搜索、工具 Schema 复制和 Eval 评测报告看板。已完成第一版。
+25. 新增 MCP Adapter：提供 `/api/mcp/tools` 和 `/api/mcp/tools/call`，并补充接口测试。已完成第一版。
+26. 新增 Monitor 指标闭环：基于 Trace 聚合工具成功率、LLM 失败率、转人工次数和平均耗时，并在前端 Monitor 面板展示。已完成第一版。
+27. 增强 RAG 检索：新增查询改写、多路召回、简单 rerank、`knowledge_miss` Trace 和 RAG Trace 过滤。已完成第一版。
+28. 升级多轮记忆管理：新增短期记忆窗口、任务记忆快照、规则摘要压缩、Memory API、Memory Trace 和前端 Memory Tab。已完成第一版。
+29. 新增 LLM-as-Judge 评测第一版：四维度 Judge Prompt、结构化 JSON 解析、Fake Judge 稳定测试和 `llm-as-judge.json` 报告。已完成第一版。
+30. 新增 Docker 部署第一版：多阶段 Dockerfile、docker-compose、`.env.example`、环境变量配置和 `/api/health` 健康检查。已完成第一版。
+31. 新增长期用户偏好记忆第一版：记录商品偏好、推荐时读取偏好、Memory 面板展示用户长期记忆。已完成第一版。
 
 ## 9. 暂缓事项
 
 以下内容暂时不要急着做：
 
-- Docker 部署
 - MySQL 持久化
 - 完整 MCP Server
 - 多模型路由
@@ -579,9 +659,24 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 
 我们当前项目的方向是正确的。
 
-下一步最重要的不是继续堆功能，而是把以下两个能力做扎实：
+下一步最重要的不是继续堆功能，而是把以下几个能力继续做扎实：
 
-- 多轮任务状态
-- Agent 执行 Trace
+- 真实 Agent 回复质量评测
+- 真实 MCP Server 或工具嵌套 outputSchema 进一步标准化
+- Skill 按售前、售后、投诉等业务域继续拆分
+- 评测报告可视化或 CI 集成，基于现有 JSON、history 和 trend 做展示
 
-这两个能力做好后，项目就会从“客服 Demo”升级为“真正的任务型 Agent 系统雏形”。
+多轮任务状态、三级会话记忆第一版、长期用户偏好记忆第一版、Agent Trace、MCP-style 工具层、MCP Adapter、工具 inputSchema/outputSchema、业务工具 DTO、知识库 RAG、RAG 查询改写、多路召回、简单 rerank、人工转接、LLM 失败降级、Monitor 在线指标、前端 Agent Inspector、Memory 面板、Demo 演示脚本、Eval 评测报告看板、离线路由评测、知识库召回评测、回复质量规则评测、Agent 链路回复评测、LLM-as-Judge 第一版、Docker 部署第一版、评测报告 JSON 化、评测历史趋势、结构化工具数据、Skill 第一轮拆分、接口 DTO、参数校验和统一错误响应已经完成。接下来补真实模型 Judge 可选评测和持久化存储后，项目会更接近一个可以完整讲述的简历级 Agent 系统。
+
+下一阶段不再零散堆功能，而是按模块推进。详细任务拆分见：
+
+- [客服Agent-15-后续模块化开发计划.md](客服Agent-15-后续模块化开发计划.md)
+
+优先级顺序为：
+
+1. 工具协议与 MCP 边界增强。
+2. Monitor 指标与 Eval 闭环增强。
+3. RAG 检索增强。
+4. 多轮记忆管理升级。已完成第一版。
+5. LLM-as-Judge 评测。已完成第一版。
+6. Docker 与部署工程化。已完成第一版。

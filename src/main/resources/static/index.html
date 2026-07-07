@@ -6,747 +6,2051 @@
     <title>Smart CS Agent</title>
     <style>
         :root {
-            --primary: #6366f1;
-            --primary-light: #818cf8;
-            --primary-dark: #4f46e5;
-            --bg: #f8fafc;
-            --sidebar-bg: #1e1b4b;
-            --sidebar-text: #e0e7ff;
-            --card: #ffffff;
-            --text: #1e293b;
-            --text-light: #64748b;
-            --border: #e2e8f0;
-            --success: #10b981;
-            --user-bubble: #6366f1;
-            --assistant-bubble: #ffffff;
+            --bg: #f4f6f8;
+            --surface: #ffffff;
+            --surface-soft: #f8fafc;
+            --border: #d9e0e7;
+            --border-strong: #b8c2cc;
+            --text: #17212b;
+            --muted: #607080;
+            --accent: #2563eb;
+            --accent-soft: #dbeafe;
+            --teal: #0f766e;
+            --teal-soft: #ccfbf1;
+            --amber: #b45309;
+            --amber-soft: #fef3c7;
+            --danger: #b91c1c;
+            --danger-soft: #fee2e2;
+            --sidebar: #12343b;
+            --sidebar-soft: #1d4d55;
+            --sidebar-text: #e6f4f1;
+            --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
         }
 
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            box-sizing: border-box;
+        }
 
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: var(--bg);
+            margin: 0;
             height: 100vh;
+            background: var(--bg);
+            color: var(--text);
+            font-family: Inter, "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+        }
+
+        button,
+        input,
+        select {
+            font: inherit;
+        }
+
+        button {
+            border: 0;
+        }
+
+        .app {
+            display: grid;
+            grid-template-columns: 248px minmax(360px, 1fr) 372px;
+            height: 100vh;
+            min-height: 0;
+        }
+
+        .sidebar {
+            background: var(--sidebar);
+            color: var(--sidebar-text);
             display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .brand {
+            padding: 22px 20px 18px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        .brand-title {
+            font-size: 18px;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+
+        .brand-subtitle {
+            margin-top: 6px;
+            color: rgba(230, 244, 241, 0.68);
+            font-size: 12px;
+        }
+
+        .sidebar-section {
+            padding: 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .section-label {
+            margin-bottom: 10px;
+            color: rgba(230, 244, 241, 0.62);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .user-list {
+            display: grid;
+            gap: 8px;
+        }
+
+        .user-button {
+            width: 100%;
+            min-height: 54px;
+            padding: 10px;
+            border-radius: 8px;
+            background: transparent;
+            color: inherit;
+            display: grid;
+            grid-template-columns: 34px minmax(0, 1fr);
+            gap: 10px;
+            align-items: center;
+            cursor: pointer;
+            text-align: left;
+        }
+
+        .user-button:hover,
+        .user-button.active {
+            background: var(--sidebar-soft);
+        }
+
+        .avatar {
+            width: 34px;
+            height: 34px;
+            border-radius: 8px;
+            display: grid;
+            place-items: center;
+            background: var(--teal);
+            color: white;
+            font-weight: 700;
+        }
+
+        .user-name,
+        .user-id {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .user-name {
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        .user-id {
+            margin-top: 2px;
+            font-size: 12px;
+            color: rgba(230, 244, 241, 0.66);
+        }
+
+        .quick-list,
+        .demo-box {
+            display: grid;
+            gap: 8px;
+        }
+
+        .quick-button,
+        .side-action,
+        .demo-run-button {
+            min-height: 38px;
+            padding: 9px 10px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--sidebar-text);
+            cursor: pointer;
+            text-align: left;
+        }
+
+        .side-action {
+            width: 100%;
+        }
+
+        .quick-button:hover,
+        .side-action:hover,
+        .demo-run-button:hover {
+            background: rgba(255, 255, 255, 0.14);
+        }
+
+        .demo-run-button:disabled {
+            opacity: 0.62;
+            cursor: not-allowed;
+        }
+
+        .scenario-select {
+            width: 100%;
+            min-height: 38px;
+            padding: 0 10px;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 8px;
+            outline: 0;
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--sidebar-text);
+        }
+
+        .scenario-select option {
             color: var(--text);
         }
 
-        /* Sidebar */
-        .sidebar {
-            width: 280px;
-            background: linear-gradient(180deg, #1e1b4b 0%, #312e81 100%);
-            display: flex;
-            flex-direction: column;
-            padding: 0;
-            box-shadow: 4px 0 20px rgba(0,0,0,0.1);
+        .demo-status {
+            min-height: 34px;
+            color: rgba(230, 244, 241, 0.66);
+            font-size: 12px;
+            line-height: 1.45;
         }
 
-        .sidebar-header {
-            padding: 24px;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-        }
-
-        .sidebar-header h2 {
-            font-size: 14px;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            color: var(--sidebar-text);
-            opacity: 0.7;
-            margin-bottom: 4px;
-        }
-
-        .sidebar-header .logo {
-            font-size: 22px;
-            font-weight: 700;
-            color: white;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .sidebar-header .logo span {
-            background: linear-gradient(135deg, #818cf8, #c084fc);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .user-section {
-            padding: 20px 16px;
-            flex: 1;
-        }
-
-        .section-title {
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            color: var(--sidebar-text);
-            opacity: 0.5;
-            margin-bottom: 12px;
-            padding: 0 8px;
-        }
-
-        .user-item {
-            padding: 14px 16px;
-            border-radius: 12px;
-            cursor: pointer;
-            margin-bottom: 6px;
-            transition: all 0.2s ease;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .user-item:hover {
-            background: rgba(255,255,255,0.1);
-        }
-
-        .user-item.active {
-            background: rgba(99, 102, 241, 0.3);
-            box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.5);
-        }
-
-        .user-avatar {
-            width: 40px;
-            height: 40px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-            font-weight: 600;
-            color: white;
-            flex-shrink: 0;
-        }
-
-        .user-avatar.zhang { background: linear-gradient(135deg, #f59e0b, #ef4444); }
-        .user-avatar.li { background: linear-gradient(135deg, #10b981, #06b6d4); }
-
-        .user-info .name {
-            font-weight: 600;
-            color: white;
-            font-size: 14px;
-        }
-
-        .user-info .id {
-            font-size: 11px;
-            color: var(--sidebar-text);
-            opacity: 0.6;
-            margin-top: 2px;
-        }
-
-        /* Debug Panel */
-        .debug-section {
+        .sidebar-footer {
+            margin-top: auto;
             padding: 16px;
-            border-top: 1px solid rgba(255,255,255,0.1);
         }
 
-        .debug-toggle {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            cursor: pointer;
-            padding: 8px;
-            border-radius: 8px;
-            transition: background 0.2s;
-        }
-
-        .debug-toggle:hover {
-            background: rgba(255,255,255,0.1);
-        }
-
-        .debug-toggle span {
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            color: var(--sidebar-text);
-            opacity: 0.7;
-        }
-
-        .debug-toggle .icon {
-            color: var(--sidebar-text);
-            opacity: 0.5;
-            transition: transform 0.3s;
-        }
-
-        .debug-toggle.open .icon {
-            transform: rotate(180deg);
-        }
-
-        .debug-log {
-            background: rgba(0,0,0,0.2);
-            border-radius: 10px;
-            padding: 12px;
-            font-size: 11px;
-            color: var(--sidebar-text);
-            max-height: 180px;
-            overflow-y: auto;
-            font-family: 'JetBrains Mono', 'Fira Code', monospace;
-            margin-top: 10px;
-            display: none;
-        }
-
-        .debug-log.show {
-            display: block;
-            animation: slideDown 0.3s ease;
-        }
-
-        @keyframes slideDown {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .debug-log .entry {
-            margin-bottom: 6px;
-            padding-bottom: 6px;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
-            line-height: 1.4;
-        }
-
-        .debug-log .time {
-            color: rgba(255,255,255,0.3);
-            margin-right: 8px;
-        }
-
-        .debug-log .info { color: #818cf8; }
-        .debug-log .success { color: #34d399; }
-        .debug-log .error { color: #f87171; }
-
-        /* Main */
         .main {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            background: var(--bg);
+            min-width: 0;
+            min-height: 0;
+            display: grid;
+            grid-template-rows: auto minmax(0, 1fr) auto;
+            border-right: 1px solid var(--border);
         }
 
-        .header {
-            background: var(--card);
-            padding: 16px 28px;
+        .topbar {
+            height: 68px;
+            padding: 0 22px;
+            background: var(--surface);
             border-bottom: 1px solid var(--border);
             display: flex;
             align-items: center;
             justify-content: space-between;
-            backdrop-filter: blur(10px);
-        }
-
-        .header-left {
-            display: flex;
-            align-items: center;
             gap: 16px;
         }
 
-        .header h1 {
-            font-size: 18px;
-            font-weight: 700;
-            color: var(--text);
+        .topbar-title {
+            font-size: 17px;
+            font-weight: 800;
         }
 
-        .header .badge {
-            padding: 4px 12px;
-            background: linear-gradient(135deg, #6366f1, #8b5cf6);
-            color: white;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 0.5px;
+        .topbar-meta {
+            margin-top: 4px;
+            color: var(--muted);
+            font-size: 12px;
         }
 
-        .status-indicator {
-            display: flex;
+        .status-pill {
+            min-width: 88px;
+            height: 30px;
+            padding: 0 12px;
+            border-radius: 999px;
+            display: inline-flex;
             align-items: center;
+            justify-content: center;
             gap: 8px;
-            font-size: 13px;
-            color: var(--text-light);
+            background: var(--teal-soft);
+            color: #115e59;
+            font-size: 12px;
+            font-weight: 700;
         }
 
         .status-dot {
             width: 8px;
             height: 8px;
-            border-radius: 50%;
-            background: var(--success);
-            animation: pulse 2s infinite;
+            border-radius: 999px;
+            background: currentColor;
         }
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
-        /* Chat */
-        .chat-container {
-            flex: 1;
+        .chat {
+            min-height: 0;
             overflow-y: auto;
-            padding: 28px;
-            scroll-behavior: smooth;
-        }
-
-        .welcome-message {
-            text-align: center;
-            padding: 60px 20px;
-            animation: fadeIn 0.5s ease;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .welcome-icon {
-            font-size: 48px;
-            margin-bottom: 16px;
-        }
-
-        .welcome-message h2 {
-            font-size: 24px;
-            font-weight: 700;
-            color: var(--text);
-            margin-bottom: 8px;
-        }
-
-        .welcome-message p {
-            color: var(--text-light);
-            font-size: 14px;
-            max-width: 400px;
-            margin: 0 auto;
-            line-height: 1.6;
-        }
-
-        .quick-actions {
+            padding: 22px;
             display: flex;
-            gap: 10px;
-            justify-content: center;
-            margin-top: 24px;
-            flex-wrap: wrap;
+            flex-direction: column;
+            gap: 16px;
         }
 
-        .quick-btn {
-            padding: 10px 18px;
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 20px;
-            font-size: 13px;
-            color: var(--text);
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .quick-btn:hover {
-            border-color: var(--primary);
-            color: var(--primary);
-            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15);
+        .empty-state {
+            margin: auto;
+            max-width: 480px;
+            color: var(--muted);
+            text-align: center;
+            line-height: 1.7;
         }
 
         .message {
-            margin-bottom: 20px;
-            display: flex;
-            gap: 12px;
-            animation: messageIn 0.3s ease;
-        }
-
-        @keyframes messageIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            display: grid;
+            grid-template-columns: 36px minmax(0, 1fr);
+            gap: 10px;
+            align-items: start;
         }
 
         .message.user {
-            flex-direction: row-reverse;
+            grid-template-columns: minmax(0, 1fr) 36px;
         }
 
-        .msg-avatar {
-            width: 36px;
-            height: 36px;
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            flex-shrink: 0;
+        .message.user .message-body {
+            justify-self: end;
         }
 
-        .message.user .msg-avatar {
-            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        .message.user .avatar {
+            grid-column: 2;
+            background: var(--accent);
         }
 
-        .message.assistant .msg-avatar {
-            background: linear-gradient(135deg, #10b981, #06b6d4);
+        .message.assistant .avatar {
+            background: var(--teal);
         }
 
-        .msg-content {
-            max-width: 70%;
+        .message-body {
+            max-width: min(720px, 82%);
         }
 
-        .msg-bubble {
-            padding: 14px 18px;
-            border-radius: 16px;
-            font-size: 14px;
-            line-height: 1.6;
-            position: relative;
-        }
-
-        .message.user .msg-bubble {
-            background: linear-gradient(135deg, #6366f1, #8b5cf6);
-            color: white;
-            border-bottom-right-radius: 4px;
-            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-        }
-
-        .message.assistant .msg-bubble {
-            background: var(--card);
-            color: var(--text);
-            border-bottom-left-radius: 4px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        .bubble {
+            padding: 12px 14px;
+            border-radius: 8px;
             border: 1px solid var(--border);
+            background: var(--surface);
+            box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            line-height: 1.62;
+            font-size: 14px;
         }
 
-        .msg-time {
-            font-size: 11px;
-            color: var(--text-light);
+        .message.user .bubble {
+            border-color: #1d4ed8;
+            background: var(--accent);
+            color: white;
+        }
+
+        .message-time {
             margin-top: 6px;
-            opacity: 0.7;
+            color: var(--muted);
+            font-size: 11px;
         }
 
-        .message.user .msg-time {
+        .message.user .message-time {
             text-align: right;
         }
 
-        /* Loading */
-        .typing-indicator {
-            display: none;
-            padding: 0 28px 20px;
-            gap: 12px;
-            align-items: center;
-        }
-
-        .typing-indicator.show {
-            display: flex;
-        }
-
-        .typing-indicator .msg-avatar {
-            width: 36px;
-            height: 36px;
-            border-radius: 10px;
-            background: linear-gradient(135deg, #10b981, #06b6d4);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-        }
-
-        .typing-dots {
-            background: var(--card);
-            padding: 14px 20px;
-            border-radius: 16px;
-            border-bottom-left-radius: 4px;
-            border: 1px solid var(--border);
-            display: flex;
-            gap: 6px;
-        }
-
-        .typing-dots span {
-            width: 8px;
-            height: 8px;
-            background: var(--primary);
-            border-radius: 50%;
-            animation: typing 1.4s infinite;
-        }
-
-        .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
-        .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
-
-        @keyframes typing {
-            0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-            30% { transform: translateY(-8px); opacity: 1; }
-        }
-
-        /* Input */
-        .input-area {
-            background: var(--card);
-            padding: 20px 28px;
+        .composer {
+            padding: 16px 22px;
+            background: var(--surface);
             border-top: 1px solid var(--border);
         }
 
-        .input-wrapper {
-            display: flex;
-            gap: 12px;
+        .composer-row {
+            min-height: 48px;
+            padding: 5px 5px 5px 14px;
+            border: 1px solid var(--border-strong);
+            border-radius: 8px;
+            background: var(--surface-soft);
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 42px;
+            gap: 8px;
             align-items: center;
-            background: var(--bg);
-            border: 2px solid var(--border);
-            border-radius: 16px;
-            padding: 6px 6px 6px 20px;
-            transition: all 0.3s;
         }
 
-        .input-wrapper:focus-within {
-            border-color: var(--primary);
-            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+        .composer-row:focus-within {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
         }
 
-        .input-wrapper input {
-            flex: 1;
-            border: none;
+        .composer input {
+            width: 100%;
+            min-width: 0;
+            border: 0;
+            outline: 0;
             background: transparent;
-            font-size: 14px;
             color: var(--text);
-            outline: none;
-            padding: 10px 0;
-        }
-
-        .input-wrapper input::placeholder {
-            color: var(--text-light);
-        }
-
-        .send-btn {
-            padding: 12px 24px;
-            background: linear-gradient(135deg, #6366f1, #8b5cf6);
-            color: white;
-            border: none;
-            border-radius: 12px;
             font-size: 14px;
-            font-weight: 600;
+        }
+
+        .icon-button {
+            width: 38px;
+            height: 38px;
+            border-radius: 8px;
+            background: var(--accent);
+            color: white;
+            display: grid;
+            place-items: center;
             cursor: pointer;
-            transition: all 0.2s;
+        }
+
+        .icon-button:hover {
+            background: #1d4ed8;
+        }
+
+        .icon-button:disabled {
+            background: #94a3b8;
+            cursor: not-allowed;
+        }
+
+        .icon-button svg {
+            width: 19px;
+            height: 19px;
+        }
+
+        .inspector {
+            min-width: 0;
+            min-height: 0;
+            background: var(--surface);
+            display: grid;
+            grid-template-rows: auto auto minmax(0, 1fr);
+        }
+
+        .inspector-header {
+            height: 68px;
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
             display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .inspector-title {
+            font-size: 15px;
+            font-weight: 800;
+        }
+
+        .mini-grid {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .mini-stat {
+            min-height: 56px;
+            padding: 8px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-soft);
+        }
+
+        .mini-label {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .mini-value {
+            margin-top: 6px;
+            font-size: 15px;
+            font-weight: 800;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .tabs {
+            display: inline-grid;
+            grid-auto-flow: column;
+            gap: 4px;
+            padding: 3px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-soft);
+        }
+
+        .tab-button {
+            height: 28px;
+            padding: 0 10px;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .tab-button.active {
+            background: var(--surface);
+            color: var(--text);
+            box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+        }
+
+        .panel {
+            min-height: 0;
+            overflow-y: auto;
+            padding: 14px 16px 18px;
+        }
+
+        .trace-list,
+        .tool-list,
+        .eval-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .panel-toolbar {
+            margin-bottom: 12px;
+            display: flex;
+            flex-wrap: wrap;
             align-items: center;
             gap: 8px;
         }
 
-        .send-btn:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+        .metric-list {
+            margin-bottom: 12px;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
         }
 
-        .send-btn:active {
-            transform: translateY(0);
+        .metric-item {
+            min-height: 44px;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-soft);
         }
 
-        .send-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-            box-shadow: none;
+        .metric-label {
+            color: var(--muted);
+            font-size: 11px;
         }
 
-        .send-btn svg {
-            width: 18px;
-            height: 18px;
+        .metric-value {
+            margin-top: 4px;
+            font-size: 14px;
+            font-weight: 800;
         }
 
-        /* Scrollbar */
-        ::-webkit-scrollbar {
-            width: 6px;
+        .filter-chip,
+        .small-action {
+            min-height: 30px;
+            padding: 0 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 700;
         }
 
-        ::-webkit-scrollbar-track {
-            background: transparent;
+        .filter-chip:hover,
+        .small-action:hover {
+            border-color: var(--border-strong);
+            color: var(--text);
         }
 
-        ::-webkit-scrollbar-thumb {
-            background: rgba(0,0,0,0.1);
-            border-radius: 3px;
+        .filter-chip.active {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            color: #1e40af;
         }
 
-        ::-webkit-scrollbar-thumb:hover {
-            background: rgba(0,0,0,0.2);
+        .tool-search {
+            width: 100%;
+            min-height: 36px;
+            padding: 0 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            outline: 0;
+            background: var(--surface-soft);
+            color: var(--text);
+            font-size: 13px;
+        }
+
+        .tool-search:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+        }
+
+        .trace-row,
+        .tool-row {
+            padding: 11px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-soft);
+        }
+
+        .trace-row {
+            cursor: pointer;
+        }
+
+        .trace-row:hover {
+            border-color: var(--border-strong);
+        }
+
+        .row-actions,
+        .tool-actions {
+            margin-top: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .row-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .row-title {
+            min-width: 0;
+            font-size: 13px;
+            font-weight: 800;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .row-subtitle {
+            margin-top: 6px;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+        }
+
+        .tool-contract {
+            margin-top: 8px;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+        }
+
+        .eval-section-title {
+            margin: 14px 0 8px;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+
+        .json-details {
+            margin-top: 10px;
+        }
+
+        .json-details summary {
+            cursor: pointer;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+
+        .badge {
+            flex-shrink: 0;
+            padding: 3px 8px;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: #1e40af;
+            font-size: 11px;
+            font-weight: 800;
+        }
+
+        .badge.tool {
+            background: var(--teal-soft);
+            color: #115e59;
+        }
+
+        .badge.warn {
+            background: var(--amber-soft);
+            color: var(--amber);
+        }
+
+        .badge.error {
+            background: var(--danger-soft);
+            color: var(--danger);
+        }
+
+        .json-block {
+            margin-top: 10px;
+            max-height: 220px;
+            overflow: auto;
+            padding: 10px;
+            border-radius: 8px;
+            background: #0f172a;
+            color: #dbeafe;
+            font-family: "JetBrains Mono", Consolas, monospace;
+            font-size: 11px;
+            line-height: 1.55;
+            white-space: pre-wrap;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        @media (max-width: 1100px) {
+            body {
+                height: auto;
+                min-height: 100vh;
+            }
+
+            .app {
+                grid-template-columns: 220px minmax(0, 1fr);
+                grid-template-rows: minmax(640px, auto) 420px;
+                height: auto;
+                min-height: 100vh;
+            }
+
+            .inspector {
+                grid-column: 1 / -1;
+                display: grid;
+                min-height: 420px;
+                border-top: 1px solid var(--border);
+            }
+        }
+
+        @media (max-width: 760px) {
+            body {
+                height: auto;
+                min-height: 100vh;
+            }
+
+            .app {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto minmax(70vh, auto) 420px;
+                min-height: 100vh;
+            }
+
+            .sidebar {
+                grid-row: auto;
+                min-height: auto;
+            }
+
+            .main,
+            .inspector {
+                grid-column: auto;
+                grid-row: auto;
+            }
+
+            .sidebar-section {
+                padding: 12px;
+            }
+
+            .user-list,
+            .quick-list {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .main {
+                min-height: 70vh;
+                border-right: 0;
+            }
+
+            .message-body {
+                max-width: 92%;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="sidebar">
-        <div class="sidebar-header">
-            <div class="logo">
-                <span>🤖</span>
-                <span>Smart CS Agent</span>
-            </div>
+<div class="app">
+    <aside class="sidebar">
+        <div class="brand">
+            <div class="brand-title">Smart CS Agent</div>
+            <div class="brand-subtitle">Customer Service Runtime</div>
         </div>
 
-        <div class="user-section">
-            <div class="section-title">选择用户</div>
-            <div id="userList"></div>
-        </div>
+        <section class="sidebar-section">
+            <div class="section-label">Users</div>
+            <div class="user-list" id="userList"></div>
+        </section>
 
-        <div class="debug-section">
-            <div class="debug-toggle" onclick="toggleDebug()">
-                <span>调试控制台</span>
-                <span class="icon">▼</span>
+        <section class="sidebar-section">
+            <div class="section-label">Cases</div>
+            <div class="quick-list">
+                <button class="quick-button" data-message="帮我查一下订单 ORD-001">查询订单 ORD-001</button>
+                <button class="quick-button" data-message="我想退 ORD-004 这个订单">申请退货 ORD-004</button>
+                <button class="quick-button" data-message="超过七天还能退吗？">退货政策</button>
+                <button class="quick-button" data-message="我要找人工客服">人工转接</button>
             </div>
-            <div class="debug-log" id="debugLog"></div>
-        </div>
-    </div>
+        </section>
 
-    <div class="main">
-        <div class="header">
-            <div class="header-left">
-                <h1>智能客服</h1>
-                <span class="badge">AI Agent</span>
+        <section class="sidebar-section">
+            <div class="section-label">Demo</div>
+            <div class="demo-box">
+                <select class="scenario-select" id="demoSelect" aria-label="选择演示脚本">
+                    <option value="returnApply">退货多轮演示</option>
+                    <option value="orderLookup">订单查询演示</option>
+                    <option value="handoff">人工转接演示</option>
+                </select>
+                <button class="demo-run-button" id="runDemoBtn">运行演示</button>
+                <div class="demo-status" id="demoStatus">自动发送多轮消息，适合面试时演示 Trace 和工具调用。</div>
             </div>
-            <div class="status-indicator">
+        </section>
+
+        <div class="sidebar-footer">
+            <button class="side-action" id="newConversationBtn">新会话</button>
+        </div>
+    </aside>
+
+    <main class="main">
+        <header class="topbar">
+            <div>
+                <div class="topbar-title">智能客服工作台</div>
+                <div class="topbar-meta" id="conversationMeta">conversation: -</div>
+            </div>
+            <div class="status-pill" id="statusPill">
                 <span class="status-dot"></span>
-                <span id="status">就绪</span>
+                <span id="statusText">就绪</span>
             </div>
-        </div>
+        </header>
 
-        <div class="chat-container" id="chatContainer">
-            <div class="welcome-message" id="welcome">
-                <div class="welcome-icon">👋</div>
-                <h2>欢迎使用智能客服</h2>
-                <p>我是您的 AI 客服助手，可以帮您查询订单、了解商品信息、处理退换货等。</p>
-                <div class="quick-actions">
-                    <button class="quick-btn" onclick="quickSend('帮我查一下订单 ORD-001')">📦 查询订单</button>
-                    <button class="quick-btn" onclick="quickSend('有什么产品推荐吗')">🛍️ 商品咨询</button>
-                    <button class="quick-btn" onclick="quickSend('我想退 ORD-004 这个订单')">↩️ 申请退换</button>
-                </div>
-            </div>
-        </div>
+        <section class="chat" id="chatContainer">
+            <div class="empty-state" id="emptyState">当前会话暂无消息</div>
+        </section>
 
-        <div class="typing-indicator" id="loading">
-            <div class="msg-avatar">🤖</div>
-            <div class="typing-dots">
-                <span></span>
-                <span></span>
-                <span></span>
-            </div>
-        </div>
-
-        <div class="input-area">
-            <div class="input-wrapper">
-                <input type="text" id="messageInput" placeholder="输入您的消息..." autocomplete="off">
-                <button class="send-btn" id="sendBtn" onclick="sendMessage()">
-                    发送
+        <footer class="composer">
+            <div class="composer-row">
+                <input id="messageInput" type="text" autocomplete="off" placeholder="输入消息">
+                <button class="icon-button" id="sendBtn" aria-label="发送">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13"/>
+                        <path d="M5 12h14"></path>
+                        <path d="m13 6 6 6-6 6"></path>
                     </svg>
                 </button>
             </div>
-        </div>
-    </div>
+        </footer>
+    </main>
 
-    <script>
-        let currentUser = null;
-        let users = [];
-        let debugOpen = false;
+    <aside class="inspector">
+        <header class="inspector-header">
+            <div class="inspector-title">Agent Inspector</div>
+            <div class="tabs">
+                <button class="tab-button active" data-tab="trace">Trace</button>
+                <button class="tab-button" data-tab="memory">Memory</button>
+                <button class="tab-button" data-tab="tools">Tools</button>
+                <button class="tab-button" data-tab="monitor">Monitor</button>
+                <button class="tab-button" data-tab="eval">Eval</button>
+            </div>
+        </header>
 
-        async function loadUsers() {
-            try {
-                const res = await fetch('/api/chat/users');
-                users = await res.json();
-                renderUsers();
-                if (users.length > 0) selectUser(users[0].userId);
-            } catch (err) {
-                console.error('Failed to load users:', err);
-            }
+        <section class="mini-grid">
+            <div class="mini-stat">
+                <div class="mini-label">Events</div>
+                <div class="mini-value" id="eventCount">0</div>
+            </div>
+            <div class="mini-stat">
+                <div class="mini-label">Tool</div>
+                <div class="mini-value" id="lastTool">-</div>
+            </div>
+            <div class="mini-stat">
+                <div class="mini-label">Latency</div>
+                <div class="mini-value" id="lastLatency">-</div>
+            </div>
+        </section>
+
+        <section class="panel" id="tracePanel">
+            <div class="panel-toolbar">
+                <button class="filter-chip active" data-trace-filter="all">All</button>
+                <button class="filter-chip" data-trace-filter="memory">Memory</button>
+                <button class="filter-chip" data-trace-filter="tool">Tool</button>
+                <button class="filter-chip" data-trace-filter="knowledge">RAG</button>
+                <button class="filter-chip" data-trace-filter="llm">LLM</button>
+                <button class="filter-chip" data-trace-filter="handoff">Handoff</button>
+                <button class="filter-chip" data-trace-filter="failed">Failed</button>
+                <button class="filter-chip" data-trace-filter="final">Final</button>
+                <button class="small-action" id="copyTraceBtn">复制 Trace</button>
+            </div>
+            <div class="metric-list" id="traceMetrics"></div>
+            <div class="trace-list" id="traceList"></div>
+        </section>
+
+        <section class="panel hidden" id="toolsPanel">
+            <div class="panel-toolbar">
+                <input class="tool-search" id="toolSearchInput" type="search" placeholder="搜索工具名称或说明">
+            </div>
+            <div class="tool-list" id="toolList"></div>
+        </section>
+
+        <section class="panel hidden" id="memoryPanel">
+            <div class="panel-toolbar">
+                <button class="small-action" id="refreshMemoryBtn">刷新记忆</button>
+                <button class="small-action" id="copyMemoryBtn">复制记忆</button>
+            </div>
+            <div class="metric-list" id="memoryMetrics"></div>
+            <div class="eval-section-title">User Long-Term Memory</div>
+            <div class="eval-list" id="userMemoryList"></div>
+            <div class="eval-section-title">Task Memory</div>
+            <div class="eval-list" id="taskMemoryList"></div>
+            <div class="eval-section-title">Summary Memory</div>
+            <div class="eval-list" id="summaryMemoryList"></div>
+            <div class="eval-section-title">Short-Term Messages</div>
+            <div class="eval-list" id="shortTermMemoryList"></div>
+        </section>
+
+        <section class="panel hidden" id="monitorPanel">
+            <div class="panel-toolbar">
+                <button class="small-action" id="refreshMonitorBtn">刷新指标</button>
+                <button class="small-action" id="copyMonitorBtn">复制指标</button>
+            </div>
+            <div class="metric-list" id="monitorMetrics"></div>
+            <div class="eval-section-title">Recent Turns</div>
+            <div class="eval-list" id="monitorList"></div>
+        </section>
+
+        <section class="panel hidden" id="evalPanel">
+            <div class="panel-toolbar">
+                <button class="small-action" id="refreshEvalBtn">刷新评测</button>
+                <button class="small-action" id="copyEvalBtn">复制报告</button>
+            </div>
+            <div class="metric-list" id="evalMetrics"></div>
+            <div class="eval-section-title">Reports</div>
+            <div class="eval-list" id="evalList"></div>
+            <div class="eval-section-title">Trend</div>
+            <div class="eval-list" id="trendList"></div>
+        </section>
+    </aside>
+</div>
+
+<script>
+    // 演示脚本只放在前端：它不会影响后端逻辑，只是帮我们在面试时快速复现典型多轮场景。
+    const demoScripts = {
+        returnApply: {
+            name: '退货多轮演示',
+            steps: ['我想退货', 'ORD-004', '质量问题，耳机左边没有声音']
+        },
+        orderLookup: {
+            name: '订单查询演示',
+            steps: ['帮我查一下订单 ORD-001']
+        },
+        handoff: {
+            name: '人工转接演示',
+            steps: ['我要投诉，想找人工客服处理']
         }
+    };
 
-        function renderUsers() {
-            const container = document.getElementById('userList');
-            container.innerHTML = users.map(u => {
-                const isActive = currentUser?.userId === u.userId;
-                const avatarClass = u.userId === 'USER-001' ? 'zhang' : 'li';
-                const initial = u.name.charAt(0);
-                return `
-                    <div class="user-item ${isActive ? 'active' : ''}" onclick="selectUser('${u.userId}')">
-                        <div class="user-avatar ${avatarClass}">${initial}</div>
-                        <div class="user-info">
-                            <div class="name">${u.name}</div>
-                            <div class="id">${u.userId}</div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        }
+    const state = {
+        users: [],
+        tools: [],
+        currentUser: null,
+        conversationIds: {},
+        messagesByConversation: {},
+        tracesByConversation: {},
+        trace: [],
+        evalReport: null,
+        monitorSummary: null,
+        memorySnapshot: null,
+        userMemorySnapshot: null,
+        activeTab: 'trace',
+        traceFilter: 'all',
+        toolSearch: '',
+        demoRunning: false
+    };
 
-        function selectUser(userId) {
-            currentUser = users.find(u => u.userId === userId);
-            renderUsers();
-            addDebugLog('用户: ' + currentUser.name + ' (' + currentUser.userId + ')', 'info');
-        }
+    const els = {
+        userList: document.getElementById('userList'),
+        toolList: document.getElementById('toolList'),
+        traceList: document.getElementById('traceList'),
+        chatContainer: document.getElementById('chatContainer'),
+        emptyState: document.getElementById('emptyState'),
+        messageInput: document.getElementById('messageInput'),
+        sendBtn: document.getElementById('sendBtn'),
+        statusText: document.getElementById('statusText'),
+        conversationMeta: document.getElementById('conversationMeta'),
+        eventCount: document.getElementById('eventCount'),
+        lastTool: document.getElementById('lastTool'),
+        lastLatency: document.getElementById('lastLatency'),
+        tracePanel: document.getElementById('tracePanel'),
+        memoryPanel: document.getElementById('memoryPanel'),
+        toolsPanel: document.getElementById('toolsPanel'),
+        monitorPanel: document.getElementById('monitorPanel'),
+        evalPanel: document.getElementById('evalPanel'),
+        traceMetrics: document.getElementById('traceMetrics'),
+        memoryMetrics: document.getElementById('memoryMetrics'),
+        userMemoryList: document.getElementById('userMemoryList'),
+        taskMemoryList: document.getElementById('taskMemoryList'),
+        summaryMemoryList: document.getElementById('summaryMemoryList'),
+        shortTermMemoryList: document.getElementById('shortTermMemoryList'),
+        monitorMetrics: document.getElementById('monitorMetrics'),
+        monitorList: document.getElementById('monitorList'),
+        evalMetrics: document.getElementById('evalMetrics'),
+        evalList: document.getElementById('evalList'),
+        trendList: document.getElementById('trendList'),
+        copyTraceBtn: document.getElementById('copyTraceBtn'),
+        toolSearchInput: document.getElementById('toolSearchInput'),
+        demoSelect: document.getElementById('demoSelect'),
+        runDemoBtn: document.getElementById('runDemoBtn'),
+        demoStatus: document.getElementById('demoStatus'),
+        refreshMonitorBtn: document.getElementById('refreshMonitorBtn'),
+        copyMonitorBtn: document.getElementById('copyMonitorBtn'),
+        refreshMemoryBtn: document.getElementById('refreshMemoryBtn'),
+        copyMemoryBtn: document.getElementById('copyMemoryBtn'),
+        refreshEvalBtn: document.getElementById('refreshEvalBtn'),
+        copyEvalBtn: document.getElementById('copyEvalBtn')
+    };
 
-        function toggleDebug() {
-            debugOpen = !debugOpen;
-            document.querySelector('.debug-toggle').classList.toggle('open', debugOpen);
-            document.getElementById('debugLog').classList.toggle('show', debugOpen);
-        }
+    async function init() {
+        bindEvents();
+        await Promise.all([loadUsers(), loadTools(), loadMonitorSummary(), loadEvalReports()]);
+        renderInspector();
+    }
 
-        function quickSend(text) {
-            document.getElementById('messageInput').value = text;
-            sendMessage();
-        }
-
-        async function sendMessage() {
-            const input = document.getElementById('messageInput');
-            const message = input.value.trim();
-            if (!message) return;
-
-            // Hide welcome
-            const welcome = document.getElementById('welcome');
-            if (welcome) welcome.style.display = 'none';
-
-            // Add user message
-            addMessage('user', message);
-            input.value = '';
-
-            // Show loading
-            document.getElementById('loading').classList.add('show');
-            document.getElementById('sendBtn').disabled = true;
-            document.getElementById('status').textContent = '思考中...';
-            addDebugLog('发送: ' + message.substring(0, 50) + (message.length > 50 ? '...' : ''), 'info');
-
-            try {
-                const res = await fetch('/api/chat/send', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message, userId: currentUser?.userId || 'anonymous' })
-                });
-                const data = await res.json();
-                addMessage('assistant', data.reply);
-                addDebugLog('收到回复: ' + data.reply.substring(0, 50) + '...', 'success');
-            } catch (err) {
-                addMessage('assistant', '抱歉，出了点问题，请稍后再试。');
-                addDebugLog('错误: ' + err.message, 'error');
-            }
-
-            document.getElementById('loading').classList.remove('show');
-            document.getElementById('sendBtn').disabled = false;
-            document.getElementById('status').textContent = '就绪';
-        }
-
-        function addMessage(role, content) {
-            const container = document.getElementById('chatContainer');
-            const div = document.createElement('div');
-            div.className = 'message ' + role;
-
-            const avatar = role === 'user' ? (currentUser?.name?.charAt(0) || 'U') : '🤖';
-            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-            div.innerHTML = `
-                <div class="msg-avatar">${avatar}</div>
-                <div class="msg-content">
-                    <div class="msg-bubble">${content.replace(/\n/g, '<br>')}</div>
-                    <div class="msg-time">${time}</div>
-                </div>
-            `;
-
-            container.appendChild(div);
-            container.scrollTop = container.scrollHeight;
-        }
-
-        function addDebugLog(text, type = 'info') {
-            const log = document.getElementById('debugLog');
-            const time = new Date().toLocaleTimeString();
-            const entry = document.createElement('div');
-            entry.className = 'entry';
-            entry.innerHTML = `<span class="time">${time}</span> <span class="${type}">${text}</span>`;
-            log.appendChild(entry);
-            log.scrollTop = log.scrollHeight;
-        }
-
-        document.getElementById('messageInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
+    function bindEvents() {
+        els.sendBtn.addEventListener('click', sendMessage);
+        els.messageInput.addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
                 sendMessage();
             }
         });
 
-        loadUsers();
-    </script>
+        document.querySelectorAll('.quick-button').forEach(button => {
+            button.addEventListener('click', () => {
+                els.messageInput.value = button.dataset.message;
+                sendMessage();
+            });
+        });
+
+        document.getElementById('newConversationBtn').addEventListener('click', startNewConversation);
+        els.runDemoBtn.addEventListener('click', runDemo);
+
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', () => selectTab(button.dataset.tab));
+        });
+
+        document.querySelectorAll('.filter-chip').forEach(button => {
+            button.addEventListener('click', () => selectTraceFilter(button.dataset.traceFilter));
+        });
+
+        els.copyTraceBtn.addEventListener('click', copyTrace);
+        els.refreshMemoryBtn.addEventListener('click', loadMemorySnapshot);
+        els.copyMemoryBtn.addEventListener('click', copyMemorySnapshot);
+        els.refreshMonitorBtn.addEventListener('click', loadMonitorSummary);
+        els.copyMonitorBtn.addEventListener('click', copyMonitorSummary);
+        els.refreshEvalBtn.addEventListener('click', loadEvalReports);
+        els.copyEvalBtn.addEventListener('click', copyEvalReport);
+
+        els.toolSearchInput.addEventListener('input', event => {
+            state.toolSearch = event.target.value.trim().toLowerCase();
+            renderTools();
+        });
+    }
+
+    async function loadUsers() {
+        try {
+            const response = await fetch('/api/chat/users');
+            const payload = await readJson(response);
+            if (!response.ok) {
+                throw new Error(payload.message || '用户列表加载失败');
+            }
+            state.users = Array.isArray(payload) ? payload : [];
+            state.currentUser = state.users[0] || null;
+            renderUsers();
+            renderConversationMessages();
+            updateConversationMeta();
+        } catch (error) {
+            appendSystemMessage('用户列表加载失败：' + error.message);
+        }
+    }
+
+    async function loadTools() {
+        try {
+            const response = await fetch('/api/tools');
+            const payload = await readJson(response);
+            if (!response.ok) {
+                throw new Error(payload.message || '工具列表加载失败');
+            }
+            state.tools = payload.tools || [];
+            renderTools();
+        } catch (error) {
+            state.tools = [];
+            renderTools('工具列表加载失败：' + error.message);
+        }
+    }
+
+    async function loadEvalReports() {
+        try {
+            const response = await fetch('/api/eval/reports');
+            const payload = await readJson(response);
+            if (!response.ok) {
+                throw new Error(payload.message || '评测报告加载失败');
+            }
+            state.evalReport = payload;
+            renderEvalReports();
+        } catch (error) {
+            state.evalReport = null;
+            renderEvalReports('评测报告加载失败：' + error.message);
+        }
+    }
+
+    async function loadMonitorSummary() {
+        try {
+            const response = await fetch('/api/monitor/summary');
+            const payload = await readJson(response);
+            if (!response.ok) {
+                throw new Error(payload.message || 'Monitor 指标加载失败');
+            }
+            state.monitorSummary = payload;
+            renderMonitorSummary();
+        } catch (error) {
+            state.monitorSummary = null;
+            renderMonitorSummary('Monitor 指标加载失败：' + error.message);
+        }
+    }
+
+    async function loadMemorySnapshot() {
+        try {
+            const conversationId = currentConversationId();
+            const response = await fetch('/api/chat/conversations/' + encodeURIComponent(conversationId) + '/memory');
+            const payload = await readJson(response);
+            if (!response.ok) {
+                throw new Error(payload.message || '会话记忆加载失败');
+            }
+            state.memorySnapshot = payload;
+            await loadUserMemorySnapshot();
+            renderMemorySnapshot();
+        } catch (error) {
+            state.memorySnapshot = null;
+            await loadUserMemorySnapshot();
+            const message = error.message === 'Conversation not found'
+                    ? '当前会话还没有后端记忆，发送第一条消息后会生成。'
+                    : '会话记忆加载失败：' + error.message;
+            renderMemorySnapshot(message);
+        }
+    }
+
+    async function loadUserMemorySnapshot() {
+        try {
+            const userId = currentUserId();
+            const response = await fetch('/api/chat/users/' + encodeURIComponent(userId) + '/memory');
+            const payload = await readJson(response);
+            if (!response.ok) {
+                throw new Error(payload.message || '用户长期记忆加载失败');
+            }
+            state.userMemorySnapshot = payload;
+        } catch (error) {
+            state.userMemorySnapshot = null;
+        }
+    }
+
+    function renderUsers() {
+        els.userList.innerHTML = state.users.map(user => {
+            const active = state.currentUser?.userId === user.userId ? 'active' : '';
+            const initial = escapeHtml(user.name.slice(0, 1));
+            return `
+                <button class="user-button ${active}" data-user-id="${escapeHtml(user.userId)}">
+                    <span class="avatar">${initial}</span>
+                    <span>
+                        <span class="user-name">${escapeHtml(user.name)}</span>
+                        <span class="user-id">${escapeHtml(user.userId)}</span>
+                    </span>
+                </button>
+            `;
+        }).join('');
+
+        els.userList.querySelectorAll('.user-button').forEach(button => {
+            button.addEventListener('click', () => selectUser(button.dataset.userId));
+        });
+    }
+
+    function selectUser(userId) {
+        state.currentUser = state.users.find(user => user.userId === userId) || null;
+        state.trace = state.tracesByConversation[currentConversationId()] || [];
+        state.memorySnapshot = null;
+        state.userMemorySnapshot = null;
+        renderUsers();
+        renderConversationMessages();
+        updateConversationMeta();
+        renderInspector();
+        renderMemorySnapshot();
+    }
+
+    function startNewConversation() {
+        const userId = currentUserId();
+        const conversationId = 'conv-' + userId + '-' + Date.now();
+        state.conversationIds[userId] = conversationId;
+        state.messagesByConversation[conversationId] = [];
+        state.tracesByConversation[conversationId] = [];
+        state.trace = [];
+        state.memorySnapshot = null;
+        state.userMemorySnapshot = null;
+        renderConversationMessages();
+        updateConversationMeta();
+        renderInspector();
+        renderMemorySnapshot();
+    }
+
+    async function sendMessage(messageOverride) {
+        const message = typeof messageOverride === 'string'
+                ? messageOverride.trim()
+                : els.messageInput.value.trim();
+        if (!message) {
+            return false;
+        }
+
+        appendMessage('user', message);
+        if (typeof messageOverride !== 'string') {
+            els.messageInput.value = '';
+        }
+        setBusy(true);
+
+        try {
+            const userId = currentUserId();
+            const response = await fetch('/api/chat/send', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    message,
+                    userId,
+                    conversationId: state.conversationIds[userId]
+                })
+            });
+
+            const payload = await readJson(response);
+            if (!response.ok) {
+                appendSystemMessage(payload.message || '请求失败');
+                return false;
+            }
+
+            if (payload.conversationId) {
+                state.conversationIds[userId] = payload.conversationId;
+            }
+
+            appendMessage('assistant', payload.reply || '');
+            state.trace = Array.isArray(payload.trace) ? payload.trace : [];
+            state.tracesByConversation[currentConversationId()] = state.trace;
+            updateConversationMeta();
+            renderInspector();
+            await loadMemorySnapshot();
+            await loadMonitorSummary();
+            return true;
+        } catch (error) {
+            appendSystemMessage('请求异常：' + error.message);
+            return false;
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function runDemo() {
+        if (state.demoRunning) {
+            return;
+        }
+
+        const script = demoScripts[els.demoSelect.value] || demoScripts.returnApply;
+        state.demoRunning = true;
+        els.runDemoBtn.disabled = true;
+        els.demoSelect.disabled = true;
+        startNewConversation();
+        let completed = true;
+
+        // 这里故意按真实接口逐轮发送，而不是直接伪造消息：
+        // 这样 Trace、工具调用、会话状态都会走后端真实链路，演示结果更可信。
+        for (let index = 0; index < script.steps.length; index += 1) {
+            els.demoStatus.textContent = `${script.name}：第 ${index + 1}/${script.steps.length} 轮`;
+            const ok = await sendMessage(script.steps[index]);
+            if (!ok) {
+                els.demoStatus.textContent = `${script.name} 中断，请查看聊天区错误信息。`;
+                completed = false;
+                break;
+            }
+            await sleep(420);
+        }
+
+        state.demoRunning = false;
+        els.runDemoBtn.disabled = false;
+        els.demoSelect.disabled = false;
+        setBusy(false);
+        if (completed) {
+            els.demoStatus.textContent = `${script.name} 已完成，可以在右侧查看 Trace 和工具 Schema。`;
+        }
+    }
+
+    function appendMessage(role, content, options = {}) {
+        const timestamp = options.timestamp || Date.now();
+
+        // 前端只负责保存“演示会话”的临时消息，刷新页面后由后端会话状态继续接管真实上下文。
+        if (options.persist !== false) {
+            conversationMessages().push({
+                role,
+                content,
+                timestamp,
+                variant: options.variant || ''
+            });
+        }
+
+        removeEmptyState();
+
+        const message = document.createElement('article');
+        message.className = 'message ' + role;
+
+        const avatar = options.variant === 'system'
+                ? '!'
+                : role === 'user'
+                ? escapeHtml((state.currentUser?.name || 'U').slice(0, 1))
+                : 'AI';
+        const time = new Date(timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+
+        if (role === 'user') {
+            message.innerHTML = `
+                <div class="message-body">
+                    <div class="bubble">${escapeHtml(content)}</div>
+                    <div class="message-time">${time}</div>
+                </div>
+                <div class="avatar">${avatar}</div>
+            `;
+        } else {
+            message.innerHTML = `
+                <div class="avatar">${avatar}</div>
+                <div class="message-body">
+                    <div class="bubble">${escapeHtml(content)}</div>
+                    <div class="message-time">${time}</div>
+                </div>
+            `;
+        }
+
+        els.chatContainer.appendChild(message);
+        els.chatContainer.scrollTop = els.chatContainer.scrollHeight;
+    }
+
+    function appendSystemMessage(content) {
+        appendMessage('assistant', content, {variant: 'system'});
+    }
+
+    function renderConversationMessages() {
+        els.chatContainer.innerHTML = '';
+        const messages = state.messagesByConversation[currentConversationId()] || [];
+
+        if (!messages.length) {
+            els.chatContainer.innerHTML = '<div class="empty-state" id="emptyState">当前会话暂无消息</div>';
+            els.emptyState = document.getElementById('emptyState');
+            return;
+        }
+
+        messages.forEach(message => appendMessage(message.role, message.content, {
+            persist: false,
+            timestamp: message.timestamp,
+            variant: message.variant
+        }));
+    }
+
+    function removeEmptyState() {
+        const empty = document.getElementById('emptyState');
+        if (empty) {
+            empty.remove();
+        }
+    }
+
+    function setBusy(isBusy) {
+        els.sendBtn.disabled = isBusy;
+        els.statusText.textContent = isBusy ? (state.demoRunning ? '演示中' : '处理中') : '就绪';
+    }
+
+    function renderInspector() {
+        els.eventCount.textContent = state.trace.length;
+        els.lastTool.textContent = findLastToolName() || '-';
+        els.lastLatency.textContent = findLastLatency();
+        renderTraceMetrics();
+        renderTrace();
+    }
+
+    function renderTraceMetrics() {
+        const toolCount = countTraceByType('tool');
+        const llmCount = countTraceByType('llm');
+        const failedCount = state.trace.filter(event => matchesEventType(event, 'failed')).length;
+        const totalDuration = state.trace
+                .map(event => Number(event.data?.durationMs || 0))
+                .filter(duration => Number.isFinite(duration) && duration > 0)
+                .reduce((sum, duration) => sum + duration, 0);
+
+        // 这些指标不是业务结果，而是“可观测性摘要”：面试演示时能快速说明 Agent 这一轮做了什么。
+        const metrics = [
+            ['Tool Events', toolCount],
+            ['LLM Events', llmCount],
+            ['Failed', failedCount],
+            ['Trace Time', totalDuration ? totalDuration + 'ms' : '-']
+        ];
+
+        els.traceMetrics.innerHTML = metrics.map(([label, value]) => `
+            <div class="metric-item">
+                <div class="metric-label">${escapeHtml(label)}</div>
+                <div class="metric-value">${escapeHtml(value)}</div>
+            </div>
+        `).join('');
+    }
+
+    function renderTrace() {
+        const visibleTrace = state.trace.filter(matchesTraceFilter);
+
+        if (!visibleTrace.length) {
+            els.traceList.innerHTML = '<div class="trace-row"><div class="row-title">No trace</div><div class="row-subtitle">-</div></div>';
+            return;
+        }
+
+        els.traceList.innerHTML = visibleTrace.map(event => {
+            const badge = badgeClass(event.eventType);
+            const originalIndex = state.trace.indexOf(event);
+            const time = event.timestamp
+                    ? new Date(event.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})
+                    : '-';
+            const dataBlock = event.data && Object.keys(event.data).length
+                    ? `
+                        <details class="json-details">
+                            <summary>查看 data</summary>
+                            <pre class="json-block">${escapeHtml(JSON.stringify(event.data, null, 2))}</pre>
+                        </details>
+                    `
+                    : '';
+            return `
+                <div class="trace-row">
+                    <div class="row-head">
+                        <div class="row-title">#${escapeHtml(event.step ?? '-')} ${escapeHtml(event.eventType || '')}</div>
+                        <span class="badge ${badge}">${escapeHtml(shortType(event.eventType))}</span>
+                    </div>
+                    <div class="row-subtitle">${escapeHtml(event.message || '-')} · ${escapeHtml(time)}</div>
+                    <div class="row-actions">
+                        <button class="small-action trace-copy" data-trace-index="${escapeHtml(originalIndex)}">复制事件</button>
+                    </div>
+                    ${dataBlock}
+                </div>
+            `;
+        }).join('');
+
+        els.traceList.querySelectorAll('.trace-copy').forEach(button => {
+            button.addEventListener('click', event => {
+                event.stopPropagation();
+                const traceEvent = state.trace[Number(button.dataset.traceIndex)];
+                copyText(JSON.stringify(traceEvent || {}, null, 2), '单条 Trace 事件已复制。');
+            });
+        });
+    }
+
+    function matchesTraceFilter(event) {
+        if (state.traceFilter === 'all') {
+            return true;
+        }
+        return matchesEventType(event, state.traceFilter);
+    }
+
+    function matchesEventType(event, type) {
+        const eventType = event.eventType || '';
+        if (type === 'failed') {
+            return eventType.includes('failed') || eventType.includes('error');
+        }
+        return eventType.includes(type);
+    }
+
+    function countTraceByType(type) {
+        return state.trace.filter(event => matchesEventType(event, type)).length;
+    }
+
+    function renderTools(errorMessage) {
+        if (errorMessage) {
+            els.toolList.innerHTML = `<div class="tool-row"><div class="row-title">${escapeHtml(errorMessage)}</div></div>`;
+            return;
+        }
+
+        const visibleTools = state.tools.filter(tool => {
+            if (!state.toolSearch) {
+                return true;
+            }
+            const text = `${tool.name || ''} ${tool.description || ''} ${tool.outputType || ''}`.toLowerCase();
+            return text.includes(state.toolSearch);
+        });
+
+        if (!visibleTools.length) {
+            els.toolList.innerHTML = '<div class="tool-row"><div class="row-title">No tools</div></div>';
+            return;
+        }
+
+        els.toolList.innerHTML = visibleTools.map(tool => {
+            const required = tool.requiredParameters?.length
+                    ? tool.requiredParameters.join(', ')
+                    : '-';
+            const outputType = tool.outputType || tool.outputSchema?.dto || 'Structured data';
+            return `
+                <div class="tool-row">
+                    <div class="row-head">
+                        <div class="row-title">${escapeHtml(tool.name)}</div>
+                        <span class="badge tool">${escapeHtml(required)}</span>
+                    </div>
+                    <div class="row-subtitle">${escapeHtml(tool.description || '-')}</div>
+                    <div class="tool-contract">Required: ${escapeHtml(required)} · Output: ${escapeHtml(outputType)}</div>
+                    <div class="tool-actions">
+                        <button class="small-action tool-copy" data-tool-name="${escapeHtml(tool.name)}">复制 Schema</button>
+                    </div>
+                    <details class="json-details">
+                        <summary>Input Schema</summary>
+                        <pre class="json-block">${escapeHtml(JSON.stringify(tool.inputSchema || {}, null, 2))}</pre>
+                    </details>
+                    <details class="json-details">
+                        <summary>Output Schema</summary>
+                        <pre class="json-block">${escapeHtml(JSON.stringify(tool.outputSchema || {}, null, 2))}</pre>
+                    </details>
+                </div>
+            `;
+        }).join('');
+
+        els.toolList.querySelectorAll('.tool-copy').forEach(button => {
+            button.addEventListener('click', () => copyToolSchema(button.dataset.toolName));
+        });
+    }
+
+    function renderMemorySnapshot(errorMessage) {
+        if (errorMessage) {
+            els.memoryMetrics.innerHTML = '';
+            renderUserMemory();
+            els.taskMemoryList.innerHTML = `<div class="tool-row"><div class="row-title">${escapeHtml(errorMessage)}</div></div>`;
+            els.summaryMemoryList.innerHTML = '';
+            els.shortTermMemoryList.innerHTML = '';
+            return;
+        }
+
+        const memory = state.memorySnapshot;
+        if (!memory) {
+            els.memoryMetrics.innerHTML = '';
+            renderUserMemory();
+            els.taskMemoryList.innerHTML = `
+                <div class="tool-row">
+                    <div class="row-title">No memory</div>
+                    <div class="row-subtitle">发送一轮消息后，这里会展示当前会话的三级记忆。</div>
+                </div>
+            `;
+            els.summaryMemoryList.innerHTML = '';
+            els.shortTermMemoryList.innerHTML = '';
+            return;
+        }
+
+        const metrics = [
+            ['Intent', memory.activeIntent || '-'],
+            ['Pending', memory.pendingSlot || '-'],
+            ['Messages', memory.totalMessageCount ?? 0],
+            ['Short-Term', `${(memory.shortTermMessages || []).length}/${memory.shortTermMessageLimit || '-'}`],
+            ['Long-Term', (state.userMemorySnapshot?.productPreferences || []).length],
+            ['Summary Ver', memory.summaryVersion ?? 0]
+        ];
+
+        els.memoryMetrics.innerHTML = metrics.map(([label, value]) => `
+            <div class="metric-item">
+                <div class="metric-label">${escapeHtml(label)}</div>
+                <div class="metric-value">${escapeHtml(value)}</div>
+            </div>
+        `).join('');
+
+        renderUserMemory();
+        renderTaskMemory(memory.taskMemory || {});
+        renderSummaryMemory(memory);
+        renderShortTermMessages(memory.shortTermMessages || []);
+    }
+
+    function renderUserMemory() {
+        const userMemory = state.userMemorySnapshot;
+        if (!userMemory) {
+            els.userMemoryList.innerHTML = '<div class="tool-row"><div class="row-title">No user memory</div></div>';
+            return;
+        }
+
+        const preferences = userMemory.productPreferences || [];
+        if (!preferences.length) {
+            els.userMemoryList.innerHTML = `
+                <div class="tool-row">
+                    <div class="row-title">No product preferences</div>
+                    <div class="row-subtitle">试试发送“我喜欢蓝牙耳机”，再让 Agent 推荐商品。</div>
+                </div>
+            `;
+            return;
+        }
+
+        els.userMemoryList.innerHTML = `
+            <div class="tool-row">
+                <div class="row-head">
+                    <div class="row-title">${escapeHtml(userMemory.userId || currentUserId())}</div>
+                    <span class="badge warn">v${escapeHtml(userMemory.version ?? 0)}</span>
+                </div>
+                <div class="row-subtitle">${preferences.map(escapeHtml).join(' / ')}</div>
+                <div class="tool-contract">Updated: ${escapeHtml(formatTime(userMemory.updatedAt))}</div>
+            </div>
+        `;
+    }
+
+
+    function renderTaskMemory(taskMemory) {
+        const entries = Object.entries(taskMemory);
+        if (!entries.length) {
+            els.taskMemoryList.innerHTML = '<div class="tool-row"><div class="row-title">No task memory</div></div>';
+            return;
+        }
+
+        els.taskMemoryList.innerHTML = entries.map(([key, value]) => `
+            <div class="tool-row">
+                <div class="row-head">
+                    <div class="row-title">${escapeHtml(key)}</div>
+                    <span class="badge">${escapeHtml(typeof value)}</span>
+                </div>
+                <div class="row-subtitle">${escapeHtml(formatMemoryValue(value))}</div>
+            </div>
+        `).join('');
+    }
+
+    function renderSummaryMemory(memory) {
+        const summary = memory.summaryMemory || '';
+        if (!summary) {
+            els.summaryMemoryList.innerHTML = '<div class="tool-row"><div class="row-title">No summary</div></div>';
+            return;
+        }
+
+        els.summaryMemoryList.innerHTML = `
+            <div class="tool-row">
+                <div class="row-head">
+                    <div class="row-title">compressed summary</div>
+                    <span class="badge warn">v${escapeHtml(memory.summaryVersion ?? 0)}</span>
+                </div>
+                <div class="row-subtitle">${escapeHtml(summary)}</div>
+                <div class="tool-contract">Updated: ${escapeHtml(formatTime(memory.summaryUpdatedAt))}</div>
+            </div>
+        `;
+    }
+
+    function renderShortTermMessages(messages) {
+        if (!messages.length) {
+            els.shortTermMemoryList.innerHTML = '<div class="tool-row"><div class="row-title">No recent messages</div></div>';
+            return;
+        }
+
+        els.shortTermMemoryList.innerHTML = messages.map((message, index) => {
+            const role = message.role || '-';
+            const badge = role === 'assistant' ? 'tool' : '';
+            return `
+                <div class="tool-row">
+                    <div class="row-head">
+                        <div class="row-title">#${escapeHtml(index + 1)} ${escapeHtml(role)}</div>
+                        <span class="badge ${badge}">${escapeHtml(role)}</span>
+                    </div>
+                    <div class="row-subtitle">${escapeHtml(message.content || '')}</div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function renderMonitorSummary(errorMessage) {
+        if (errorMessage) {
+            els.monitorMetrics.innerHTML = '';
+            els.monitorList.innerHTML = `<div class="tool-row"><div class="row-title">${escapeHtml(errorMessage)}</div></div>`;
+            return;
+        }
+
+        const summary = state.monitorSummary || {};
+        const lastUpdated = summary.lastUpdatedAt
+                ? new Date(summary.lastUpdatedAt).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})
+                : '-';
+
+        // Monitor 面板展示的是“在线表现指标”，帮助我们判断 Agent 是否稳定，而不是评测集分数。
+        const metrics = [
+            ['Turns', summary.totalTurns ?? 0],
+            ['Tool Success', formatPercent(summary.toolSuccessRate || 0)],
+            ['LLM Fail', formatPercent(summary.llmFailureRate || 0)],
+            ['Handoff', summary.handoffCount ?? 0],
+            ['Avg Tool', (summary.averageToolDurationMs || 0) + 'ms'],
+            ['Avg LLM', (summary.averageLlmDurationMs || 0) + 'ms'],
+            ['Updated', lastUpdated]
+        ];
+
+        els.monitorMetrics.innerHTML = metrics.map(([label, value]) => `
+            <div class="metric-item">
+                <div class="metric-label">${escapeHtml(label)}</div>
+                <div class="metric-value">${escapeHtml(value)}</div>
+            </div>
+        `).join('');
+
+        renderMonitorTurns(summary.recentTurns || []);
+    }
+
+    function renderMonitorTurns(turns) {
+        if (!turns.length) {
+            els.monitorList.innerHTML = `
+                <div class="tool-row">
+                    <div class="row-title">No monitor data</div>
+                    <div class="row-subtitle">发送一轮消息后，这里会展示最近对话的工具、LLM 和转人工摘要。</div>
+                </div>
+            `;
+            return;
+        }
+
+        els.monitorList.innerHTML = turns.map(turn => {
+            const time = turn.timestamp
+                    ? new Date(turn.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})
+                    : '-';
+            const failed = Number(turn.failedToolCalls || 0) + Number(turn.llmFailures || 0);
+            const badge = failed > 0 ? 'error' : '';
+            return `
+                <div class="tool-row">
+                    <div class="row-head">
+                        <div class="row-title">${escapeHtml(turn.conversationId || '-')}</div>
+                        <span class="badge ${badge}">${escapeHtml(failed > 0 ? 'Check' : 'OK')}</span>
+                    </div>
+                    <div class="row-subtitle">${escapeHtml(turn.userId || '-')} · ${escapeHtml(time)}</div>
+                    <div class="tool-contract">
+                        Tool: ${escapeHtml(turn.toolCalls ?? 0)}
+                        · Failed Tool: ${escapeHtml(turn.failedToolCalls ?? 0)}
+                        · LLM: ${escapeHtml(turn.llmCalls ?? 0)}
+                        · LLM Failed: ${escapeHtml(turn.llmFailures ?? 0)}
+                        · Handoff: ${escapeHtml(turn.handoffCount ?? 0)}
+                        · Duration: ${escapeHtml(turn.totalDurationMs ?? 0)}ms
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function renderEvalReports(errorMessage) {
+        if (errorMessage) {
+            els.evalMetrics.innerHTML = '';
+            els.evalList.innerHTML = `<div class="tool-row"><div class="row-title">${escapeHtml(errorMessage)}</div></div>`;
+            els.trendList.innerHTML = '';
+            return;
+        }
+
+        const payload = state.evalReport || {};
+        const summary = payload.summary || {};
+        const reports = Array.isArray(summary.reports) ? summary.reports : [];
+        const trend = payload.trend || {};
+        const trendReports = Array.isArray(trend.reports) ? trend.reports : [];
+
+        renderEvalMetrics(payload, reports, summary);
+        renderEvalReportCards(payload, reports);
+        renderTrendCards(trendReports);
+    }
+
+    function renderEvalMetrics(payload, reports, summary) {
+        const totalCases = reports
+                .map(report => Number(report.summary?.total || 0))
+                .reduce((sum, total) => sum + total, 0);
+        const scores = reports
+                .map(report => pickPrimaryMetric(report.summary).value)
+                .filter(value => Number.isFinite(value));
+        const averageScore = scores.length
+                ? scores.reduce((sum, value) => sum + value, 0) / scores.length
+                : null;
+
+        // Eval 面板的指标是“评测概览”，不是业务数据；它帮助我们快速判断最近一次测试是否健康。
+        const metrics = [
+            ['Available', payload.available ? 'Yes' : 'No'],
+            ['Reports', summary.reportCount ?? reports.length],
+            ['Cases', totalCases],
+            ['Avg Score', averageScore == null ? '-' : formatPercent(averageScore)]
+        ];
+
+        els.evalMetrics.innerHTML = metrics.map(([label, value]) => `
+            <div class="metric-item">
+                <div class="metric-label">${escapeHtml(label)}</div>
+                <div class="metric-value">${escapeHtml(value)}</div>
+            </div>
+        `).join('');
+    }
+
+    function renderEvalReportCards(payload, reports) {
+        if (!payload.available || !reports.length) {
+            els.evalList.innerHTML = `
+                <div class="tool-row">
+                    <div class="row-title">暂无评测报告</div>
+                    <div class="row-subtitle">运行 Maven 测试后会生成 target/eval-reports/summary.json。</div>
+                </div>
+            `;
+            return;
+        }
+
+        els.evalList.innerHTML = reports.map(report => {
+            const primaryMetric = pickPrimaryMetric(report.summary);
+            const total = report.summary?.total ?? '-';
+            return `
+                <div class="tool-row">
+                    <div class="row-head">
+                        <div class="row-title">${escapeHtml(report.reportName || report.file || '-')}</div>
+                        <span class="badge ${primaryMetric.value >= 1 ? 'tool' : 'warn'}">${escapeHtml(formatMetricValue(primaryMetric))}</span>
+                    </div>
+                    <div class="row-subtitle">${escapeHtml(formatTime(report.generatedAt))}</div>
+                    <div class="tool-contract">Total: ${escapeHtml(total)} · Metric: ${escapeHtml(primaryMetric.label)}</div>
+                    <details class="json-details">
+                        <summary>Summary JSON</summary>
+                        <pre class="json-block">${escapeHtml(JSON.stringify(report.summary || {}, null, 2))}</pre>
+                    </details>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function renderTrendCards(trendReports) {
+        if (!trendReports.length) {
+            els.trendList.innerHTML = '<div class="tool-row"><div class="row-title">暂无趋势数据</div></div>';
+            return;
+        }
+
+        els.trendList.innerHTML = trendReports.map(report => {
+            const delta = summarizeMetricDelta(report.metricDelta || {});
+            const latestMetric = pickPrimaryMetric(report.latestSummary);
+            return `
+                <div class="tool-row">
+                    <div class="row-head">
+                        <div class="row-title">${escapeHtml(report.reportName || '-')}</div>
+                        <span class="badge">${escapeHtml(report.historyCount ?? 0)} runs</span>
+                    </div>
+                    <div class="row-subtitle">${escapeHtml(formatTime(report.latestGeneratedAt))}</div>
+                    <div class="tool-contract">Latest: ${escapeHtml(formatMetricValue(latestMetric))} · Delta: ${escapeHtml(delta)}</div>
+                    <details class="json-details">
+                        <summary>Trend JSON</summary>
+                        <pre class="json-block">${escapeHtml(JSON.stringify({
+                            latestSummary: report.latestSummary || {},
+                            previousSummary: report.previousSummary || {},
+                            metricDelta: report.metricDelta || {}
+                        }, null, 2))}</pre>
+                    </details>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function selectTab(tab) {
+        state.activeTab = tab;
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.classList.toggle('active', button.dataset.tab === tab);
+        });
+        els.tracePanel.classList.toggle('hidden', tab !== 'trace');
+        els.memoryPanel.classList.toggle('hidden', tab !== 'memory');
+        els.toolsPanel.classList.toggle('hidden', tab !== 'tools');
+        els.monitorPanel.classList.toggle('hidden', tab !== 'monitor');
+        els.evalPanel.classList.toggle('hidden', tab !== 'eval');
+        if (tab === 'memory') {
+            loadMemorySnapshot();
+        }
+    }
+
+    function selectTraceFilter(filter) {
+        state.traceFilter = filter || 'all';
+        document.querySelectorAll('.filter-chip').forEach(button => {
+            button.classList.toggle('active', button.dataset.traceFilter === state.traceFilter);
+        });
+        renderTrace();
+    }
+
+    async function copyTrace() {
+        const text = JSON.stringify(state.trace, null, 2);
+        if (!text || text === '[]') {
+            appendSystemMessage('当前没有可复制的 Trace。');
+            return;
+        }
+
+        await copyText(text, 'Trace JSON 已复制到剪贴板。');
+    }
+
+    function copyToolSchema(toolName) {
+        const tool = state.tools.find(item => item.name === toolName);
+        if (!tool) {
+            appendSystemMessage('没有找到对应工具，无法复制 Schema。');
+            return;
+        }
+
+        const schema = {
+            name: tool.name,
+            description: tool.description,
+            requiredParameters: tool.requiredParameters || [],
+            inputSchema: tool.inputSchema || {},
+            outputType: tool.outputType || '',
+            outputSchema: tool.outputSchema || {}
+        };
+        copyText(JSON.stringify(schema, null, 2), `${tool.name} 的 Schema 已复制。`);
+    }
+
+    function copyMemorySnapshot() {
+        if (!state.memorySnapshot && !state.userMemorySnapshot) {
+            appendSystemMessage('当前没有可复制的会话记忆。');
+            return;
+        }
+        copyText(JSON.stringify({
+            conversationMemory: state.memorySnapshot,
+            userMemory: state.userMemorySnapshot
+        }, null, 2), '记忆 JSON 已复制。');
+    }
+
+    function copyMonitorSummary() {
+        if (!state.monitorSummary) {
+            appendSystemMessage('当前没有可复制的 Monitor 指标。');
+            return;
+        }
+        copyText(JSON.stringify(state.monitorSummary, null, 2), 'Monitor 指标 JSON 已复制。');
+    }
+
+    function copyEvalReport() {
+        if (!state.evalReport) {
+            appendSystemMessage('当前没有可复制的评测报告。');
+            return;
+        }
+        copyText(JSON.stringify(state.evalReport, null, 2), '评测报告 JSON 已复制。');
+    }
+
+    async function copyText(text, successMessage) {
+        try {
+            await navigator.clipboard.writeText(text);
+            appendSystemMessage(successMessage);
+        } catch (error) {
+            appendSystemMessage('浏览器不允许直接复制，请在面板中手动选择 JSON。');
+        }
+    }
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function currentUserId() {
+        return state.currentUser?.userId || 'anonymous';
+    }
+
+    function currentConversationId() {
+        const userId = currentUserId();
+        return state.conversationIds[userId] || 'default-' + userId;
+    }
+
+    function conversationMessages() {
+        const conversationId = currentConversationId();
+        if (!state.messagesByConversation[conversationId]) {
+            state.messagesByConversation[conversationId] = [];
+        }
+        return state.messagesByConversation[conversationId];
+    }
+
+    function updateConversationMeta() {
+        els.conversationMeta.textContent = 'conversation: ' + currentConversationId();
+    }
+
+    function findLastToolName() {
+        const event = [...state.trace].reverse().find(item =>
+                item.eventType === 'tool_called' || item.eventType === 'tool_observed');
+        return event?.data?.capability || event?.data?.toolName || event?.data?.tool || null;
+    }
+
+    function findLastLatency() {
+        const event = [...state.trace].reverse().find(item => item.data && item.data.durationMs !== undefined);
+        return event ? event.data.durationMs + 'ms' : '-';
+    }
+
+    function pickPrimaryMetric(summary = {}) {
+        const priorityKeys = [
+            'intentAccuracy',
+            'actionAccuracy',
+            'capabilityAccuracy',
+            'handoffAccuracy',
+            'documentRecall',
+            'keywordCoverage',
+            'qualityPassRate',
+            'traceCoverageRate',
+            'expectationMatchRate',
+            'positivePassRate',
+            'negativeBlockRate'
+        ];
+
+        for (const key of priorityKeys) {
+            if (Number.isFinite(Number(summary[key]))) {
+                return {label: key, value: Number(summary[key])};
+            }
+        }
+
+        const fallbackKey = Object.keys(summary).find(key =>
+                /(Rate|Accuracy|Recall|Coverage)$/i.test(key) && Number.isFinite(Number(summary[key])));
+        if (fallbackKey) {
+            return {label: fallbackKey, value: Number(summary[fallbackKey])};
+        }
+        return {label: '-', value: null};
+    }
+
+    function formatMetricValue(metric) {
+        if (!metric || metric.value == null) {
+            return '-';
+        }
+        return formatPercent(metric.value);
+    }
+
+    function formatPercent(value) {
+        if (!Number.isFinite(Number(value))) {
+            return '-';
+        }
+        return Math.round(Number(value) * 1000) / 10 + '%';
+    }
+
+    function summarizeMetricDelta(delta) {
+        const entries = Object.entries(delta)
+                .filter(([, value]) => Number.isFinite(Number(value)))
+                .filter(([, value]) => Math.abs(Number(value)) > 0.000001);
+        if (!entries.length) {
+            return '无变化';
+        }
+
+        const [key, value] = entries[0];
+        const sign = Number(value) > 0 ? '+' : '';
+        return `${key} ${sign}${formatPercent(Number(value))}`;
+    }
+
+    function formatMemoryValue(value) {
+        if (value == null) {
+            return '-';
+        }
+        if (typeof value === 'object') {
+            return JSON.stringify(value);
+        }
+        return String(value);
+    }
+
+    function formatTime(value) {
+        if (!value) {
+            return '-';
+        }
+
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return String(value);
+        }
+        return date.toLocaleString([], {
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    function badgeClass(eventType) {
+        if (!eventType) return '';
+        if (eventType.includes('memory')) return 'warn';
+        if (eventType.includes('knowledge')) return 'warn';
+        if (eventType.includes('tool')) return 'tool';
+        if (eventType.includes('handoff')) return 'warn';
+        if (eventType.includes('error') || eventType.includes('failed')) return 'error';
+        return '';
+    }
+
+    function shortType(eventType) {
+        if (!eventType) return '-';
+        if (eventType.includes('memory')) return 'memory';
+        if (eventType.includes('knowledge')) return 'rag';
+        if (eventType.includes('tool')) return 'tool';
+        if (eventType.includes('llm')) return 'llm';
+        if (eventType.includes('handoff')) return 'handoff';
+        if (eventType.includes('final')) return 'final';
+        return 'agent';
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+    }
+
+    async function readJson(response) {
+        const text = await response.text();
+        if (!text) {
+            return {};
+        }
+
+        try {
+            return JSON.parse(text);
+        } catch (error) {
+            return {message: text};
+        }
+    }
+
+    init();
+</script>
 </body>
 </html>

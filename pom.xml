@@ -30,11 +30,28 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!-- 参数校验：用于 @Valid、@NotBlank 等注解，让接口边界更清晰 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
         <!-- LangChain4j 核心 -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j</artifactId>
             <version>${langchain4j.version}</version>
+            <exclusions>
+                <!--
+                    当前项目没有使用 LangChain4j 中依赖 OpenNLP 的文本切分能力。
+                    Windows/JDK17 环境下，javac 扫描 opennlp-tools.jar 时偶发 ZipFS AccessDeniedException。
+                    排除它可以让本地编译和测试更稳定，不影响当前 ChatLanguageModel 调用链路。
+                -->
+                <exclusion>
+                    <groupId>org.apache.opennlp</groupId>
+                    <artifactId>opennlp-tools</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- LangChain4j Spring Boot 集成 -->
@@ -42,6 +59,16 @@
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-spring-boot-starter</artifactId>
             <version>${langchain4j.version}</version>
+            <exclusions>
+                <!--
+                    starter 内部也会引入 langchain4j，因此这里同样排除 opennlp-tools，
+                    避免它通过另一条依赖路径重新进入编译 classpath。
+                -->
+                <exclusion>
+                    <groupId>org.apache.opennlp</groupId>
+                    <artifactId>opennlp-tools</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- OpenAI 兼容（大多数模型都兼容 OpenAI 格式） -->
@@ -63,11 +90,32 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
+            <exclusions>
+                <!-- 当前测试统一使用 JUnit Assertions，没有使用 AssertJ 的 assertThat。
+                     排除它可以减少测试依赖，也避免 Windows 环境下 assertj-core.jar 被 ZipFS 读取时偶发 AccessDenied。 -->
+                <exclusion>
+                    <groupId>org.assertj</groupId>
+                    <artifactId>assertj-core</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
     </dependencies>
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!--
+                        Windows 环境下，Maven 默认使用“当前 JVM 内置编译器”编译。
+                        少数依赖 jar 被 JDK ZipFS 读取后，关闭文件系统时可能偶发 AccessDeniedException。
+                        fork=true 表示改用独立 javac 进程编译，能减少这种本地文件句柄问题，不影响业务代码。
+                    -->
+                    <fork>true</fork>
+                </configuration>
+            </plugin>
+
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

@@ -6,6 +6,7 @@ import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -61,6 +62,19 @@ public class ProductTools {
     }
 
     /**
+     * 查询单个商品结构化数据。
+     */
+    public ProductInfoToolData queryProductInfoData(String productName) {
+        List<Product> products = productRepository.searchByName(productName);
+
+        if (products.isEmpty()) {
+            return new ProductInfoToolData(productName, 0, null);
+        }
+
+        return new ProductInfoToolData(productName, products.size(), new ProductItemData(products.get(0)));
+    }
+
+    /**
      * 搜索产品列表
      *
      * 【与 queryProductInfo 的区别】
@@ -100,5 +114,19 @@ public class ProductTools {
         }
 
         return result.toString();
+    }
+
+    /**
+     * 搜索商品结构化数据。
+     */
+    public ProductSearchToolData searchProductsData(String keyword) {
+        List<Product> products = productRepository.searchByName(keyword);
+        List<ProductItemData> productItems = new ArrayList<>();
+
+        for (Product product : products) {
+            productItems.add(new ProductItemData(product));
+        }
+
+        return new ProductSearchToolData(keyword, productItems);
     }
 }

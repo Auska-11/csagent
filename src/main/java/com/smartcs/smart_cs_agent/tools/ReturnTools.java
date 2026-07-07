@@ -100,6 +100,52 @@ public class ReturnTools {
     }
 
     /**
+     * 提交退换货申请，并返回结构化结果。
+     *
+     * 注意：这个方法会真正写入 ReturnRepository。
+     * 所以 ToolRegistry 会调用它，而不是先调用 applyReturn(...) 再单独查数据，
+     * 避免一次用户请求创建两条退货申请。
+     */
+    public StructuredToolOutput applyReturnStructured(String orderId, String reason) {
+        String normalizedOrderId = orderId == null ? "" : orderId.toUpperCase();
+
+        Order order = orderRepository.findByOrderId(normalizedOrderId);
+        if (order == null) {
+            return new StructuredToolOutput(
+                    "Order " + orderId + " not found, cannot apply for return.",
+                    ReturnToolData.orderNotFound(orderId)
+            );
+        }
+
+        ReturnRecord existing = returnRepository.findByOrderId(normalizedOrderId);
+        if (existing != null) {
+            Product product = productRepository.findByProductId(order.getProductId());
+
+            String message = "Order " + orderId + " already has a return application, return id: " +
+                    existing.getReturnId() + ", status: " + existing.getStatus();
+            return new StructuredToolOutput(message, ReturnToolData.duplicate(existing, productName(product)));
+        }
+
+        String returnId = returnRepository.generateReturnId();
+        Product product = productRepository.findByProductId(order.getProductId());
+        String productName = (product != null) ? product.getName() : "Unknown Product";
+
+        ReturnRecord record = new ReturnRecord(returnId, normalizedOrderId, reason, "Under Review");
+        returnRepository.save(record);
+
+        String message = "Return application submitted:\n" +
+                "- Return ID: " + returnId + "\n" +
+                "- Order ID: " + orderId + "\n" +
+                "- Product: " + productName + "\n" +
+                "- Reason: " + reason + "\n" +
+                "- Status: Under Review (expected 1-2 business days)";
+        return new StructuredToolOutput(
+                message,
+                ReturnToolData.submitted(record, productName, "1-2 business days")
+        );
+    }
+
+    /**
      * 查询退换货进度
      *
      * 【使用场景】
@@ -136,5 +182,29 @@ public class ReturnTools {
                "- Product: " + productName + "\n" +
                "- Reason: " + record.getReason() + "\n" +
                "- Status: " + record.getStatus();
+    }
+
+    /**
+     * 查询退换货结构化数据。
+     */
+    public ReturnToolData queryReturnStatusData(String returnId) {
+        String normalizedReturnId = returnId == null ? "" : returnId.toUpperCase();
+        ReturnRecord record = returnRepository.findByReturnId(normalizedReturnId);
+
+        if (record == null) {
+            return ReturnToolData.notFound(returnId);
+        }
+
+        Order order = orderRepository.findByOrderId(record.getOrderId());
+        Product product = null;
+        if (order != null) {
+            product = productRepository.findByProductId(order.getProductId());
+        }
+
+        return ReturnToolData.queried(record, productName(product));
+    }
+
+    private String productName(Product product) {
+        return product != null ? product.getName() : "Unknown Product";
     }
 }

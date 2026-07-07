@@ -1,0 +1,58 @@
+[
+  {
+    "id": "recall_return_policy_over_seven_days",
+    "query": "超过七天还能退吗",
+    "expectedDocumentId": "policy/return_policy.md",
+    "expectedKeywords": ["超过 7 天", "质量问题"],
+    "topK": 3
+  },
+  {
+    "id": "recall_invoice_policy",
+    "query": "发票什么时候能开",
+    "expectedDocumentId": "policy/invoice_policy.md",
+    "expectedKeywords": ["电子发票", "1 到 3 个工作日"],
+    "topK": 3
+  },
+  {
+    "id": "recall_warranty_policy",
+    "query": "保修期多久",
+    "expectedDocumentId": "policy/warranty_policy.md",
+    "expectedKeywords": ["1 年", "保修"],
+    "topK": 3
+  },
+  {
+    "id": "recall_delivery_policy_remote_area",
+    "query": "偏远地区可以配送吗",
+    "expectedDocumentId": "logistics/delivery_policy.md",
+    "expectedKeywords": ["偏远地区", "配送限制"],
+    "topK": 3
+  },
+  {
+    "id": "recall_handoff_policy",
+    "query": "我要人工客服投诉",
+    "expectedDocumentId": "service/handoff_policy.md",
+    "expectedKeywords": ["人工客服", "投诉"],
+    "topK": 3
+  },
+  {
+    "id": "recall_special_invoice_policy",
+    "query": "专用发票需要提供什么资料",
+    "expectedDocumentId": "policy/invoice_policy.md",
+    "expectedKeywords": ["增值税专用发票", "企业名称", "税号"],
+    "topK": 3
+  },
+  {
+    "id": "recall_warranty_policy_fault_expression",
+    "query": "耳机坏了能修吗",
+    "expectedDocumentId": "policy/warranty_policy.md",
+    "expectedKeywords": ["保修", "维修", "质量问题"],
+    "topK": 3
+  },
+  {
+    "id": "recall_delivery_policy_arrival_expression",
+    "query": "一般几天能送到",
+    "expectedDocumentId": "logistics/delivery_policy.md",
+    "expectedKeywords": ["发货时效", "24 小时"],
+    "topK": 3
+  }
+]

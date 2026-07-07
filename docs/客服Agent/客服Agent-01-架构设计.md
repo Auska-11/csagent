@@ -12,6 +12,7 @@
 - 退货政策、保修政策等问题需要查知识库，不能让模型凭空回答。
 - 一次服务往往是多轮对话，系统要记住当前任务进展。
 - Agent 调用了什么工具、为什么这么回答，需要能够被查看和调试。
+- Agent 的核心行为需要能被评测集回归验证。
 
 因此，本项目采用分层架构，把“对话入口、Agent 执行、客服决策、业务工具、数据访问、知识资料”拆开。
 
@@ -30,7 +31,9 @@
 - 用户信息查询
 - 信息不足时主动追问
 - 工具调用后的中文客服回复
-- 后续扩展知识库问答、人工转接和评测
+- 知识库政策问答
+- 后续扩展人工转接和评测
+- 离线路由评测
 
 项目最终希望体现的能力是：
 
@@ -53,9 +56,11 @@ CustomerServiceSkill
   ↓
 ToolManager
   ↓
-OrderTools / ProductTools / ReturnTools / UserTools
+ToolRegistry
   ↓
-Repository 模拟数据层
+OrderTools / ProductTools / ReturnTools / UserTools / KnowledgeTools / HandoffTools
+  ↓
+Repository 模拟数据层 / Markdown 知识库
 ```
 
 每一层的职责如下：
@@ -67,10 +72,16 @@ Repository 模拟数据层
 | Agent 入口 | `CustomerServiceAgent` | 创建会话状态，调用 Runtime |
 | 执行引擎 | `AgentRuntime` | 循环执行 Action，调用 LLM 或工具 |
 | 决策层 | `CustomerServiceSkill` | 判断下一步应该做什么 |
+| 决策辅助 | `CustomerServiceSlotExtractor` | 从用户消息中抽取订单号、退货单号、退货原因、商品关键词 |
+| 决策辅助 | `CustomerServiceIntentRules` | 集中维护政策问题、退货问题、转人工问题等关键词规则 |
+| 决策辅助 | `CustomerServicePromptBuilder` | 构造意图识别、闲聊回复和工具结果总结 Prompt |
 | Action 抽象 | `AgentAction` 及子类 | 表达 Agent 的下一步动作 |
-| 工具管理 | `ToolManager` | 根据工具名称分发到具体工具 |
+| 工具门面 | `ToolManager` | 将 Runtime 的工具请求转换成标准 `ToolCall` |
+| 工具注册 | `ToolRegistry` | 注册工具定义，校验参数，统一返回 `ToolResult` |
 | 业务工具 | `OrderTools` 等 | 查询订单、商品、退货、用户信息 |
-| 数据访问 | `Repository` | 当前用内存 Map 模拟数据库 |
+| 知识工具 | `KnowledgeTools` | 检索 Markdown 客服知识库 |
+| 转人工工具 | `HandoffTools` | 创建模拟人工转接工单 |
+| 数据访问 | `Repository` / `knowledge` | 当前用内存 Map 和 Markdown 模拟数据来源 |
 
 ## 4. 目标架构借鉴
 
@@ -160,6 +171,7 @@ Tool：我负责具体业务能力
 | `LLMAction` | 需要调用大模型 |
 | `CapabilityAction` | 需要调用业务工具 |
 | `AskUserAction` | 信息不足，需要追问用户 |
+| `HandoffAction` | 当前问题需要人工客服介入 |
 | `FinalAnswerAction` | 已经得到最终回复，可以返回用户 |
 
 为什么要设计 Action？
@@ -228,22 +240,23 @@ Skill 根据新状态继续产生下一个 Action
 
 ```text
 1. 前端发送消息到 /api/chat/send
-2. ChatApiController 构造 ChatRequest
-3. CustomerServiceAgent 根据 conversationId 读取 ConversationState
-4. CustomerServiceAgent 创建 TurnContext
-5. AgentRuntime 获取当前 Skill
-6. Skill 判断用户意图是订单查询
-7. Skill 返回 CapabilityAction(order_lookup)
-8. Runtime 或 ActionExecutor 调用 ToolManager
-9. ToolManager 调用 OrderTools.queryOrderStatus()
-10. 工具返回订单状态和物流信息
-11. 执行结果包装成 Observation
-12. Skill 看到工具结果，返回 LLMAction(response_generation)
-13. Runtime 调用大模型生成中文客服回复
-14. Skill 返回 FinalAnswerAction
-15. Runtime 返回最终回复
-16. CustomerServiceAgent 保存 ConversationState
-17. Controller 返回给前端展示
+2. ChatApiController 接收 ChatApiRequest
+3. ChatApiController 构造 ChatRequest
+4. CustomerServiceAgent 根据 conversationId 读取 ConversationState
+5. CustomerServiceAgent 创建 TurnContext
+6. AgentRuntime 获取当前 Skill
+7. Skill 判断用户意图是订单查询
+8. Skill 返回 CapabilityAction(order_lookup)
+9. Runtime 或 ActionExecutor 调用 ToolManager
+10. ToolManager 调用 OrderTools.queryOrderStatus()
+11. 工具返回订单状态和物流信息
+12. 执行结果包装成 Observation
+13. Skill 看到工具结果，返回 LLMAction(response_generation)
+14. Runtime 调用大模型生成中文客服回复
+15. Skill 返回 FinalAnswerAction
+16. Runtime 返回最终回复
+17. CustomerServiceAgent 保存 ConversationState
+18. Controller 返回给前端展示
 ```
 
 这个流程体现了三个核心点：
@@ -259,17 +272,20 @@ Skill 根据新状态继续产生下一个 Action
 职责：
 
 - 提供 HTTP 接口。
-- 校验用户消息是否为空。
-- 调用 `CustomerServiceAgent.chat()`。
-- 返回回复、用户 ID 和时间戳。
+- 使用 Spring Validation 校验接口参数。
+- 构造 `ChatRequest`。
+- 调用 `CustomerServiceAgent.chatWithTrace()`。
+- 返回 `ChatResponse`，包含回复、用户 ID、会话 ID、时间戳和 Trace。
 
-当前不足：
+当前已改进：
 
-- 返回内容只有最终回复。
-- 后续需要返回 `conversationId` 和 `trace`。
-- 请求体最好从 `Map` 改成明确的 DTO。
+- 请求体已经从 `Map<String, String>` 改成明确的 `ChatApiRequest` DTO。
+- `ChatApiRequest` 只负责接收前端 JSON，`ChatRequest` 只负责进入 Agent 主链路，两者职责分开。
+- `ChatApiRequest` 已通过 `@NotBlank` 和 `@Size` 声明基础校验规则。
+- 校验失败返回 `ApiErrorResponse`，包含 `errorCode`、`message` 和 `timestamp`。
+- 已新增 `GlobalExceptionHandler`，统一处理 JSON 解析失败、参数校验失败、参数异常和未预期异常。
 
-后续计划：
+当前响应对象：
 
 ```java
 public class ChatRequest {
@@ -280,7 +296,9 @@ public class ChatRequest {
 
 public class ChatResponse {
     private String conversationId;
+    private String userId;
     private String reply;
+    private long timestamp;
     private List<TraceEvent> trace;
 }
 ```
@@ -290,20 +308,20 @@ public class ChatResponse {
 职责：
 
 - 作为客服 Agent 的业务入口。
-- 当前版本直接创建 `ConversationState`。
+- 通过 `ConversationStore` 读取或创建 `ConversationState`。
+- 创建 `TurnContext`。
 - 调用 `AgentRuntime.runTurn()`。
+- 返回 `ChatResponse` 或兼容旧入口的 String 回复。
 
 当前不足：
 
-- 每次请求都会新建 `ConversationState`。
-- 所以目前还不是真正多轮对话。
+- 目前还是单一客服 Skill。
+- 后续做 Multi-Agent 时，需要根据意图路由到不同 Skill。
 
 后续计划：
 
-- 引入 `ConversationStore`。
-- 根据 `conversationId` 读取已有会话状态。
-- 构造 `ChatRequest` 和 `TurnContext`。
-- 当前轮执行结束后保存状态。
+- 保留当前 `CustomerServiceAgent` 作为统一入口。
+- 后续新增售前、售后、投诉等 Skill，并由 `SkillManager` 做路由。
 
 ## 7.3 `AgentRuntime`
 
@@ -318,22 +336,20 @@ public class ChatResponse {
 
 - 已经有清晰的 Action 执行循环。
 - 已经区分 LLMAction、CapabilityAction、AskUserAction 和 FinalAnswerAction。
+- 已经接入 `TurnContext` 和 `TraceEvent`。
+- 已经记录 Action 计划、工具调用、LLM 调用和最终回复。
+- 工具、LLM 和人工转接调用已经记录 `durationMs`。
+- LLM 调用失败时会记录 `llm_failed`，并基于工具结果生成降级回复，避免接口直接 500。
 
 当前不足：
 
-- 还没有 Trace。
-- 工具调用异常没有统一处理。
-- 超时提示还是英文。
-- LLM 调用和工具调用缺少耗时记录。
 - 当前 Runtime 直接执行 LLM 和工具，后续可以拆出 `ActionExecutor`。
+- Trace 目前主要返回给前端调试，还没有持久化到文件或数据库。
 
 后续计划：
 
-- 引入 `TurnContext`，统一承载当前请求、会话状态和本轮观察结果。
-- 引入 `Observation`，统一包装 Action 执行结果。
-- 增加 `TraceEvent`。
-- 每次 Action 计划、执行、观察都记录。
-- 返回给前端调试面板。
+- 后续拆出 `ActionExecutor`，让 Runtime 主循环更轻。
+- 增加 Trace 持久化和聚合统计，服务后续 Monitor 与评测报告。
 
 ## 7.4 `CustomerServiceSkill`
 
@@ -348,45 +364,50 @@ public class ChatResponse {
 
 - 已经支持规则路由和 LLM 兜底。
 - 已经覆盖订单、商品、退货、退货进度、用户信息、闲聊。
+- 已经支持政策类问题路由到 `knowledge_search`。
+- 已经支持人工诉求、投诉和赔偿纠纷路由到 `HandoffAction`。
+- 已经完成第一轮职责拆分：
+  - `CustomerServiceSlotExtractor` 负责槽位抽取。
+  - `CustomerServiceIntentRules` 负责关键词意图规则。
+  - `CustomerServicePromptBuilder` 负责 Prompt 构造。
 - 中文注释较多，适合学习。
 
 当前不足：
 
-- 职责偏重。
-- 规则识别、参数提取、Prompt 构造、Action 编排都在一个类里。
-- 后续意图变多后会变得难维护。
+- `CustomerServiceSkill` 仍然承担较多 Action 编排逻辑。
+- 后续如果继续增加售前、售后、投诉等意图，单一 Skill 仍然会变长。
 
 后续计划：
 
-- 拆出 `IntentRouter`。
-- 拆出 `SlotExtractor`。
-- 拆出 `ResponsePromptBuilder`。
-- `CustomerServiceSkill` 只负责整体编排。
+- 按业务域拆出 `PreSalesSkill`、`AfterSalesSkill`、`ComplaintSkill`。
+- 或者继续拆出更细的 `IntentRouter`，让 `CustomerServiceSkill` 只负责整体编排。
 
 ## 7.5 `ToolManager`
 
 职责：
 
-- 接收工具名称和参数。
-- 分发给具体业务工具。
+- 作为 Runtime 调用工具层的门面。
+- 将 `capability + arguments` 转换成 `ToolCall`。
+- 委托 `ToolRegistry` 执行工具。
+- 返回统一 `ToolResult`。
 
 当前优点：
 
-- 简单直接，容易理解。
-- 当前阶段适合学习。
+- 保留旧入口，Runtime 改动较小。
+- 工具层已经具备 MCP-style 的调用边界。
+- 工具执行结果可以结构化记录到 Trace。
+- `ToolResult.data` 已经优先返回结构化数据，其中订单、商品、退货、用户和人工转接等业务工具已经升级为明确 DTO，便于评测和监控读取。
+- `ToolDefinition` 已经可以导出 `inputSchema` 和 `outputSchema`，前端 Tools 面板可以直接展示工具入参和出参结构。
 
 当前不足：
 
-- 使用字符串作为工具名，容易写错。
-- 使用 `Map<String, Object>` 传参数，编译期无法检查。
-- 工具返回结果没有统一结构。
+- 还没有拆成独立 MCP Server。
+- 当前业务工具仍然使用内存模拟数据，还没有接真实数据库或外部服务。
 
 后续计划：
 
-- 定义工具名称常量或枚举。
-- 定义统一 `ToolResult`。
-- 参数缺失时返回标准错误。
-- 逐步演进为工具注册表。
+- 继续补充嵌套输出 schema，让 `orders[]`、`products[]` 等列表字段也能描述元素结构。
+- 后续将 `ToolRegistry` 抽到独立 MCP Server。
 
 ## 7.6 `Repository`
 
@@ -457,9 +478,12 @@ public class ChatResponse {
 
 ## 9.1 还不是真正多轮对话
 
-目前每次请求都会新建状态。
+早期版本每次请求都会新建状态。
 
-问题：
+当前第一版已经通过 `ConversationStore` 按 `conversationId` 保存会话状态，
+可以支持退货、订单查询这类多轮任务。
+
+早期问题：
 
 ```text
 用户：我要退货
@@ -467,19 +491,21 @@ Agent：请提供订单号
 用户：ORD-004
 ```
 
-第二轮时，系统不知道用户是在补充退货订单号。
+早期版本第二轮时，系统不知道用户是在补充退货订单号。
+当前已经通过 `ConversationStore + pending_slot` 解决第一版多轮任务状态。
 
 解决方案：
 
-- 新增 `ChatRequest` 表示当前输入。
-- 引入 `ConversationStore`。
-- 用 `conversationId` 保存状态。
-- 在 `ConversationState` 中只记录跨轮任务和槽位。
-- 后续新增 `TurnContext` 表示本轮执行过程。
+- `ChatRequest` 表示当前输入。
+- `ConversationStore` 按 `conversationId` 保存状态。
+- `ConversationState` 记录跨轮任务和槽位。
+- `TurnContext` 表示本轮执行过程。
+- `TraceEvent` 记录每一步执行过程，并返回给前端调试控制台。
 
 ## 9.2 当前输入和跨轮状态混在一起
 
-当前 `ConversationState` 同时保存了当前消息、历史消息、任务状态和观察结果。
+过渡阶段 `ConversationState` 仍然保留了当前消息和观察结果，用来兼容旧入口和旧逻辑。
+但主链路已经开始拆分为 `ChatRequest + ConversationState + TurnContext`。
 
 问题：
 
@@ -495,44 +521,85 @@ ConversationState 跨轮状态
 TurnContext       本轮执行上下文
 ```
 
-## 9.3 工具调用结果不标准
+## 9.3 工具调用结果已完成第一版标准化
 
-当前工具大多返回字符串。
+当前已经新增 `ToolResult`，工具层统一返回结构化结果。
 
-问题：
+已经解决：
 
-- 成功、失败不好区分。
-- 错误码无法统一处理。
-- 前端无法结构化展示。
-- Trace 中不好记录工具结果。
+- 成功、失败可以通过 `success` 区分。
+- 失败原因可以通过 `errorCode` 记录。
+- 工具名通过 `toolName` 记录。
+- 给 LLM 的说明通过 `message` 提供。
+- Trace 中可以记录 `success`、`errorCode` 和结果预览。
 
-解决方案：
+后续还可以增强：
 
-- 定义 `ToolResult`。
-- 所有工具统一返回。
-- LLM 生成回复时基于 `ToolResult.message` 和 `ToolResult.data`。
+- 继续补充返回 schema 和工具示例，让工具协议更接近真实 MCP `tools/list`。
+- 将 `inputSchema` 继续增强为更完整的 JSON Schema。
+- 将 `ToolRegistry` 拆成真正 MCP Server。
 
-## 9.4 缺少可观测性
+## 9.4 可观测性还可以继续增强
 
-目前用户只能看到最终回复。
+当前第一版已经支持 Agent Trace。
 
-但我们不知道：
+现在接口和前端调试控制台可以看到：
 
-- Agent 识别了什么意图。
+- 本轮何时开始。
+- 选择了哪个 Skill。
+- 计划了哪个 Action。
 - 调用了哪个工具。
 - 工具参数是什么。
-- 工具是否失败。
-- LLM 调用了几次。
+- LLM 是否被调用。
+- 最终回复是什么。
 
-解决方案：
+后续还需要增强：
 
-- 增加 `TraceEvent`。
-- Controller 返回 trace。
-- 前端调试面板展示 trace。
+- 按 Trace 统计平均耗时、工具失败率和转人工率。
+- Trace 持久化和评测统计。
 
-## 9.5 缺少知识库
+## 9.5 人工转接已完成第一版
 
-目前政策类问题只能靠模型回答。
+当前已经新增 `HandoffAction` 和 `HandoffTools`。
+
+支持场景：
+
+- 用户明确要求人工客服。
+- 用户投诉或情绪激烈。
+- 涉及赔偿、补偿、维权、起诉等纠纷。
+
+当前链路：
+
+```text
+CustomerServiceSkill
+  ↓
+HandoffAction
+  ↓
+AgentRuntime
+  ↓
+ToolManager / ToolRegistry
+  ↓
+HandoffTools
+  ↓
+返回人工工单号
+```
+
+当前 Trace 可以看到：
+
+- `handoff_requested`
+- `handoff_created`
+- `handoff_failed`
+
+后续可以增强：
+
+- 接入真实工单系统。
+- 使用 LLM 生成更完整的人工摘要。
+- 工具连续失败时自动转人工。
+- 评测转人工准确率。
+
+## 9.6 知识库已完成第一版
+
+早期版本政策类问题只能靠模型回答。
 
 例如：
 
@@ -544,12 +611,20 @@ TurnContext       本轮执行上下文
 
 这些问题应该查知识库，而不是让模型自由发挥。
 
-解决方案：
+当前第一版已经完成：
 
-- 新增 Markdown 知识库。
+- 新增 Markdown 知识库目录 `src/main/resources/knowledge`。
+- 新增 `KnowledgeDocument` 和 `KnowledgeSearchResult`。
 - 新增 `KnowledgeTools`。
-- 第一版先做关键词检索。
-- 后续再做向量检索和 rerank。
+- 新增 `knowledge_search` 工具。
+- `CustomerServiceSkill` 会把政策类问题路由到知识库。
+- 第一版使用标题、关键词和正文打分检索。
+
+后续还可以增强：
+
+- 扩充知识库文档。
+- 增加召回评测集。
+- 引入 query rewrite、embedding 检索和 rerank。
 
 ## 10. 后续目标架构
 
@@ -559,6 +634,8 @@ TurnContext       本轮执行上下文
 前端聊天页面
   ↓
 ChatApiController
+  ↓
+ChatApiRequest
   ↓
 ChatRequest
   ↓
@@ -594,37 +671,50 @@ TraceEvent 记录全过程
 结合当前代码情况，建议按以下顺序开发：
 
 1. 多轮会话状态：
-   - 新增 `ChatRequest`
-   - 新增 `ConversationStore`
-   - 新增 `TurnContext`
-   - 支持 `conversationId`
-   - `ConversationState` 只保存跨轮任务状态
+   - 新增 `ChatRequest`。已完成。
+   - 新增 `ConversationStore`。已完成。
+   - 新增 `TurnContext`。已完成第一版。
+   - 支持 `conversationId`。已完成第一版。
+   - `ConversationState` 聚焦跨轮任务状态。已完成第一版。
 
 2. 退货流程槽位填充：
-   - 记录当前等待用户补充什么信息
-   - 支持用户分多轮提供订单号和原因
+   - 记录当前等待用户补充什么信息。已完成第一版。
+   - 支持用户分多轮提供订单号和原因。已完成第一版。
 
 3. Agent Trace：
-   - 新增 `TraceEvent`
-   - `TurnContext` 记录每一步动作和观察结果
-   - API 返回 trace
+   - 新增 `TraceEvent`。已完成第一版。
+   - `TurnContext` 记录每一步动作和观察结果。已完成第一版。
+   - API 返回 trace。已完成第一版。
+   - 前端调试控制台展示 trace。已完成第一版。
 
 4. 工具返回标准化：
-   - 新增 `ToolResult`
-   - 改造工具返回结构
+   - 新增 `ToolResult`。已完成第一版。
+   - 改造工具返回结构。已完成第一版。
 
 5. 知识库 RAG：
-   - 新增 `knowledge/` 目录
-   - 新增 `KnowledgeTools`
-   - 支持政策类问答
+   - 新增 `knowledge/` 目录。已完成第一版。
+   - 新增 `KnowledgeTools`。已完成第一版。
+   - 支持政策类问答。已完成第一版。
 
 6. 人工转接：
-   - 新增 `HandoffAction`
-   - 支持投诉和复杂问题转人工
+   - 新增 `HandoffAction`。已完成第一版。
+   - 支持投诉和复杂问题转人工。已完成第一版。
 
 7. 评测体系：
    - 新增评测用例
    - 统计意图、工具、转人工和关键词覆盖
+
+8. Skill 第一轮拆分：
+   - `CustomerServiceSlotExtractor`。已完成第一版。
+   - `CustomerServiceIntentRules`。已完成第一版。
+   - `CustomerServicePromptBuilder`。已完成第一版。
+
+9. Controller DTO：
+   - 新增 `ChatApiRequest`。已完成第一版。
+   - 将 HTTP 请求体和 Agent 内部请求对象分开。已完成第一版。
+   - 新增 `ApiErrorResponse`。已完成第一版。
+   - 新增 `GlobalExceptionHandler`。已完成第一版。
+   - 新增 Spring Validation 参数校验和 MVC 层测试。已完成第一版。
 
 ## 12. 面试表达
 
@@ -632,7 +722,7 @@ TraceEvent 记录全过程
 
 可以这样回答：
 
-> 普通聊天机器人通常是用户输入一句话，然后直接把上下文交给大模型生成回复。我的项目不是这样设计的。我把客服 Agent 拆成 Runtime、Skill、Action、Tool 和 Repository 几层。Skill 负责判断用户意图和下一步动作，Runtime 负责执行 Action，Tool 负责查询真实业务数据。这样系统不是单纯依赖大模型自由生成，而是能在订单查询、商品咨询、退换货等场景中调用确定性的业务能力，并且后续可以通过 Trace 看到 Agent 每一步执行过程。
+> 普通聊天机器人通常是用户输入一句话，然后直接把上下文交给大模型生成回复。我的项目不是这样设计的。我把客服 Agent 拆成 Runtime、Skill、Action、Tool 和 Repository 几层。Skill 负责判断用户意图和下一步动作，Runtime 负责执行 Action，Tool 负责查询真实业务数据。这样系统不是单纯依赖大模型自由生成，而是能在订单查询、商品咨询、退换货等场景中调用确定性的业务能力，并且可以通过 Trace 看到 Agent 每一步执行过程。
 
 如果面试官问：“为什么不全靠 LLM？”
 
@@ -644,7 +734,7 @@ TraceEvent 记录全过程
 
 可以这样回答：
 
-> 当前版本已经有 Agent Runtime、Skill 和工具调用链路，但多轮会话状态还不完整。下一步我会引入 ChatRequest、ConversationStore 和 TurnContext：ChatRequest 表示当前输入，ConversationState 保存跨轮任务状态，TurnContext 保存本轮执行过程。这样用户可以分多轮完成退货、查订单等任务，后续也能自然扩展 Trace。
+> 当前版本已经有 Agent Runtime、Skill、MCP-style 工具调用层、多轮会话状态、Agent Trace、知识库 RAG、人工转接和四类离线评测第一版。我把当前输入、跨轮状态和本轮执行过程拆成 ChatRequest、ConversationState 和 TurnContext：ChatRequest 表示当前输入，ConversationState 保存跨轮任务状态，TurnContext 保存本轮 Observation 和 TraceEvent。工具层也拆成 ToolDefinition、ToolParameterDefinition、ToolCall、ToolResult 和 ToolRegistry，能统一参数校验、inputSchema、outputSchema、成功失败和错误码；订单、商品、退货、用户和人工转接工具输出也已经从 Map 升级成明确 DTO。前端 Agent Inspector 可以展示 Trace、过滤事件、复制 Trace JSON，并展示工具 input/output schema。Runtime 会记录工具、LLM 和转人工耗时，LLM 调用失败时会记录 `llm_failed` 并基于工具结果生成降级回复。接口层使用 ChatApiRequest、Spring Validation 和 GlobalExceptionHandler 保护 HTTP 边界。CustomerServiceSkill 也做了第一轮拆分，把槽位抽取、意图规则和 Prompt 构造分别拆到独立类里。政策类问题会走 KnowledgeTools 检索 Markdown 知识库；投诉、赔偿、用户要求人工等场景会走 HandoffAction 创建人工工单。评测体系目前覆盖路由、知识库召回、回复质量规则和 Agent 链路回复，并且会输出 JSON 指标报告、历史快照和 trend 趋势报告。当前最大的不足是 Agent 链路评测仍使用 Fake LLM，没有直接评估真实模型输出，下一步会补真实模型回复评测和 LLM-as-Judge。
 
 ## 13. 当前结论
 
@@ -661,8 +751,9 @@ TraceEvent 记录全过程
 
 接下来最应该优先补的是：
 
-- 多轮会话状态
-- Agent Trace
-- 工具返回标准化
+- 真实 Agent 回复质量评测
+- 工具 schema 继续标准化，后续演进为独立 MCP Server
+- LLM-as-Judge
+- 按售前、售后、投诉继续拆分 Skill
 
-这三件事做好后，项目就会从“能跑的客服 Demo”升级成“有工程深度的任务型 Agent”。
+多轮会话、Agent Trace、前端 Agent Inspector、MCP-style 工具层、工具 input/output schema、业务工具 DTO、知识库 RAG、人工转接、LLM 失败降级、离线路由评测、知识库召回评测、回复质量规则评测、Agent 链路回复评测、评测报告 JSON 化、评测历史趋势、结构化工具数据、Skill 第一轮拆分、接口 DTO、参数校验和统一错误响应已经完成，后续重点是真实 Agent 回复质量评测、工具 schema 标准化和更细的业务域拆分。

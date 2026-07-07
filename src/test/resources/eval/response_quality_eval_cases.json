@@ -1,0 +1,44 @@
+[
+  {
+    "id": "order_reply_should_include_core_order_info",
+    "candidateReply": "已为您查询到订单 ORD-001：商品是蓝牙耳机 Pro Max，目前状态为已发货，物流单号 SF1234567890。",
+    "requiredKeywords": ["ORD-001", "蓝牙耳机", "已发货", "SF1234567890"],
+    "forbiddenKeywords": ["order_lookup", "Tool"],
+    "expectedPass": true
+  },
+  {
+    "id": "return_policy_reply_should_be_faithful",
+    "candidateReply": "超过 7 天后通常不再默认支持七天无理由退货。如果商品存在质量问题，可以继续申请售后检测。",
+    "requiredKeywords": ["超过 7 天", "七天无理由", "质量问题", "售后检测"],
+    "forbiddenKeywords": ["一定可以退款", "保证退款", "无条件退款"],
+    "expectedPass": true
+  },
+  {
+    "id": "invoice_reply_should_include_time",
+    "candidateReply": "电子发票一般会在 1 到 3 个工作日内开具。企业发票需要填写公司抬头和纳税人识别号。",
+    "requiredKeywords": ["电子发票", "1 到 3 个工作日", "抬头", "纳税人识别号"],
+    "forbiddenKeywords": ["立即开具", "一定当天"],
+    "expectedPass": true
+  },
+  {
+    "id": "handoff_reply_should_include_ticket",
+    "candidateReply": "非常抱歉给您带来不好的体验，当前问题已为您转接人工客服，工单号 HD-1001，请您稍等。",
+    "requiredKeywords": ["转接人工客服", "工单号", "HD-1001"],
+    "forbiddenKeywords": ["一定赔偿", "保证赔偿"],
+    "expectedPass": true
+  },
+  {
+    "id": "bad_return_policy_reply_should_fail_forbidden_promise",
+    "candidateReply": "超过七天也一定可以退款，我们保证无条件退款。",
+    "requiredKeywords": ["超过七天"],
+    "forbiddenKeywords": ["一定可以退款", "无条件退款"],
+    "expectedPass": false
+  },
+  {
+    "id": "bad_order_reply_should_fail_missing_status",
+    "candidateReply": "您的订单已经查到了，请放心。",
+    "requiredKeywords": ["ORD-001", "已发货"],
+    "forbiddenKeywords": ["order_lookup", "Tool"],
+    "expectedPass": false
+  }
+]

@@ -436,9 +436,9 @@ ConversationStore.save(conversationId, state)
 
 这里有一个关键变化：
 
-> Runtime 不再只接收 `ConversationState`，而是接收 `TurnContext`，或者至少接收 `ChatRequest + ConversationState`。
+> Runtime 主链路不再只接收 `ConversationState`，而是接收 `TurnContext`。
 
-第一版实现时，如果想控制改动，可以先让 `CustomerServiceAgent` 内部组装 `TurnContext`，再逐步改造 Runtime 和 Skill。
+当前第一版已经由 `CustomerServiceAgent` 内部组装 `TurnContext`，并让 Runtime 和 Skill 通过它读取当前输入和本轮观察结果。
 
 ## 9. 多轮退货流程设计
 
@@ -548,17 +548,13 @@ return_apply(order_id = ORD-004, reason = 质量问题)
 5. 最后走 LLM 意图识别
 ```
 
-后续引入 `TurnContext` 后，这里的判断应该从：
+当前主链路已经从 `TurnContext` 读取当前输入：
 
 ```java
-state.getMessage()
+context.getMessage()
 ```
 
-改为：
-
-```java
-context.getRequest().getMessage()
-```
+`ConversationState.message` 仍然暂时保留，主要是为了兼容旧入口和测试。
 
 为什么 `pending_slot` 要排在规则识别前？
 
@@ -676,15 +672,18 @@ conv-{时间戳或 UUID}
   "conversationId": "conv-001",
   "userId": "USER-001",
   "reply": "请提供需要退换货的订单号，例如 ORD-004。",
-  "timestamp": 123456789
-}
-```
-
-Trace 阶段再扩展：
-
-```json
-{
-  "trace": []
+  "timestamp": 123456789,
+  "trace": [
+    {
+      "eventType": "ask_user",
+      "step": 1,
+      "message": "信息不足，向用户追问",
+      "data": {
+        "question": "请提供需要退换货的订单号，例如 ORD-004。"
+      },
+      "timestamp": 123456789
+    }
+  ]
 }
 ```
 
@@ -769,31 +768,82 @@ USER-001 + conv-b：商品咨询
 
 建议按以下小步开发：
 
-1. 新增 `ChatRequest`。
-2. 新增 `ConversationStore`。
-3. 调整 `ConversationState`：
+1. 新增 `ChatRequest`。已完成。
+2. 新增 `ConversationStore`。已完成。
+3. 调整 `ConversationState`。已完成第一版：
    - 逐步弱化当前 `message` 字段。
    - 增加 `recentMessages` 或继续复用 `messages` 保存历史。
    - 增加 `setPendingSlot()`、`getPendingSlot()`、`clearPendingSlot()`。
-4. 新增 `TurnContext`：
+   - 增加 `clearTaskProgress()`，任务完成后清理临时槽位。
+4. 新增 `TurnContext`。已完成第一版：
    - 持有 `ChatRequest` 和 `ConversationState`。
-   - 第一版可以只放 observations 和 finalAnswer。
-5. 改造 `CustomerServiceAgent`：
+   - 保存本轮 observations、traceEvents、stepCount、done、finalAnswer。
+5. 改造 `CustomerServiceAgent`。已完成第一版：
    - 注入 `ConversationStore`。
    - 新增 `chat(ChatRequest request)`。
    - 从 Store 读取状态，构造 TurnContext，执行后保存状态。
-6. 改造 `ChatApiController`：
+6. 改造 `ChatApiController`。已完成第一版：
    - 读取 `conversationId`。
    - 构造 `ChatRequest`。
-   - 返回 `conversationId`。
-7. 改造 `CustomerServiceSkill`：
+   - 返回 `conversationId` 和 `trace`。
+7. 改造 `CustomerServiceSkill`。已完成第一版：
    - 优先处理 `pending_slot`。
-   - 从 `ChatRequest.message` 读取当前输入。
+   - 主链路从 `TurnContext.getMessage()` 读取当前输入。
    - 支持退货订单号和原因多轮补充。
-8. 手动测试多轮退货流程。
-9. 回头补充代码注释和文档复盘。
+8. 增加多轮退货单元测试。已新增 `CustomerServiceSkillTest`。
+9. 增加 Agent Trace 单元测试。已新增 `AgentRuntimeTraceTest`。
+10. 手动测试多轮退货流程。已通过 Maven 测试验证核心逻辑。
+11. 回头补充代码注释和文档复盘。持续进行。
 
-## 17. 当前结论
+## 17. 当前实现进度
+
+目前已经完成多轮会话第一版核心链路：
+
+- `ChatRequest`：承载当前轮输入，包括 `conversationId`、`userId`、`message`。
+- `ConversationStore`：使用内存 `ConcurrentHashMap` 按 `conversationId` 保存会话状态。
+- `ConversationState`：支持 `pending_slot`，并在新一轮开始时清理上一轮观察结果。
+- `TurnContext`：承载当前请求、跨轮状态、本轮观察结果、执行轨迹、执行步数和最终回复。
+- `TraceEvent`：记录本轮 Agent 执行轨迹。
+- `ChatResponse`：统一返回 `conversationId`、`userId`、`reply`、`timestamp` 和 `trace`。
+- `ChatApiController`：支持接收并返回 `conversationId`，并返回 trace。
+- `CustomerServiceAgent`：新增 `chat(ChatRequest request)` 和 `chatWithTrace(ChatRequest request)` 入口。
+- `CustomerServiceSkill`：优先处理 `pending_slot`，支持退货申请多轮槽位填充。
+- `AgentRuntime`：追问用户时把追问内容写入历史，最终回复后清理任务临时进度，并记录 Trace。
+- `CustomerServiceSkillTest`：覆盖退货申请多轮流程的核心判断。
+- `AgentRuntimeTraceTest`：覆盖工具调用和 LLM 调用的 Trace 链路。
+
+当前退货流程已经能表达为：
+
+```text
+用户：我要退货
+Agent：请提供需要退换货的订单号，例如 ORD-004。
+
+用户：ORD-004
+Agent：已收到订单号 ORD-004。请简单说明退货原因，例如质量问题、不想要了或尺码不合适。
+
+用户：质量问题
+Agent：调用 return_apply(order_id = ORD-004, reason = 质量问题)
+```
+
+当前仍然保留一个过渡点：
+
+- `ConversationState.message` 暂时保留，用来兼容旧入口和测试。
+- `TurnContext.addObservation()` 会同步写入 `ConversationState`，方便旧逻辑过渡。
+- TraceEvent 第一版已经完成，后续可以进一步弱化 `ConversationState` 中的本轮 observation。
+
+当前已经在第一版多轮会话基础上继续升级了三级记忆：
+
+- 短期记忆：`ConversationState.messages` 现在作为最近消息窗口使用。
+- 任务记忆：通过 `ConversationMemorySnapshot` 对外展示当前意图、pendingSlot 和业务槽位。
+- 摘要记忆：长会话超过窗口后会把较早消息压缩进 `summaryMemory`。
+- Runtime 会记录 `memory_loaded` 和 `memory_compressed` Trace。
+- 前端 Agent Inspector 已新增 Memory Tab。
+
+详细设计见：
+
+- [客服Agent-17-多轮记忆管理升级设计.md](客服Agent-17-多轮记忆管理升级设计.md)
+
+## 18. 当前结论
 
 多轮会话不是简单保存历史消息，而是要保存“当前任务做到哪一步”。
 

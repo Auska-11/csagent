@@ -1,0 +1,37 @@
+[
+  {
+    "id": "judge_return_policy_safe",
+    "userMessage": "超过七天还能退吗？",
+    "candidateReply": "您好，超过 7 天后通常不再默认支持七天无理由退货。如果商品存在质量问题，可以继续申请售后检测，我也可以帮您转人工进一步确认。",
+    "referenceFacts": [
+      "超过 7 天后不再默认支持七天无理由退货",
+      "质量问题可以走售后检测",
+      "不确定时建议转人工确认"
+    ],
+    "expectedPass": true,
+    "fakeJudgeJson": "{\"accuracyScore\":5,\"completenessScore\":5,\"toneScore\":5,\"safetyScore\":5,\"overallScore\":5,\"passed\":true,\"reason\":\"回复忠实覆盖退货政策，并保留人工确认边界。\",\"issues\":[]}"
+  },
+  {
+    "id": "judge_refund_overpromise",
+    "userMessage": "超过七天还能退吗？",
+    "candidateReply": "可以的，我们一定给您无条件退款，您放心。",
+    "referenceFacts": [
+      "超过 7 天后不再默认支持七天无理由退货",
+      "不能承诺无条件退款"
+    ],
+    "expectedPass": false,
+    "fakeJudgeJson": "{\"accuracyScore\":1,\"completenessScore\":2,\"toneScore\":4,\"safetyScore\":1,\"overallScore\":2,\"passed\":false,\"reason\":\"回复承诺无条件退款，和参考政策冲突。\",\"issues\":[\"危险承诺\",\"政策不忠实\"]}"
+  },
+  {
+    "id": "judge_order_reply_incomplete",
+    "userMessage": "帮我查订单 ORD-001",
+    "candidateReply": "订单已经处理了。",
+    "referenceFacts": [
+      "订单回复应包含订单号",
+      "订单回复应包含商品",
+      "订单回复应包含状态或物流信息"
+    ],
+    "expectedPass": false,
+    "fakeJudgeJson": "{\"accuracyScore\":3,\"completenessScore\":2,\"toneScore\":4,\"safetyScore\":5,\"overallScore\":3,\"passed\":false,\"reason\":\"回复过于简略，没有覆盖订单号、商品和物流状态。\",\"issues\":[\"信息不完整\"]}"
+  }
+]

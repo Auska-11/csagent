@@ -8,9 +8,11 @@ spring:
 langchain4j:
   open-ai:
     chat-model:
-      api-key: tp-s7zeb8hkmqb7xxmo224kbtp5urwga80eqpy7ir6y5gwhj3un
-      base-url: https://token-plan-sgp.xiaomimimo.com/v1
-      model-name: mimo-v2.5-pro
+      # 不要把真实 API Key 写进配置文件。
+      # 本地运行或 Docker 部署时，通过环境变量注入这些值。
+      api-key: ${OPENAI_API_KEY:dummy-test-key}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      model-name: ${OPENAI_MODEL_NAME:dummy-model}
       temperature: 0.7
       max-tokens: 2000
       timeout: PT60S

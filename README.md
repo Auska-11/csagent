@@ -1,26 +1,141 @@
 # Smart CS Agent
 
-一个面向电商客服场景的 Java Agent 项目，基于 Spring Boot 和 LangChain4j 构建。项目重点不是简单聊天，而是把客服能力拆成可解释、可扩展的 Agent 架构。
+Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 Spring Boot 和 LangChain4j 构建。
 
-## 核心能力
+这个项目不是简单的“大模型聊天 Demo”，而是把客服 Agent 拆成可解释、可测试、可扩展的任务执行系统：Agent 先判断用户意图，再根据需要追问信息、调用业务工具、检索知识库、生成客服回复，并把每一步执行过程记录到 Trace。
 
-- 订单查询：查询订单状态、商品名和物流单号
-- 商品咨询：按关键词搜索商品、查看价格和库存
-- 退换货：申请退换货、查询退换货进度
-- 用户信息：根据当前用户查询基础资料
-- Agent 执行链路：Skill 决策、Runtime 执行、Tools 调用、LLM 总结回复
+## 当前能力
 
-## 架构亮点
+- 订单查询：支持指定订单查询、查询当前用户全部订单、缺少订单号时主动追问。
+- 商品咨询：支持商品搜索、价格和库存咨询。
+- 退换货：支持退货进度查询，以及“我要退货 -> 追问订单号 -> 追问原因 -> 提交退货申请”的多轮流程。
+- 多轮记忆：支持短期消息窗口、任务记忆快照、规则摘要压缩，Trace 会记录 `memory_loaded` / `memory_compressed`，前端 Memory 面板可查看当前会话记忆。
+- 长期用户偏好：支持记录“我喜欢蓝牙耳机”等商品偏好，后续泛化推荐时可读取用户长期记忆，Trace 会记录 `user_memory_updated` / `user_memory_used`。
+- 知识库问答：支持退货政策、发票、保修、配送、转人工规则等 Markdown 知识库检索，并已增强查询改写、多路召回、简单 rerank 和 `knowledge_miss` Trace。
+- 人工转接：支持用户主动要求人工、投诉、赔偿或维权类表达，创建模拟人工工单。
+- Agent Trace：接口和前端调试面板可以看到 Action、工具调用、LLM 调用、转人工、耗时等事件。
+- 前端调试工作台：支持多用户会话、典型 Demo 脚本、Trace 过滤/复制、Trace 指标摘要，以及工具 input/output schema 可视化。
+- 评测报告看板：前端 Eval 面板可以展示最新评测概览、历史趋势和核心指标变化。
+- LLM 降级：模型调用失败时不会直接中断接口，会基于工具结构化结果生成模板回复，并记录 `llm_failed` Trace。
+- MCP-style 工具层：工具具备统一 `ToolDefinition`、`ToolCall`、`ToolResult`、`inputSchema`、`outputSchema` 和只读工具列表接口，订单、商品、退货、用户和人工转接等业务工具已升级为明确 DTO 输出。
+- MCP Adapter：新增 `GET /api/mcp/tools` 和 `POST /api/mcp/tools/call`，把内部工具注册表暴露成更接近 MCP `tools/list`、`tools/call` 的协议边界。
+- Monitor 指标：新增 `GET /api/monitor/summary`，基于 Trace 聚合工具成功率、LLM 失败率、转人工次数和平均耗时，并在前端 Monitor 面板展示。
+- 接口工程化：聊天接口使用明确 DTO、Spring Validation 和统一 `ApiErrorResponse`。
+- 部署工程化：支持 Docker 多阶段构建、`docker compose` 一键启动、环境变量注入模型配置，并提供 `/api/health` 健康检查接口。
+- 离线评测：覆盖路由、知识库召回、回复质量规则、Agent 链路回复、LLM-as-Judge 五类评测，并输出 JSON 总览、历史快照和趋势指标。
 
-- `CustomerServiceAgent`：业务入口，面向 Controller 暴露 chat 接口
-- `AgentRuntime`：执行循环，统一处理 `LLMAction`、`CapabilityAction`、`AskUserAction`、`FinalAnswerAction`
-- `CustomerServiceSkill`：客服决策层，先规则识别，再使用 LLM 做语义兜底
-- `ToolManager`：业务工具统一调度，屏蔽订单、商品、用户、退换货工具细节
-- `Repository`：用内存数据模拟数据库，后续可替换为 MySQL 或 Redis
+## 架构概览
 
-## 开发计划
+```text
+前端页面
+  -> ChatApiController
+  -> ChatApiRequest / ChatRequest
+  -> CustomerServiceAgent
+  -> ConversationStore / TurnContext
+  -> AgentRuntime
+  -> CustomerServiceSkill
+  -> AgentAction
+  -> ToolManager / ToolRegistry
+  -> OrderTools / ProductTools / ReturnTools / UserTools / KnowledgeTools / HandoffTools
+  -> Repository 模拟数据层 / Markdown 知识库
+```
 
-后续开发路线见：[`docs/客服Agent开发路线图.md`](docs/客服Agent开发路线图.md)
+核心设计取舍：
+
+- `Skill` 负责决策下一步做什么，`Runtime` 负责执行，`Tool` 负责业务能力。
+- 高频明确场景优先用规则，表达模糊时再用 LLM 兜底。
+- 当前输入、跨轮状态、本轮执行过程分别放在 `ChatRequest`、`ConversationState`、`TurnContext`。
+- 工具层先做本地 MCP-style 边界，后续再演进为独立 MCP Server。
+- 先做稳定、可解释的规则评测，再补 LLM-as-Judge。
+
+## 主要接口
+
+发送聊天消息：
+
+```http
+POST /api/chat/send
+Content-Type: application/json
+
+{
+  "message": "我要退货",
+  "userId": "USER-001",
+  "conversationId": "demo-001"
+}
+```
+
+空消息会返回结构化错误：
+
+```json
+{
+  "errorCode": "VALIDATION_ERROR",
+  "message": "Message cannot be empty",
+  "timestamp": 1783350000000
+}
+```
+
+接口层还提供了全局异常处理，JSON 解析失败、参数异常和未预期异常都会统一包装成 `ApiErrorResponse`。
+
+查看模拟用户：
+
+```http
+GET /api/chat/users
+```
+
+查看当前会话记忆：
+
+```http
+GET /api/chat/conversations/{conversationId}/memory
+```
+
+查看用户长期记忆：
+
+```http
+GET /api/chat/users/{userId}/memory
+```
+
+查看已注册工具和输入/输出 schema：
+
+```http
+GET /api/tools
+```
+
+查看 MCP Adapter 工具列表：
+
+```http
+GET /api/mcp/tools
+```
+
+通过 MCP Adapter 调用工具：
+
+```http
+POST /api/mcp/tools/call
+Content-Type: application/json
+
+{
+  "name": "order_lookup",
+  "arguments": {
+    "order_id": "ORD-001"
+  }
+}
+```
+
+查看 Monitor 在线指标：
+
+```http
+GET /api/monitor/summary
+```
+
+查看最新评测报告和趋势：
+
+```http
+GET /api/eval/reports
+```
+
+查看服务健康状态：
+
+```http
+GET /api/health
+```
 
 ## 本地运行
 
@@ -28,8 +143,8 @@
 
 ```powershell
 $env:OPENAI_API_KEY="your-api-key"
-$env:OPENAI_BASE_URL="https://token-plan-sgp.xiaomimimo.com/v1"
-$env:OPENAI_MODEL_NAME="mimo-v2.5-pro"
+$env:OPENAI_BASE_URL="your-openai-compatible-base-url"
+$env:OPENAI_MODEL_NAME="your-model-name"
 ```
 
 启动项目：
@@ -38,21 +153,110 @@ $env:OPENAI_MODEL_NAME="mimo-v2.5-pro"
 .\mvnw.cmd spring-boot:run
 ```
 
-访问：
+访问页面：
 
 ```text
 http://localhost:8080
 ```
 
+运行测试：
+
+```powershell
+mvn "-Dmaven.repo.local=.m2\repository" test
+```
+
+测试运行后，五类评测会自动输出 JSON 指标报告到：
+
+```text
+target/eval-reports/
+```
+
+其中 `summary.json` 是当前聚合入口，`trend.json` 是趋势入口，`history/` 会保存每次评测的历史快照，其余文件对应各类评测明细。
+
+## Docker 运行
+
+复制环境变量示例文件：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+然后在 `.env` 中填写真实模型配置：
+
+```text
+OPENAI_API_KEY=your-api-key
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL_NAME=your-model-name
+```
+
+启动容器：
+
+```powershell
+docker compose up --build
+```
+
+访问页面和健康检查：
+
+```text
+http://localhost:8080
+http://localhost:8080/api/health
+```
+
+停止容器：
+
+```powershell
+docker compose down
+```
+
+`.env` 已经被 `.gitignore` 忽略，仓库只保留 `.env.example`，避免把真实 API Key 提交进去。
+
 ## 演示用例
 
 - `帮我查一下订单 ORD-001`
-- `有什么产品推荐吗`
-- `蓝牙耳机多少钱`
-- `我想退 ORD-004 这个订单`
-- `查一下 RET-001 的状态`
-- `查看我的信息`
+- `查看我的订单`
+- `我要退货`
+- `ORD-004`
+- `质量问题`
+- `超过七天还能退吗？`
+- `发票什么时候开？`
+- `我要找人工客服`
+
+## 当前评测
+
+当前评测样本共 36 条：
+
+- 路由评测：16 条。
+- 知识库召回评测：8 条。
+- 回复质量规则评测：6 条。
+- Agent 链路回复评测：3 条。
+- LLM-as-Judge 评测：3 条。
+
+最近一次完整测试通过 72 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+
+## 文档
+
+- [开发路线图](docs/客服Agent/客服Agent开发路线图.md)
+- [架构设计](docs/客服Agent/客服Agent-01-架构设计.md)
+- [多轮会话与任务状态设计](docs/客服Agent/客服Agent-02-多轮会话与任务状态设计.md)
+- [Agent Trace 调用链设计](docs/客服Agent/客服Agent-03-Agent%20Trace调用链设计.md)
+- [MCP 风格工具调用设计](docs/客服Agent/客服Agent-04-MCP风格工具调用设计.md)
+- [知识库 RAG 设计](docs/客服Agent/客服Agent-05-知识库RAG设计.md)
+- [人工转接机制设计](docs/客服Agent/客服Agent-06-人工转接机制设计.md)
+- [端到端评测设计](docs/客服Agent/客服Agent-07-端到端评测设计.md)
+- [评测报告](docs/客服Agent/客服Agent-08-评测报告.md)
+- [Skill 拆分与接口 DTO 设计](docs/客服Agent/客服Agent-09-Skill拆分与接口DTO设计.md)
+- [评测报告 JSON 化设计](docs/客服Agent/客服Agent-10-评测报告JSON化设计.md)
+- [接口校验与错误响应设计](docs/客服Agent/客服Agent-11-接口校验与错误响应设计.md)
+- [工具输出 DTO 化设计](docs/客服Agent/客服Agent-12-工具输出DTO化设计.md)
+- [前端调试工作台设计](docs/客服Agent/客服Agent-13-前端调试工作台设计.md)
+- [评测报告可视化设计](docs/客服Agent/客服Agent-14-评测报告可视化设计.md)
+- [后续模块化开发计划](docs/客服Agent/客服Agent-15-后续模块化开发计划.md)
+- [Monitor 指标与 Eval 闭环设计](docs/客服Agent/客服Agent-16-Monitor指标与Eval闭环设计.md)
+- [多轮记忆管理升级设计](docs/客服Agent/客服Agent-17-多轮记忆管理升级设计.md)
+- [LLM-as-Judge 评测设计](docs/客服Agent/客服Agent-18-LLM-as-Judge评测设计.md)
+- [Docker 部署设计](docs/客服Agent/客服Agent-19-Docker部署设计.md)
+- [长期用户偏好记忆设计](docs/客服Agent/客服Agent-20-长期用户偏好记忆设计.md)
 
 ## 简历表达参考
 
-智能客服 Agent：基于 Spring Boot + LangChain4j 设计并实现电商客服 Agent，采用 Skill/Runtime/Tool 分层架构，将意图识别、工具调用、业务数据查询和回复生成解耦；支持订单查询、商品咨询、退换货和用户信息查询等场景，并通过规则优先 + LLM 兜底的方式降低调用成本、提升可控性。
+智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，将意图识别、工具调用、业务查询、知识库检索和回复生成解耦；支持多轮槽位填充、三级会话记忆、长期用户偏好记忆、MCP-style 工具 input/output schema、MCP Adapter 工具协议接口、业务工具 DTO 输出、Agent Trace、RAG 查询改写、多路召回、简单 rerank、Monitor 在线指标、人工转接、LLM 失败降级、接口参数校验、统一错误响应、Docker 多阶段构建部署和五类离线评测，并提供前端 Agent 调试工作台用于演示 Demo 脚本、Trace 过滤、链路指标、Memory 面板、工具 Schema、Monitor 指标和 Eval 评测看板，可生成 JSON 指标、历史快照、趋势报告和 LLM-as-Judge 四维评分报告，提升客服场景下大模型应用的可控性、可观测性、可验证性和可复现部署能力。
