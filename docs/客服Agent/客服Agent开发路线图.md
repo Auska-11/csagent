@@ -58,7 +58,7 @@ Smart CS Agent 是一个面向电商客服场景的任务型 Agent 项目。
 - 人工转接第一版已经完成，后续可以接真实工单系统和失败触发规则。
 - 聊天接口已经完成明确 DTO、Spring Validation、统一错误响应和 MVC 层测试。
 - Runtime 已支持 LLM 调用失败降级：模型异常时记录 `llm_failed`，并基于工具结果返回模板化客服回复。
-- 离线路由评测、知识库召回评测、回复质量规则评测、Agent 链路回复评测和 LLM-as-Judge 第一版已经完成，并已支持 JSON 指标、历史快照、趋势报告和前端 Eval 看板；Monitor 第一版已经基于 Trace 聚合在线指标；后续需要接入真实模型输出评测。
+- 离线路由评测、知识库召回评测、回复质量规则评测、Agent 链路回复评测和 LLM-as-Judge 第一版已经完成，并已支持 JSON 指标、历史快照、趋势报告和前端 Eval 看板；Monitor 第一版已经基于 Trace 聚合在线指标，支持按工具名查看成功率和耗时，并新增用户有用/无用反馈闭环以及无用反馈 Eval 候选样本；后续需要接入真实模型输出评测。
 
 ## 3. 参考项目吸收点
 
@@ -133,7 +133,7 @@ EchoMind 提到的能力：
 | 工具调用 | 纳入 | 已完成 MCP-style 第一版，后续再演进为独立 MCP Server |
 | 多轮记忆 | 纳入 | 会话级任务状态、短期记忆、任务记忆、摘要记忆和长期商品偏好第一版已完成 |
 | Multi-Agent | 二期纳入 | 先做单客服 Skill，后面拆售前/售后/投诉 |
-| Monitor 闭环 | 暂缓 | 没有真实线上数据，先做 Trace 和统计 |
+| Monitor 闭环 | 纳入 | 已完成 Trace 指标、用户反馈和 Eval 候选样本第一版，暂不包装动态调权 |
 | LLM-as-Judge | 纳入 | 四维度评分第一版已完成，当前用 Fake Judge 保持测试稳定 |
 
 ## 4. 开发原则
@@ -502,11 +502,11 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 - 长对话不会无限增长 prompt。已完成第一版。
 - 记忆内容可查看。已完成第一版：前端 Memory Tab。
 - 用户之前说过“我喜欢蓝牙耳机”，后续推荐商品时能参考。已完成第一版。
-- 记忆内容可清空。待做。
+- 记忆内容可清空。已完成第一版：支持清空会话记忆和用户长期记忆。
 
 优先级：中。
 
-状态：第一版已完成。当前 `ConversationState` 支持短期消息窗口、任务记忆快照和规则摘要记忆；`AgentRuntime` 会记录 `memory_loaded` 和 `memory_compressed` Trace；`UserMemoryStore` 支持按 userId 保存长期商品偏好；`ChatApiController` 提供 `GET /api/chat/conversations/{conversationId}/memory` 和 `GET /api/chat/users/{userId}/memory`；前端 Agent Inspector 已新增 Memory Tab，并能展示 User Long-Term Memory。
+状态：第一版已完成。当前 `ConversationState` 支持短期消息窗口、任务记忆快照和规则摘要记忆；`AgentRuntime` 会记录 `memory_loaded` 和 `memory_compressed` Trace；`UserMemoryStore` 支持按 userId 保存长期商品偏好；`ChatApiController` 提供会话记忆和用户长期记忆的查询/清除接口；前端 Agent Inspector 已新增 Memory Tab，并能展示和清除 User Long-Term Memory。
 
 ## Phase 10：LLM-as-Judge 与 Monitor
 
@@ -525,14 +525,19 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
   - 转人工率
   - 平均响应时间
   - LLM 调用次数
+- 用户反馈：
+  - 有用反馈数
+  - 无用反馈数
+  - 有用反馈率
+  - 无用反馈进入 Eval 候选池
 
 注意：
 
-这一阶段不急做。没有真实线上数据时，不要过度包装“在线闭环调权”。当前已先做离线统计、评测报告、Monitor 指标和 Fake Judge 版本的 LLM-as-Judge。
+这一阶段不急做复杂动态调权。没有真实线上数据时，不要过度包装“在线闭环调权”。当前已先做离线统计、评测报告、Monitor 指标、用户反馈闭环、Eval 候选样本和 Fake Judge 版本的 LLM-as-Judge。
 
 优先级：中低。
 
-状态：LLM-as-Judge 第一版已完成。当前新增 Judge Prompt、结构化 JSON 解析、Fake Judge 测试样例和 `llm-as-judge.json` 报告；真实模型 Judge 后续作为可选评测接入。
+状态：LLM-as-Judge 第一版已完成。当前新增 Judge Prompt、结构化 JSON 解析、Fake Judge 测试样例和 `llm-as-judge.json` 报告；Monitor 已能把无用反馈生成 `FeedbackEvalCandidate` 待审核样本；真实模型 Judge 后续作为可选评测接入。
 
 ## Phase 11：Docker 与部署工程化
 
@@ -634,12 +639,15 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 23. 为工具定义补充 outputSchema，并在前端 Tools 面板展示 input/output schema。已完成第一版。
 24. 增强前端 Agent Inspector：Demo 脚本、Trace 过滤、Trace 指标摘要、Trace 复制、工具搜索、工具 Schema 复制和 Eval 评测报告看板。已完成第一版。
 25. 新增 MCP Adapter：提供 `/api/mcp/tools` 和 `/api/mcp/tools/call`，并补充接口测试。已完成第一版。
-26. 新增 Monitor 指标闭环：基于 Trace 聚合工具成功率、LLM 失败率、转人工次数和平均耗时，并在前端 Monitor 面板展示。已完成第一版。
+26. 新增 Monitor 指标闭环：基于 Trace 聚合整体/按工具成功率、LLM 失败率、转人工次数和平均耗时，并在前端 Monitor 面板展示。已完成第一版。
 27. 增强 RAG 检索：新增查询改写、多路召回、简单 rerank、`knowledge_miss` Trace 和 RAG Trace 过滤。已完成第一版。
 28. 升级多轮记忆管理：新增短期记忆窗口、任务记忆快照、规则摘要压缩、Memory API、Memory Trace 和前端 Memory Tab。已完成第一版。
 29. 新增 LLM-as-Judge 评测第一版：四维度 Judge Prompt、结构化 JSON 解析、Fake Judge 稳定测试和 `llm-as-judge.json` 报告。已完成第一版。
 30. 新增 Docker 部署第一版：多阶段 Dockerfile、docker-compose、`.env.example`、环境变量配置和 `/api/health` 健康检查。已完成第一版。
 31. 新增长期用户偏好记忆第一版：记录商品偏好、推荐时读取偏好、Memory 面板展示用户长期记忆。已完成第一版。
+32. 新增记忆清除与隐私控制第一版：支持清空会话记忆和用户长期记忆。已完成第一版。
+33. 新增用户反馈闭环第一版：支持回复有用/无用反馈、Monitor 聚合有用率和最近反馈。已完成第一版。
+34. 新增反馈样本进入 Eval 候选池第一版：无用反馈自动生成待审核候选样本，并在 Monitor 面板展示。已完成第一版。
 
 ## 9. 暂缓事项
 
@@ -666,7 +674,7 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 - Skill 按售前、售后、投诉等业务域继续拆分
 - 评测报告可视化或 CI 集成，基于现有 JSON、history 和 trend 做展示
 
-多轮任务状态、三级会话记忆第一版、长期用户偏好记忆第一版、Agent Trace、MCP-style 工具层、MCP Adapter、工具 inputSchema/outputSchema、业务工具 DTO、知识库 RAG、RAG 查询改写、多路召回、简单 rerank、人工转接、LLM 失败降级、Monitor 在线指标、前端 Agent Inspector、Memory 面板、Demo 演示脚本、Eval 评测报告看板、离线路由评测、知识库召回评测、回复质量规则评测、Agent 链路回复评测、LLM-as-Judge 第一版、Docker 部署第一版、评测报告 JSON 化、评测历史趋势、结构化工具数据、Skill 第一轮拆分、接口 DTO、参数校验和统一错误响应已经完成。接下来补真实模型 Judge 可选评测和持久化存储后，项目会更接近一个可以完整讲述的简历级 Agent 系统。
+多轮任务状态、三级会话记忆第一版、长期用户偏好记忆第一版、记忆清除与隐私控制、Agent Trace、MCP-style 工具层、MCP Adapter、工具 inputSchema/outputSchema、业务工具 DTO、知识库 RAG、RAG 查询改写、多路召回、简单 rerank、人工转接、LLM 失败降级、Monitor 在线指标、按工具名成功率统计、用户反馈闭环、反馈样本进入 Eval 候选池、前端 Agent Inspector、Memory 面板、Demo 演示脚本、Eval 评测报告看板、离线路由评测、知识库召回评测、回复质量规则评测、Agent 链路回复评测、LLM-as-Judge 第一版、Docker 部署第一版、评测报告 JSON 化、评测历史趋势、结构化工具数据、Skill 第一轮拆分、接口 DTO、参数校验和统一错误响应已经完成。接下来补真实模型 Judge 可选评测、候选样本审核和持久化存储后，项目会更接近一个可以完整讲述的简历级 Agent 系统。
 
 下一阶段不再零散堆功能，而是按模块推进。详细任务拆分见：
 

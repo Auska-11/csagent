@@ -27,10 +27,12 @@ class MonitorServiceTest {
                 "ok",
                 List.of(
                         new TraceEvent("tool_observed", 1, "订单工具成功", Map.of(
+                                "capability", "order_lookup",
                                 "success", true,
                                 "durationMs", 20
                         )),
                         new TraceEvent("tool_observed", 2, "退货工具失败", Map.of(
+                                "capability", "return_apply",
                                 "success", false,
                                 "durationMs", 10
                         )),
@@ -65,6 +67,10 @@ class MonitorServiceTest {
         assertEquals(120, summary.getAverageLlmDurationMs());
         assertEquals(1, summary.getRecentTurns().size());
         assertEquals("conv-1", summary.getRecentTurns().get(0).getConversationId());
+        assertEquals(3, summary.getToolStats().size());
+        assertEquals(1.0, findTool(summary, "order_lookup").getSuccessRate());
+        assertEquals(0.0, findTool(summary, "return_apply").getSuccessRate());
+        assertEquals(5, findTool(summary, "handoff_create").getAverageDurationMs());
     }
 
     @Test
@@ -80,5 +86,74 @@ class MonitorServiceTest {
         assertEquals(10, summary.getRecentTurns().size());
         assertEquals("conv-11", summary.getRecentTurns().get(0).getConversationId());
         assertEquals("conv-2", summary.getRecentTurns().get(9).getConversationId());
+    }
+
+    @Test
+    void shouldAggregateUserFeedback() {
+        MonitorService service = new MonitorService();
+
+        FeedbackRecord helpful = service.recordFeedback(
+                "conv-1",
+                "USER-001",
+                FeedbackRating.HELPFUL,
+                "回答解决了我的问题"
+        );
+        FeedbackRecord unhelpful = service.recordFeedback(
+                "conv-1",
+                "USER-001",
+                FeedbackRating.UNHELPFUL,
+                "没有说明退货时效"
+        );
+
+        MonitorSummary summary = service.getSummary();
+        assertEquals("FDB-000001", helpful.getFeedbackId());
+        assertEquals("FDB-000002", unhelpful.getFeedbackId());
+        assertEquals(2, summary.getFeedbackCount());
+        assertEquals(1, summary.getHelpfulFeedbackCount());
+        assertEquals(1, summary.getUnhelpfulFeedbackCount());
+        assertEquals(0.5, summary.getHelpfulFeedbackRate());
+        assertEquals(1, summary.getEvalCandidateCount());
+        assertEquals(2, summary.getRecentFeedbacks().size());
+        assertEquals(FeedbackRating.UNHELPFUL, summary.getRecentFeedbacks().get(0).getRating());
+    }
+
+    @Test
+    void shouldCreateEvalCandidateFromUnhelpfulFeedback() {
+        MonitorService service = new MonitorService();
+
+        service.recordFeedback(
+                "conv-1",
+                "USER-001",
+                FeedbackRating.HELPFUL,
+                "回答清楚",
+                "您的订单已经发货"
+        );
+        service.recordFeedback(
+                "conv-1",
+                "USER-001",
+                FeedbackRating.UNHELPFUL,
+                "没有说明退货时效",
+                "可以为您申请退货"
+        );
+
+        MonitorSummary summary = service.getSummary();
+        FeedbackEvalCandidate candidate = service.getFeedbackEvalCandidates().get(0);
+
+        assertEquals(1, summary.getEvalCandidateCount());
+        assertEquals(1, summary.getRecentEvalCandidates().size());
+        assertEquals("EVAL-CAND-000001", candidate.getCandidateId());
+        assertEquals("FDB-000002", candidate.getFeedbackId());
+        assertEquals("response_quality_candidate", candidate.getSuggestedEvalType());
+        assertEquals("PENDING_REVIEW", candidate.getStatus());
+        assertEquals("没有说明退货时效", candidate.getReason());
+        assertEquals("可以为您申请退货", candidate.getAssistantReply());
+    }
+
+    private ToolMonitorSnapshot findTool(MonitorSummary summary, String toolName) {
+        return summary.getToolStats()
+                .stream()
+                .filter(tool -> tool.getToolName().equals(toolName))
+                .findFirst()
+                .orElseThrow();
     }
 }

@@ -14,6 +14,7 @@
 - LLM 失败降级。
 - 离线评测与 Eval 看板。
 - 前端 Agent Inspector。
+- Monitor 指标、用户反馈和 Eval 候选样本。
 
 接下来不适合继续零散加功能，而应该按模块推进。
 
@@ -130,19 +131,31 @@ Adapter 的好处是：
 - 从最近一次 Trace 或内存统计中计算：
   - 工具调用次数。
   - 工具成功率。
+  - 按工具名统计成功率和平均耗时。
   - LLM 调用次数。
   - LLM 失败率。
   - 人工转接次数。
   - 平均工具耗时。
+- 增加用户反馈采集：
+  - 用户可以对回复点击有用或无用。
+  - Monitor 聚合反馈数和有用率。
+  - 无用反馈自动生成 Eval 待审核候选样本。
 - 前端增加 Monitor 卡片。
 
 当前第一版实现：
 
 - 新增 `MonitorService`，基于 `ChatResponse.trace` 做内存聚合。
 - 新增 `MonitorSummary` 和 `MonitorTurnSnapshot` DTO。
+- 新增 `ToolMonitorSnapshot`，展示单个工具的成功率和平均耗时。
+- 新增 `FeedbackRating` 和 `FeedbackRecord`，记录用户有用/无用反馈。
+- 新增 `FeedbackEvalCandidate`，把无用反馈沉淀成待审核评测候选。
 - 新增 `GET /api/monitor/summary`。
+- 新增 `POST /api/monitor/feedback`。
+- 新增 `GET /api/monitor/feedback/candidates`。
 - `ChatApiController` 在每轮聊天成功后调用 `monitorService.recordTurn(response)`。
 - 前端 Agent Inspector 新增 Monitor Tab。
+- 前端普通 Agent 回复下方新增有用/无用反馈按钮。
+- 前端 Monitor 面板新增 Eval Candidates 列表。
 - 新增 `MonitorServiceTest` 和 `MonitorControllerTest`。
 
 ### 4.3 验收标准
@@ -150,6 +163,9 @@ Adapter 的好处是：
 - 每次聊天后能更新 Monitor 指标。
 - 指标可以在前端看到。
 - 指标来源能追溯到 Trace。
+- 可以按工具名定位哪个工具成功率较低或耗时较高。
+- 用户点击反馈后，Monitor 能展示反馈总数、有用率和最近反馈。
+- 用户点击无用后，Monitor 能展示待审核 Eval 候选样本。
 
 ## 5. 模块三：RAG 检索增强
 
@@ -215,10 +231,13 @@ Adapter 的好处是：
 - `ChatApiController` 新增 `GET /api/chat/conversations/{conversationId}/memory`。
 - `UserMemoryStore` 新增长期用户偏好记忆，支持记录和读取商品偏好。
 - `ChatApiController` 新增 `GET /api/chat/users/{userId}/memory`。
+- `ChatApiController` 新增会话记忆和用户长期记忆清除接口。
 - 前端 Agent Inspector 新增 Memory Tab，并展示 User Long-Term Memory。
+- 前端 Memory 面板新增清空会话记忆和清空长期记忆按钮。
 - 新增 `ConversationStateMemoryTest` 覆盖压缩和任务记忆快照。
 - 新增 `UserMemoryStoreTest` 和 Skill 偏好记忆测试。
 - 新增文档 [客服Agent-20-长期用户偏好记忆设计.md](客服Agent-20-长期用户偏好记忆设计.md)。
+- 新增文档 [客服Agent-21-记忆清除与隐私控制设计.md](客服Agent-21-记忆清除与隐私控制设计.md)。
 
 ### 6.3 验收标准
 
@@ -227,6 +246,7 @@ Adapter 的好处是：
 - 超过阈值后生成或更新摘要。
 - 前端可以查看当前会话记忆。
 - 用户说过“我喜欢蓝牙耳机”后，泛化推荐可以参考这个偏好。
+- 用户可以主动清空当前会话记忆或长期商品偏好。
 
 ## 7. 模块五：LLM-as-Judge 评测
 
@@ -317,7 +337,7 @@ Adapter 的好处是：
 | 模块 | 状态 |
 | --- | --- |
 | 工具协议与 MCP 边界增强 | 第一版已完成 |
-| Monitor 指标与 Eval 闭环增强 | 第一版已完成 |
+| Monitor 指标与 Eval 闭环增强 | Trace 指标和用户反馈第一版已完成 |
 | RAG 检索增强 | 第一版已完成 |
 | 多轮记忆管理升级 | 第一版已完成 |
 | LLM-as-Judge 评测 | 第一版已完成 |

@@ -37,6 +37,8 @@ Agent：优先参考蓝牙耳机偏好进行商品搜索
 - 前端 Memory 面板展示 User Long-Term Memory。
 - 提供查询接口：
   - `GET /api/chat/users/{userId}/memory`
+- 提供清除接口：
+  - `DELETE /api/chat/users/{userId}/memory`
 
 暂时不做：
 
@@ -129,7 +131,6 @@ CustomerServiceSkill
 ## 7. 后续优化
 
 - 把 `UserMemoryStore` 持久化到 MySQL。
-- 增加清除长期记忆接口。
 - 增加预算、品牌、常用地址等画像字段。
 - 用 LLM 从对话中抽取更自然的长期偏好。
 - 给长期记忆增加过期时间和用户确认机制。

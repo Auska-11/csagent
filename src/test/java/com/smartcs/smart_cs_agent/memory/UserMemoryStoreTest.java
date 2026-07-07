@@ -39,4 +39,14 @@ class UserMemoryStoreTest {
         assertEquals(0, snapshot.getVersion());
         assertEquals(0, snapshot.getUpdatedAt());
     }
+
+    @Test
+    void shouldClearUserMemory() {
+        UserMemoryStore store = new UserMemoryStore();
+        store.rememberProductPreference("USER-001", "蓝牙耳机");
+
+        assertTrue(store.clear("USER-001"));
+        assertFalse(store.clear("USER-001"));
+        assertTrue(store.getSnapshot("USER-001").getProductPreferences().isEmpty());
+    }
 }

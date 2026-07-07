@@ -94,7 +94,10 @@ public class ConversationStore {
      *
      * 后续做“新建会话”或“重置对话”按钮时会用到。
      */
-    public void clear(String conversationId) {
-        conversations.remove(conversationId);
+    public boolean clear(String conversationId) {
+        if (conversationId == null || conversationId.isBlank()) {
+            return false;
+        }
+        return conversations.remove(conversationId) != null;
     }
 }

@@ -145,4 +145,41 @@ class ChatApiControllerTest {
         assertEquals("USER-001", snapshot.getUserId());
         assertEquals("蓝牙耳机", snapshot.getProductPreferences().get(0));
     }
+
+    @Test
+    void shouldClearConversationMemory() {
+        CustomerServiceAgent agent = mock(CustomerServiceAgent.class);
+        MonitorService monitorService = mock(MonitorService.class);
+        ConversationStore conversationStore = new ConversationStore();
+        conversationStore.save("conv-memory", new ConversationState("我要退货", "USER-001"));
+        ChatApiController controller = new ChatApiController(agent, monitorService, conversationStore);
+
+        MemoryClearResponse response = controller.clearConversationMemory("conv-memory");
+
+        assertEquals("conversation", response.getScope());
+        assertEquals("conv-memory", response.getTargetId());
+        assertEquals(true, response.isCleared());
+        assertEquals(null, conversationStore.get("conv-memory"));
+    }
+
+    @Test
+    void shouldClearUserMemory() {
+        CustomerServiceAgent agent = mock(CustomerServiceAgent.class);
+        MonitorService monitorService = mock(MonitorService.class);
+        UserMemoryStore userMemoryStore = new UserMemoryStore();
+        userMemoryStore.rememberProductPreference("USER-001", "蓝牙耳机");
+        ChatApiController controller = new ChatApiController(
+                agent,
+                monitorService,
+                new ConversationStore(),
+                userMemoryStore
+        );
+
+        MemoryClearResponse response = controller.clearUserMemory("USER-001");
+
+        assertEquals("user", response.getScope());
+        assertEquals("USER-001", response.getTargetId());
+        assertEquals(true, response.isCleared());
+        assertEquals(0, userMemoryStore.getSnapshot("USER-001").getProductPreferences().size());
+    }
 }

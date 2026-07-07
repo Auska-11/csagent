@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -27,12 +28,27 @@ public class MonitorService {
     /** 最近只保留 10 轮摘要，避免内存无限增长 */
     private static final int RECENT_TURN_LIMIT = 10;
 
+    /** 最近只保留 10 条用户反馈，避免调试面板无限变长 */
+    private static final int RECENT_FEEDBACK_LIMIT = 10;
+
+    /** 最近只保留 10 条 Eval 候选样本，第一版先服务前端调试面板 */
+    private static final int RECENT_EVAL_CANDIDATE_LIMIT = 10;
+
+    /** 助手回复可能很长，Monitor 里只保留适合调试和人工审核的长度 */
+    private static final int ASSISTANT_REPLY_LIMIT = 1000;
+
     private long totalTurns;
     private long toolCallCount;
     private long failedToolCallCount;
     private long llmCallCount;
     private long llmFailureCount;
     private long handoffCount;
+    private long feedbackCount;
+    private long helpfulFeedbackCount;
+    private long unhelpfulFeedbackCount;
+    private long feedbackSequence;
+    private long evalCandidateSequence;
+    private long evalCandidateCount;
     private long totalToolDurationMs;
     private long toolDurationSamples;
     private long totalLlmDurationMs;
@@ -40,6 +56,9 @@ public class MonitorService {
     private long lastUpdatedAt;
 
     private final Deque<MonitorTurnSnapshot> recentTurns = new ArrayDeque<>();
+    private final Deque<FeedbackRecord> recentFeedbacks = new ArrayDeque<>();
+    private final Deque<FeedbackEvalCandidate> recentEvalCandidates = new ArrayDeque<>();
+    private final Map<String, ToolAccumulator> toolStats = new LinkedHashMap<>();
 
     /**
      * 记录一轮聊天响应。
@@ -94,6 +113,9 @@ public class MonitorService {
     public synchronized MonitorSummary getSummary() {
         long successfulToolCallCount = Math.max(0, toolCallCount - failedToolCallCount);
         List<MonitorTurnSnapshot> recent = new ArrayList<>(recentTurns);
+        List<FeedbackRecord> feedbacks = new ArrayList<>(recentFeedbacks);
+        List<FeedbackEvalCandidate> candidates = new ArrayList<>(recentEvalCandidates);
+        List<ToolMonitorSnapshot> tools = buildToolStats();
 
         return new MonitorSummary(
                 totalTurns,
@@ -105,11 +127,96 @@ public class MonitorService {
                 llmFailureCount,
                 rate(llmFailureCount, llmCallCount),
                 handoffCount,
+                feedbackCount,
+                helpfulFeedbackCount,
+                unhelpfulFeedbackCount,
+                rate(helpfulFeedbackCount, feedbackCount),
                 average(totalToolDurationMs, toolDurationSamples),
                 average(totalLlmDurationMs, llmDurationSamples),
                 lastUpdatedAt,
-                recent
+                recent,
+                tools,
+                feedbacks,
+                evalCandidateCount,
+                candidates
         );
+    }
+
+    /**
+     * 记录用户对某次回复的反馈。
+     *
+     * 注意：
+     * - 反馈发生在 Agent 已经回复之后，所以不放进 AgentRuntime。
+     * - 当前只做内存统计，后续可以把 FeedbackRecord 写入数据库或消息队列。
+     */
+    public synchronized FeedbackRecord recordFeedback(String conversationId,
+                                                      String userId,
+                                                      FeedbackRating rating,
+                                                      String reason) {
+        return recordFeedback(conversationId, userId, rating, reason, "");
+    }
+
+    /**
+     * 记录用户对某次回复的反馈，并在负反馈时自动生成 Eval 候选样本。
+     *
+     * 【为什么负反馈生成候选，而不是直接写入正式评测集？】
+     * 正式评测集需要稳定、可复现、含有明确期望；用户反馈只是线上信号。
+     * 所以这里先沉淀为 PENDING_REVIEW，后续由开发者人工确认再进入正式 Eval case。
+     */
+    public synchronized FeedbackRecord recordFeedback(String conversationId,
+                                                      String userId,
+                                                      FeedbackRating rating,
+                                                      String reason,
+                                                      String assistantReply) {
+        if (conversationId == null || conversationId.isBlank()) {
+            throw new IllegalArgumentException("ConversationId cannot be empty");
+        }
+        if (rating == null) {
+            throw new IllegalArgumentException("Rating cannot be empty");
+        }
+
+        String actualUserId = (userId == null || userId.isBlank()) ? "anonymous" : userId.trim();
+        String actualReason = reason == null ? "" : reason.trim();
+        String actualAssistantReply = trimToLimit(assistantReply, ASSISTANT_REPLY_LIMIT);
+        long now = System.currentTimeMillis();
+
+        FeedbackRecord record = new FeedbackRecord(
+                nextFeedbackId(),
+                conversationId.trim(),
+                actualUserId,
+                rating,
+                actualReason,
+                actualAssistantReply,
+                now
+        );
+
+        feedbackCount++;
+        if (rating.isHelpful()) {
+            helpfulFeedbackCount++;
+        } else {
+            unhelpfulFeedbackCount++;
+        }
+        lastUpdatedAt = now;
+
+        recentFeedbacks.addFirst(record);
+        while (recentFeedbacks.size() > RECENT_FEEDBACK_LIMIT) {
+            recentFeedbacks.removeLast();
+        }
+
+        if (!rating.isHelpful()) {
+            createEvalCandidate(record);
+        }
+
+        return record;
+    }
+
+    /**
+     * 返回最近的 Eval 候选样本。
+     *
+     * 第一版先直接给前端看，后续可以把这里替换成数据库分页查询。
+     */
+    public synchronized List<FeedbackEvalCandidate> getFeedbackEvalCandidates() {
+        return new ArrayList<>(recentEvalCandidates);
     }
 
     private void collectEvent(TraceEvent event, TurnAccumulator turn) {
@@ -121,15 +228,15 @@ public class MonitorService {
         Map<String, Object> data = event.getData();
 
         switch (eventType) {
-            case "tool_observed" -> recordToolResult(data, turn, asBoolean(data.get("success"), true));
-            case "tool_failed" -> recordToolResult(data, turn, false);
+            case "tool_observed" -> recordToolResult(data, turn, asBoolean(data.get("success"), true), extractToolName(data));
+            case "tool_failed" -> recordToolResult(data, turn, false, extractToolName(data));
             case "handoff_created" -> {
                 recordHandoff(turn);
-                recordToolResult(data, turn, true);
+                recordToolResult(data, turn, true, "handoff_create");
             }
             case "handoff_failed" -> {
                 recordHandoff(turn);
-                recordToolResult(data, turn, false);
+                recordToolResult(data, turn, false, "handoff_create");
             }
             case "handoff_requested" -> recordHandoff(turn);
             case "llm_called" -> turn.llmCalls++;
@@ -141,7 +248,7 @@ public class MonitorService {
         }
     }
 
-    private void recordToolResult(Map<String, Object> data, TurnAccumulator turn, boolean success) {
+    private void recordToolResult(Map<String, Object> data, TurnAccumulator turn, boolean success, String toolName) {
         turn.toolCalls++;
         if (!success) {
             turn.failedToolCalls++;
@@ -152,6 +259,41 @@ public class MonitorService {
             turn.toolDurationMs += durationMs;
             turn.toolDurationSamples++;
         }
+
+        recordToolStats(toolName, success, durationMs);
+    }
+
+    private void recordToolStats(String toolName, boolean success, Long durationMs) {
+        String actualToolName = toolName == null || toolName.isBlank() ? "unknown_tool" : toolName;
+        ToolAccumulator stats = toolStats.computeIfAbsent(actualToolName, ignored -> new ToolAccumulator());
+
+        stats.callCount++;
+        if (success) {
+            stats.successfulCallCount++;
+        } else {
+            stats.failedCallCount++;
+        }
+
+        if (durationMs != null) {
+            stats.totalDurationMs += durationMs;
+            stats.durationSamples++;
+        }
+    }
+
+    private List<ToolMonitorSnapshot> buildToolStats() {
+        List<ToolMonitorSnapshot> snapshots = new ArrayList<>();
+        for (Map.Entry<String, ToolAccumulator> entry : toolStats.entrySet()) {
+            ToolAccumulator stats = entry.getValue();
+            snapshots.add(new ToolMonitorSnapshot(
+                    entry.getKey(),
+                    stats.callCount,
+                    stats.successfulCallCount,
+                    stats.failedCallCount,
+                    rate(stats.successfulCallCount, stats.callCount),
+                    average(stats.totalDurationMs, stats.durationSamples)
+            ));
+        }
+        return snapshots;
     }
 
     private void recordLlmDuration(Map<String, Object> data, TurnAccumulator turn) {
@@ -195,6 +337,17 @@ public class MonitorService {
         return null;
     }
 
+    private String extractToolName(Map<String, Object> data) {
+        Object value = data.get("capability");
+        if (value == null) {
+            value = data.get("toolName");
+        }
+        if (value == null) {
+            value = data.get("tool");
+        }
+        return value == null ? "unknown_tool" : value.toString();
+    }
+
     private long average(long total, long count) {
         if (count <= 0) {
             return 0;
@@ -208,6 +361,48 @@ public class MonitorService {
         }
         double value = numerator * 1.0 / denominator;
         return Math.round(value * 10_000.0) / 10_000.0;
+    }
+
+    private String nextFeedbackId() {
+        feedbackSequence++;
+        return "FDB-" + String.format("%06d", feedbackSequence);
+    }
+
+    private String nextEvalCandidateId() {
+        evalCandidateSequence++;
+        return "EVAL-CAND-" + String.format("%06d", evalCandidateSequence);
+    }
+
+    private void createEvalCandidate(FeedbackRecord feedback) {
+        FeedbackEvalCandidate candidate = new FeedbackEvalCandidate(
+                nextEvalCandidateId(),
+                feedback.getFeedbackId(),
+                feedback.getConversationId(),
+                feedback.getUserId(),
+                feedback.getRating(),
+                feedback.getReason(),
+                feedback.getAssistantReply(),
+                "response_quality_candidate",
+                "PENDING_REVIEW",
+                feedback.getTimestamp()
+        );
+
+        evalCandidateCount++;
+        recentEvalCandidates.addFirst(candidate);
+        while (recentEvalCandidates.size() > RECENT_EVAL_CANDIDATE_LIMIT) {
+            recentEvalCandidates.removeLast();
+        }
+    }
+
+    private String trimToLimit(String text, int limit) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+        String trimmed = text.trim();
+        if (trimmed.length() <= limit) {
+            return trimmed;
+        }
+        return trimmed.substring(0, limit);
     }
 
     /**
@@ -226,5 +421,18 @@ public class MonitorService {
         private long llmDurationMs;
         private long llmDurationSamples;
         private boolean handoffRecorded;
+    }
+
+    /**
+     * 单个工具的累计统计。
+     *
+     * 它只在 MonitorService 内部使用，对外仍然返回 ToolMonitorSnapshot。
+     */
+    private static class ToolAccumulator {
+        private long callCount;
+        private long successfulCallCount;
+        private long failedCallCount;
+        private long totalDurationMs;
+        private long durationSamples;
     }
 }

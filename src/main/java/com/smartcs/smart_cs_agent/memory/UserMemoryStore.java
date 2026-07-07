@@ -55,8 +55,11 @@ public class UserMemoryStore {
      *
      * 第一版先用于测试和调试；后续如果前端需要“清除记忆”按钮，可以直接复用。
      */
-    public void clear(String userId) {
-        memories.remove(userId);
+    public boolean clear(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return false;
+        }
+        return memories.remove(userId) != null;
     }
 
     /**

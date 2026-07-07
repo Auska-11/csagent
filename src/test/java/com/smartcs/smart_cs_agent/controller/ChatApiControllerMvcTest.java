@@ -23,6 +23,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -111,5 +112,27 @@ class ChatApiControllerMvcTest {
                 .andExpect(jsonPath("$.userId").value("USER-001"))
                 .andExpect(jsonPath("$.activeIntent").value("return_apply"))
                 .andExpect(jsonPath("$.pendingSlot").value("order_id"));
+    }
+
+    @Test
+    void shouldClearConversationMemory() throws Exception {
+        when(conversationStore.clear("conv-memory")).thenReturn(true);
+
+        mockMvc.perform(delete("/api/chat/conversations/conv-memory/memory"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scope").value("conversation"))
+                .andExpect(jsonPath("$.targetId").value("conv-memory"))
+                .andExpect(jsonPath("$.cleared").value(true));
+    }
+
+    @Test
+    void shouldClearUserMemory() throws Exception {
+        when(userMemoryStore.clear("USER-001")).thenReturn(true);
+
+        mockMvc.perform(delete("/api/chat/users/USER-001/memory"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scope").value("user"))
+                .andExpect(jsonPath("$.targetId").value("USER-001"))
+                .andExpect(jsonPath("$.cleared").value(true));
     }
 }

@@ -334,6 +334,54 @@
             text-align: right;
         }
 
+        .feedback-bar {
+            margin-top: 8px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .feedback-label {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .feedback-button {
+            min-height: 28px;
+            padding: 0 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .feedback-button:hover {
+            border-color: var(--border-strong);
+            color: var(--text);
+        }
+
+        .feedback-button.active {
+            border-color: var(--teal);
+            background: var(--teal-soft);
+            color: #115e59;
+        }
+
+        .feedback-button.negative.active {
+            border-color: var(--danger);
+            background: var(--danger-soft);
+            color: var(--danger);
+        }
+
+        .feedback-button:disabled {
+            cursor: default;
+            opacity: 0.88;
+        }
+
         .composer {
             padding: 16px 22px;
             background: var(--surface);
@@ -868,6 +916,8 @@
             <div class="panel-toolbar">
                 <button class="small-action" id="refreshMemoryBtn">刷新记忆</button>
                 <button class="small-action" id="copyMemoryBtn">复制记忆</button>
+                <button class="small-action" id="clearConversationMemoryBtn">清空会话</button>
+                <button class="small-action" id="clearUserMemoryBtn">清空长期</button>
             </div>
             <div class="metric-list" id="memoryMetrics"></div>
             <div class="eval-section-title">User Long-Term Memory</div>
@@ -886,8 +936,14 @@
                 <button class="small-action" id="copyMonitorBtn">复制指标</button>
             </div>
             <div class="metric-list" id="monitorMetrics"></div>
+            <div class="eval-section-title">Tool Stats</div>
+            <div class="eval-list" id="toolStatsList"></div>
             <div class="eval-section-title">Recent Turns</div>
             <div class="eval-list" id="monitorList"></div>
+            <div class="eval-section-title">Recent Feedback</div>
+            <div class="eval-list" id="feedbackList"></div>
+            <div class="eval-section-title">Eval Candidates</div>
+            <div class="eval-list" id="evalCandidateList"></div>
         </section>
 
         <section class="panel hidden" id="evalPanel">
@@ -964,7 +1020,10 @@
         summaryMemoryList: document.getElementById('summaryMemoryList'),
         shortTermMemoryList: document.getElementById('shortTermMemoryList'),
         monitorMetrics: document.getElementById('monitorMetrics'),
+        toolStatsList: document.getElementById('toolStatsList'),
         monitorList: document.getElementById('monitorList'),
+        feedbackList: document.getElementById('feedbackList'),
+        evalCandidateList: document.getElementById('evalCandidateList'),
         evalMetrics: document.getElementById('evalMetrics'),
         evalList: document.getElementById('evalList'),
         trendList: document.getElementById('trendList'),
@@ -977,6 +1036,8 @@
         copyMonitorBtn: document.getElementById('copyMonitorBtn'),
         refreshMemoryBtn: document.getElementById('refreshMemoryBtn'),
         copyMemoryBtn: document.getElementById('copyMemoryBtn'),
+        clearConversationMemoryBtn: document.getElementById('clearConversationMemoryBtn'),
+        clearUserMemoryBtn: document.getElementById('clearUserMemoryBtn'),
         refreshEvalBtn: document.getElementById('refreshEvalBtn'),
         copyEvalBtn: document.getElementById('copyEvalBtn')
     };
@@ -1005,6 +1066,12 @@
 
         document.getElementById('newConversationBtn').addEventListener('click', startNewConversation);
         els.runDemoBtn.addEventListener('click', runDemo);
+        els.chatContainer.addEventListener('click', event => {
+            const button = event.target.closest('.feedback-button');
+            if (button) {
+                submitFeedback(button.dataset.feedbackMessageId, button.dataset.feedbackRating);
+            }
+        });
 
         document.querySelectorAll('.tab-button').forEach(button => {
             button.addEventListener('click', () => selectTab(button.dataset.tab));
@@ -1017,6 +1084,8 @@
         els.copyTraceBtn.addEventListener('click', copyTrace);
         els.refreshMemoryBtn.addEventListener('click', loadMemorySnapshot);
         els.copyMemoryBtn.addEventListener('click', copyMemorySnapshot);
+        els.clearConversationMemoryBtn.addEventListener('click', clearConversationMemory);
+        els.clearUserMemoryBtn.addEventListener('click', clearUserMemory);
         els.refreshMonitorBtn.addEventListener('click', loadMonitorSummary);
         els.copyMonitorBtn.addEventListener('click', copyMonitorSummary);
         els.refreshEvalBtn.addEventListener('click', loadEvalReports);
@@ -1122,6 +1191,42 @@
             state.userMemorySnapshot = payload;
         } catch (error) {
             state.userMemorySnapshot = null;
+        }
+    }
+
+    async function clearConversationMemory() {
+        const conversationId = currentConversationId();
+        try {
+            const response = await fetch('/api/chat/conversations/' + encodeURIComponent(conversationId) + '/memory', {
+                method: 'DELETE'
+            });
+            const payload = await readJson(response);
+            if (!response.ok) {
+                throw new Error(payload.message || '清空会话记忆失败');
+            }
+            state.memorySnapshot = null;
+            renderMemorySnapshot('当前会话记忆已清空，下一轮消息会重新生成会话状态。');
+            appendSystemMessage(payload.message || '会话记忆已清空。');
+        } catch (error) {
+            appendSystemMessage('清空会话记忆失败：' + error.message);
+        }
+    }
+
+    async function clearUserMemory() {
+        const userId = currentUserId();
+        try {
+            const response = await fetch('/api/chat/users/' + encodeURIComponent(userId) + '/memory', {
+                method: 'DELETE'
+            });
+            const payload = await readJson(response);
+            if (!response.ok) {
+                throw new Error(payload.message || '清空用户长期记忆失败');
+            }
+            await loadUserMemorySnapshot();
+            renderMemorySnapshot();
+            appendSystemMessage(payload.message || '用户长期记忆已清空。');
+        } catch (error) {
+            appendSystemMessage('清空用户长期记忆失败：' + error.message);
         }
     }
 
@@ -1260,15 +1365,22 @@
 
     function appendMessage(role, content, options = {}) {
         const timestamp = options.timestamp || Date.now();
+        let messageId = options.messageId;
 
         // 前端只负责保存“演示会话”的临时消息，刷新页面后由后端会话状态继续接管真实上下文。
         if (options.persist !== false) {
-            conversationMessages().push({
+            const messages = conversationMessages();
+            messageId = messageId || 'msg-' + timestamp + '-' + messages.length;
+            messages.push({
                 role,
                 content,
                 timestamp,
-                variant: options.variant || ''
+                variant: options.variant || '',
+                messageId,
+                feedback: options.feedback || null
             });
+        } else {
+            messageId = messageId || 'msg-' + timestamp;
         }
 
         removeEmptyState();
@@ -1283,6 +1395,10 @@
                 : 'AI';
         const time = new Date(timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
 
+        const feedbackHtml = shouldRenderFeedback(role, options)
+                ? renderFeedbackControls(messageId, options.feedback || null)
+                : '';
+
         if (role === 'user') {
             message.innerHTML = `
                 <div class="message-body">
@@ -1296,6 +1412,7 @@
                 <div class="avatar">${avatar}</div>
                 <div class="message-body">
                     <div class="bubble">${escapeHtml(content)}</div>
+                    ${feedbackHtml}
                     <div class="message-time">${time}</div>
                 </div>
             `;
@@ -1322,7 +1439,9 @@
         messages.forEach(message => appendMessage(message.role, message.content, {
             persist: false,
             timestamp: message.timestamp,
-            variant: message.variant
+            variant: message.variant,
+            messageId: message.messageId,
+            feedback: message.feedback
         }));
     }
 
@@ -1627,7 +1746,10 @@
     function renderMonitorSummary(errorMessage) {
         if (errorMessage) {
             els.monitorMetrics.innerHTML = '';
+            els.toolStatsList.innerHTML = '';
             els.monitorList.innerHTML = `<div class="tool-row"><div class="row-title">${escapeHtml(errorMessage)}</div></div>`;
+            els.feedbackList.innerHTML = '';
+            els.evalCandidateList.innerHTML = '';
             return;
         }
 
@@ -1642,6 +1764,9 @@
             ['Tool Success', formatPercent(summary.toolSuccessRate || 0)],
             ['LLM Fail', formatPercent(summary.llmFailureRate || 0)],
             ['Handoff', summary.handoffCount ?? 0],
+            ['Feedback', summary.feedbackCount ?? 0],
+            ['Helpful', formatPercent(summary.helpfulFeedbackRate || 0)],
+            ['Eval Cand.', summary.evalCandidateCount ?? 0],
             ['Avg Tool', (summary.averageToolDurationMs || 0) + 'ms'],
             ['Avg LLM', (summary.averageLlmDurationMs || 0) + 'ms'],
             ['Updated', lastUpdated]
@@ -1654,7 +1779,41 @@
             </div>
         `).join('');
 
+        renderMonitorToolStats(summary.toolStats || []);
         renderMonitorTurns(summary.recentTurns || []);
+        renderMonitorFeedback(summary.recentFeedbacks || []);
+        renderMonitorEvalCandidates(summary.recentEvalCandidates || []);
+    }
+
+    function renderMonitorToolStats(toolStats) {
+        if (!toolStats.length) {
+            els.toolStatsList.innerHTML = `
+                <div class="tool-row">
+                    <div class="row-title">No tool stats</div>
+                    <div class="row-subtitle">触发工具调用后，这里会按工具名展示成功率和平均耗时。</div>
+                </div>
+            `;
+            return;
+        }
+
+        els.toolStatsList.innerHTML = toolStats.map(tool => {
+            const successRate = Number(tool.successRate || 0);
+            const badge = successRate >= 1 ? 'tool' : (successRate <= 0 ? 'error' : 'warn');
+            return `
+                <div class="tool-row">
+                    <div class="row-head">
+                        <div class="row-title">${escapeHtml(tool.toolName || '-')}</div>
+                        <span class="badge ${badge}">${escapeHtml(formatPercent(successRate))}</span>
+                    </div>
+                    <div class="tool-contract">
+                        Calls: ${escapeHtml(tool.callCount ?? 0)}
+                        · Success: ${escapeHtml(tool.successfulCallCount ?? 0)}
+                        · Failed: ${escapeHtml(tool.failedCallCount ?? 0)}
+                        · Avg: ${escapeHtml(tool.averageDurationMs ?? 0)}ms
+                    </div>
+                </div>
+            `;
+        }).join('');
     }
 
     function renderMonitorTurns(turns) {
@@ -1689,6 +1848,74 @@
                         · Handoff: ${escapeHtml(turn.handoffCount ?? 0)}
                         · Duration: ${escapeHtml(turn.totalDurationMs ?? 0)}ms
                     </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function renderMonitorFeedback(feedbacks) {
+        if (!feedbacks.length) {
+            els.feedbackList.innerHTML = `
+                <div class="tool-row">
+                    <div class="row-title">No feedback</div>
+                    <div class="row-subtitle">用户点击“有用/无用”后，这里会展示最近反馈。</div>
+                </div>
+            `;
+            return;
+        }
+
+        els.feedbackList.innerHTML = feedbacks.map(feedback => {
+            const helpful = feedback.rating === 'HELPFUL';
+            const badge = helpful ? 'tool' : 'error';
+            return `
+                <div class="tool-row">
+                    <div class="row-head">
+                        <div class="row-title">${escapeHtml(feedback.feedbackId || '-')}</div>
+                        <span class="badge ${badge}">${escapeHtml(helpful ? 'Helpful' : 'Unhelpful')}</span>
+                    </div>
+                    <div class="row-subtitle">
+                        ${escapeHtml(feedback.userId || '-')} · ${escapeHtml(feedback.conversationId || '-')}
+                    </div>
+                    <div class="tool-contract">
+                        ${escapeHtml(feedback.reason || 'No reason')}
+                        · ${escapeHtml(formatTime(feedback.timestamp))}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function renderMonitorEvalCandidates(candidates) {
+        if (!candidates.length) {
+            els.evalCandidateList.innerHTML = `
+                <div class="tool-row">
+                    <div class="row-title">No eval candidates</div>
+                    <div class="row-subtitle">用户点击“无用”后，这里会生成待审核评测样本。</div>
+                </div>
+            `;
+            return;
+        }
+
+        els.evalCandidateList.innerHTML = candidates.map(candidate => {
+            const reply = candidate.assistantReply || 'No assistant reply captured';
+            return `
+                <div class="tool-row">
+                    <div class="row-head">
+                        <div class="row-title">${escapeHtml(candidate.candidateId || '-')}</div>
+                        <span class="badge warn">${escapeHtml(candidate.status || 'PENDING_REVIEW')}</span>
+                    </div>
+                    <div class="row-subtitle">
+                        ${escapeHtml(candidate.userId || '-')} · ${escapeHtml(candidate.conversationId || '-')}
+                    </div>
+                    <div class="tool-contract">
+                        Type: ${escapeHtml(candidate.suggestedEvalType || '-')}
+                        · Feedback: ${escapeHtml(candidate.feedbackId || '-')}
+                        · ${escapeHtml(formatTime(candidate.timestamp))}
+                    </div>
+                    <div class="tool-contract">
+                        Reason: ${escapeHtml(candidate.reason || 'No reason')}
+                    </div>
+                    <div class="row-subtitle">${escapeHtml(reply)}</div>
                 </div>
             `;
         }).join('');
@@ -1871,6 +2098,44 @@
         copyText(JSON.stringify(state.monitorSummary, null, 2), 'Monitor 指标 JSON 已复制。');
     }
 
+    async function submitFeedback(messageId, rating) {
+        if (!messageId || !rating) {
+            return;
+        }
+
+        const messages = conversationMessages();
+        const message = messages.find(item => item.messageId === messageId);
+        if (!message || message.feedback) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/monitor/feedback', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    conversationId: currentConversationId(),
+                    userId: currentUserId(),
+                    rating,
+                    reason: rating === 'HELPFUL' ? '前端快捷反馈：有用' : '前端快捷反馈：无用',
+                    assistantReply: message.content || ''
+                })
+            });
+
+            const payload = await readJson(response);
+            if (!response.ok) {
+                appendSystemMessage(payload.message || '反馈提交失败');
+                return;
+            }
+
+            message.feedback = rating;
+            renderConversationMessages();
+            await loadMonitorSummary();
+        } catch (error) {
+            appendSystemMessage('反馈提交异常：' + error.message);
+        }
+    }
+
     function copyEvalReport() {
         if (!state.evalReport) {
             appendSystemMessage('当前没有可复制的评测报告。');
@@ -1911,6 +2176,31 @@
 
     function updateConversationMeta() {
         els.conversationMeta.textContent = 'conversation: ' + currentConversationId();
+    }
+
+    function shouldRenderFeedback(role, options = {}) {
+        return role === 'assistant' && options.variant !== 'system';
+    }
+
+    function renderFeedbackControls(messageId, feedback) {
+        const helpfulActive = feedback === 'HELPFUL' ? 'active' : '';
+        const unhelpfulActive = feedback === 'UNHELPFUL' ? 'active' : '';
+        const disabled = feedback ? 'disabled' : '';
+        const label = feedback ? '已记录反馈' : '这次回复';
+
+        return `
+            <div class="feedback-bar">
+                <span class="feedback-label">${escapeHtml(label)}</span>
+                <button class="feedback-button ${helpfulActive}"
+                        data-feedback-message-id="${escapeHtml(messageId)}"
+                        data-feedback-rating="HELPFUL"
+                        ${disabled}>有用</button>
+                <button class="feedback-button negative ${unhelpfulActive}"
+                        data-feedback-message-id="${escapeHtml(messageId)}"
+                        data-feedback-rating="UNHELPFUL"
+                        ${disabled}>无用</button>
+            </div>
+        `;
     }
 
     function findLastToolName() {

@@ -110,6 +110,18 @@ public class ChatApiController {
     }
 
     /**
+     * 清空指定会话记忆。
+     *
+     * 这相当于“重置当前对话任务状态”，适合用户想重新开始一次客服流程时使用。
+     */
+    @DeleteMapping("/conversations/{conversationId}/memory")
+    public MemoryClearResponse clearConversationMemory(@PathVariable String conversationId) {
+        boolean cleared = conversationStore.clear(conversationId);
+        String message = cleared ? "Conversation memory cleared" : "Conversation memory not found";
+        return new MemoryClearResponse("conversation", conversationId, cleared, message, System.currentTimeMillis());
+    }
+
+    /**
      * 查看用户长期记忆。
      *
      * 这个接口和会话记忆接口不同：
@@ -119,5 +131,17 @@ public class ChatApiController {
     @GetMapping("/users/{userId}/memory")
     public UserMemorySnapshot getUserMemory(@PathVariable String userId) {
         return userMemoryStore.getSnapshot(userId);
+    }
+
+    /**
+     * 清空用户长期记忆。
+     *
+     * 这个接口体现“用户可控”：Agent 可以记住偏好，也应该允许用户清除偏好。
+     */
+    @DeleteMapping("/users/{userId}/memory")
+    public MemoryClearResponse clearUserMemory(@PathVariable String userId) {
+        boolean cleared = userMemoryStore.clear(userId);
+        String message = cleared ? "User memory cleared" : "User memory not found";
+        return new MemoryClearResponse("user", userId, cleared, message, System.currentTimeMillis());
     }
 }

@@ -24,10 +24,18 @@ public class MonitorSummary {
     private final long llmFailureCount;
     private final double llmFailureRate;
     private final long handoffCount;
+    private final long feedbackCount;
+    private final long helpfulFeedbackCount;
+    private final long unhelpfulFeedbackCount;
+    private final double helpfulFeedbackRate;
     private final long averageToolDurationMs;
     private final long averageLlmDurationMs;
     private final long lastUpdatedAt;
     private final List<MonitorTurnSnapshot> recentTurns;
+    private final List<ToolMonitorSnapshot> toolStats;
+    private final List<FeedbackRecord> recentFeedbacks;
+    private final long evalCandidateCount;
+    private final List<FeedbackEvalCandidate> recentEvalCandidates;
 
     public MonitorSummary(long totalTurns,
                           long toolCallCount,
@@ -38,10 +46,18 @@ public class MonitorSummary {
                           long llmFailureCount,
                           double llmFailureRate,
                           long handoffCount,
+                          long feedbackCount,
+                          long helpfulFeedbackCount,
+                          long unhelpfulFeedbackCount,
+                          double helpfulFeedbackRate,
                           long averageToolDurationMs,
                           long averageLlmDurationMs,
                           long lastUpdatedAt,
-                          List<MonitorTurnSnapshot> recentTurns) {
+                          List<MonitorTurnSnapshot> recentTurns,
+                          List<ToolMonitorSnapshot> toolStats,
+                          List<FeedbackRecord> recentFeedbacks,
+                          long evalCandidateCount,
+                          List<FeedbackEvalCandidate> recentEvalCandidates) {
         this.totalTurns = totalTurns;
         this.toolCallCount = toolCallCount;
         this.successfulToolCallCount = successfulToolCallCount;
@@ -51,10 +67,18 @@ public class MonitorSummary {
         this.llmFailureCount = llmFailureCount;
         this.llmFailureRate = llmFailureRate;
         this.handoffCount = handoffCount;
+        this.feedbackCount = feedbackCount;
+        this.helpfulFeedbackCount = helpfulFeedbackCount;
+        this.unhelpfulFeedbackCount = unhelpfulFeedbackCount;
+        this.helpfulFeedbackRate = helpfulFeedbackRate;
         this.averageToolDurationMs = averageToolDurationMs;
         this.averageLlmDurationMs = averageLlmDurationMs;
         this.lastUpdatedAt = lastUpdatedAt;
         this.recentTurns = recentTurns == null ? List.of() : List.copyOf(recentTurns);
+        this.toolStats = toolStats == null ? List.of() : List.copyOf(toolStats);
+        this.recentFeedbacks = recentFeedbacks == null ? List.of() : List.copyOf(recentFeedbacks);
+        this.evalCandidateCount = evalCandidateCount;
+        this.recentEvalCandidates = recentEvalCandidates == null ? List.of() : List.copyOf(recentEvalCandidates);
     }
 
     public long getTotalTurns() {
@@ -93,6 +117,22 @@ public class MonitorSummary {
         return handoffCount;
     }
 
+    public long getFeedbackCount() {
+        return feedbackCount;
+    }
+
+    public long getHelpfulFeedbackCount() {
+        return helpfulFeedbackCount;
+    }
+
+    public long getUnhelpfulFeedbackCount() {
+        return unhelpfulFeedbackCount;
+    }
+
+    public double getHelpfulFeedbackRate() {
+        return helpfulFeedbackRate;
+    }
+
     public long getAverageToolDurationMs() {
         return averageToolDurationMs;
     }
@@ -107,5 +147,21 @@ public class MonitorSummary {
 
     public List<MonitorTurnSnapshot> getRecentTurns() {
         return recentTurns;
+    }
+
+    public List<ToolMonitorSnapshot> getToolStats() {
+        return toolStats;
+    }
+
+    public List<FeedbackRecord> getRecentFeedbacks() {
+        return recentFeedbacks;
+    }
+
+    public long getEvalCandidateCount() {
+        return evalCandidateCount;
+    }
+
+    public List<FeedbackEvalCandidate> getRecentEvalCandidates() {
+        return recentEvalCandidates;
     }
 }
