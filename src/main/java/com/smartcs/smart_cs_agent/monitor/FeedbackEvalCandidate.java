@@ -38,6 +38,9 @@ public class FeedbackEvalCandidate {
     /** 建议进入哪类评测，第一版先统一进入回复质量候选 */
     private final String suggestedEvalType;
 
+    /** 负反馈问题类型，帮助 Monitor 统计“用户为什么觉得回答无用” */
+    private final FeedbackIssueType issueType;
+
     /** 候选样本状态，初始为 PENDING_REVIEW，审核后变为 APPROVED 或 REJECTED */
     private final FeedbackEvalCandidateStatus status;
 
@@ -67,6 +70,32 @@ public class FeedbackEvalCandidate {
                 reason,
                 assistantReply,
                 suggestedEvalType,
+                FeedbackIssueType.OTHER,
+                FeedbackEvalCandidateStatus.PENDING_REVIEW,
+                "",
+                0,
+                timestamp);
+    }
+
+    public FeedbackEvalCandidate(String candidateId,
+                                 String feedbackId,
+                                 String conversationId,
+                                 String userId,
+                                 FeedbackRating rating,
+                                 String reason,
+                                 String assistantReply,
+                                 String suggestedEvalType,
+                                 FeedbackIssueType issueType,
+                                 long timestamp) {
+        this(candidateId,
+                feedbackId,
+                conversationId,
+                userId,
+                rating,
+                reason,
+                assistantReply,
+                suggestedEvalType,
+                issueType,
                 FeedbackEvalCandidateStatus.PENDING_REVIEW,
                 "",
                 0,
@@ -85,6 +114,34 @@ public class FeedbackEvalCandidate {
                                  String reviewNote,
                                  long reviewedAt,
                                  long timestamp) {
+        this(candidateId,
+                feedbackId,
+                conversationId,
+                userId,
+                rating,
+                reason,
+                assistantReply,
+                suggestedEvalType,
+                FeedbackIssueType.OTHER,
+                status,
+                reviewNote,
+                reviewedAt,
+                timestamp);
+    }
+
+    public FeedbackEvalCandidate(String candidateId,
+                                 String feedbackId,
+                                 String conversationId,
+                                 String userId,
+                                 FeedbackRating rating,
+                                 String reason,
+                                 String assistantReply,
+                                 String suggestedEvalType,
+                                 FeedbackIssueType issueType,
+                                 FeedbackEvalCandidateStatus status,
+                                 String reviewNote,
+                                 long reviewedAt,
+                                 long timestamp) {
         this.candidateId = candidateId;
         this.feedbackId = feedbackId;
         this.conversationId = conversationId;
@@ -93,6 +150,7 @@ public class FeedbackEvalCandidate {
         this.reason = reason;
         this.assistantReply = assistantReply;
         this.suggestedEvalType = suggestedEvalType;
+        this.issueType = issueType == null ? FeedbackIssueType.OTHER : issueType;
         this.status = status;
         this.reviewNote = reviewNote;
         this.reviewedAt = reviewedAt;
@@ -117,6 +175,7 @@ public class FeedbackEvalCandidate {
                 reason,
                 assistantReply,
                 suggestedEvalType,
+                issueType,
                 nextStatus,
                 note == null ? "" : note.trim(),
                 reviewTime,
@@ -154,6 +213,10 @@ public class FeedbackEvalCandidate {
 
     public String getSuggestedEvalType() {
         return suggestedEvalType;
+    }
+
+    public FeedbackIssueType getIssueType() {
+        return issueType;
     }
 
     public FeedbackEvalCandidateStatus getStatus() {

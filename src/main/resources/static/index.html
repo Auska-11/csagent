@@ -1766,6 +1766,7 @@
         const lastUpdated = summary.lastUpdatedAt
                 ? new Date(summary.lastUpdatedAt).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})
                 : '-';
+        const topIssue = findTopIssue(summary.evalCandidateIssueCounts || {});
 
         // Monitor 面板展示的是“在线表现指标”，帮助我们判断 Agent 是否稳定，而不是评测集分数。
         const metrics = [
@@ -1779,6 +1780,7 @@
             ['Pending', summary.pendingEvalCandidateCount ?? 0],
             ['Approved', summary.approvedEvalCandidateCount ?? 0],
             ['Rejected', summary.rejectedEvalCandidateCount ?? 0],
+            ['Top Issue', topIssue],
             ['Avg Tool', (summary.averageToolDurationMs || 0) + 'ms'],
             ['Avg LLM', (summary.averageLlmDurationMs || 0) + 'ms'],
             ['Updated', lastUpdated]
@@ -1937,6 +1939,7 @@
                     </div>
                     <div class="tool-contract">
                         Type: ${escapeHtml(candidate.suggestedEvalType || '-')}
+                        · Issue: <span class="badge ${issueTypeBadge(candidate.issueType)}">${escapeHtml(issueTypeLabel(candidate.issueType))}</span>
                         · Feedback: ${escapeHtml(candidate.feedbackId || '-')}
                         · ${escapeHtml(formatTime(candidate.timestamp))}
                     </div>
@@ -2297,6 +2300,41 @@
             return 'error';
         }
         return 'warn';
+    }
+
+    function findTopIssue(issueCounts) {
+        const entries = Object.entries(issueCounts || {})
+                .filter(([, count]) => Number(count) > 0)
+                .sort((a, b) => Number(b[1]) - Number(a[1]));
+        if (!entries.length) {
+            return '-';
+        }
+        return issueTypeLabel(entries[0][0]);
+    }
+
+    function issueTypeLabel(issueType) {
+        const labels = {
+            MISSING_KEY_INFO: '缺少信息',
+            UNSAFE_PROMISE: '危险承诺',
+            POLICY_UNCLEAR: '政策不清',
+            TOOL_OR_INTERNAL_LEAK: '内部泄露',
+            TONE_OR_EXPERIENCE: '语气体验',
+            OTHER: '其他'
+        };
+        return labels[issueType] || labels.OTHER;
+    }
+
+    function issueTypeBadge(issueType) {
+        if (issueType === 'UNSAFE_PROMISE' || issueType === 'TOOL_OR_INTERNAL_LEAK') {
+            return 'error';
+        }
+        if (issueType === 'MISSING_KEY_INFO' || issueType === 'POLICY_UNCLEAR') {
+            return 'warn';
+        }
+        if (issueType === 'TONE_OR_EXPERIENCE') {
+            return '';
+        }
+        return '';
     }
 
     function findLastToolName() {

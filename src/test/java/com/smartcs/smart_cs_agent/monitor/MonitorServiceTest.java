@@ -71,6 +71,7 @@ class MonitorServiceTest {
         assertEquals(0, summary.getPendingEvalCandidateCount());
         assertEquals(0, summary.getApprovedEvalCandidateCount());
         assertEquals(0, summary.getRejectedEvalCandidateCount());
+        assertEquals(0, summary.getEvalCandidateIssueCounts().get("MISSING_KEY_INFO"));
         assertEquals(1.0, findTool(summary, "order_lookup").getSuccessRate());
         assertEquals(0.0, findTool(summary, "return_apply").getSuccessRate());
         assertEquals(5, findTool(summary, "handoff_create").getAverageDurationMs());
@@ -121,6 +122,7 @@ class MonitorServiceTest {
         assertEquals(1, summary.getPendingEvalCandidateCount());
         assertEquals(0, summary.getApprovedEvalCandidateCount());
         assertEquals(0, summary.getRejectedEvalCandidateCount());
+        assertEquals(1, summary.getEvalCandidateIssueCounts().get("MISSING_KEY_INFO"));
     }
 
     @Test
@@ -151,6 +153,7 @@ class MonitorServiceTest {
         assertEquals("EVAL-CAND-000001", candidate.getCandidateId());
         assertEquals("FDB-000002", candidate.getFeedbackId());
         assertEquals("response_quality_candidate", candidate.getSuggestedEvalType());
+        assertEquals(FeedbackIssueType.MISSING_KEY_INFO, candidate.getIssueType());
         assertEquals(FeedbackEvalCandidateStatus.PENDING_REVIEW, candidate.getStatus());
         assertEquals("没有说明退货时效", candidate.getReason());
         assertEquals("可以为您申请退货", candidate.getAssistantReply());
@@ -216,11 +219,48 @@ class MonitorServiceTest {
         assertEquals("feedback_eval_cand_000001", drafts.get(0).getId());
         assertEquals("EVAL-CAND-000001", drafts.get(0).getSourceCandidateId());
         assertEquals("可以为您申请退货", drafts.get(0).getCandidateReply());
+        assertEquals(FeedbackIssueType.MISSING_KEY_INFO, drafts.get(0).getIssueType());
         assertEquals(false, drafts.get(0).isExpectedPass());
         assertEquals("可以作为负例", drafts.get(0).getReviewNote());
         assertEquals(0, service.getSummary().getPendingEvalCandidateCount());
         assertEquals(1, service.getSummary().getApprovedEvalCandidateCount());
         assertEquals(1, service.getSummary().getRejectedEvalCandidateCount());
+    }
+
+    @Test
+    void shouldClassifyEvalCandidateIssueTypes() {
+        MonitorService service = new MonitorService();
+
+        service.recordFeedback(
+                "conv-1",
+                "USER-001",
+                FeedbackRating.UNHELPFUL,
+                "回复承诺一定可以退款",
+                "一定可以退款，请放心"
+        );
+        service.recordFeedback(
+                "conv-2",
+                "USER-002",
+                FeedbackRating.UNHELPFUL,
+                "回复里出现内部工具调用",
+                "Tool order_lookup 返回了订单信息"
+        );
+        service.recordFeedback(
+                "conv-3",
+                "USER-003",
+                FeedbackRating.UNHELPFUL,
+                "语气太敷衍，体验不好",
+                "自己看规则"
+        );
+
+        MonitorSummary summary = service.getSummary();
+
+        assertEquals(FeedbackIssueType.TONE_OR_EXPERIENCE, service.getFeedbackEvalCandidates().get(0).getIssueType());
+        assertEquals(FeedbackIssueType.TOOL_OR_INTERNAL_LEAK, service.getFeedbackEvalCandidates().get(1).getIssueType());
+        assertEquals(FeedbackIssueType.UNSAFE_PROMISE, service.getFeedbackEvalCandidates().get(2).getIssueType());
+        assertEquals(1, summary.getEvalCandidateIssueCounts().get("UNSAFE_PROMISE"));
+        assertEquals(1, summary.getEvalCandidateIssueCounts().get("TOOL_OR_INTERNAL_LEAK"));
+        assertEquals(1, summary.getEvalCandidateIssueCounts().get("TONE_OR_EXPERIENCE"));
     }
 
     private ToolMonitorSnapshot findTool(MonitorSummary summary, String toolName) {

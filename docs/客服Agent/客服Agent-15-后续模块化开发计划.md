@@ -165,6 +165,7 @@ Adapter 的好处是：
 - 前端 Monitor 面板新增候选样本通过/拒绝审核按钮。
 - 前端 Monitor 面板新增导出样本草稿按钮。
 - Monitor Summary 新增 `PENDING_REVIEW` / `APPROVED` / `REJECTED` 候选样本状态数量。
+- Monitor Summary 新增负反馈问题类型分布，候选样本展示 `issueType`。
 - 新增 `MonitorServiceTest` 和 `MonitorControllerTest`。
 
 ### 4.3 验收标准
@@ -348,7 +349,7 @@ Adapter 的好处是：
 | 模块 | 状态 |
 | --- | --- |
 | 工具协议与 MCP 边界增强 | 第一版已完成 |
-| Monitor 指标与 Eval 闭环增强 | Trace 指标、用户反馈、候选样本、审核和草稿导出第一版已完成 |
+| Monitor 指标与 Eval 闭环增强 | Trace 指标、用户反馈、候选样本、问题类型分类、审核和草稿导出第一版已完成 |
 | RAG 检索增强 | 第一版已完成 |
 | 多轮记忆管理升级 | 第一版已完成 |
 | LLM-as-Judge 评测 | 第一版已完成 |

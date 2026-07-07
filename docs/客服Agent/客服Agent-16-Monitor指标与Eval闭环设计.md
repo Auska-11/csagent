@@ -26,6 +26,7 @@ Monitor 偏在线观察，回答“系统运行时表现怎么样”。
 - 进一步按工具名统计调用次数、成功率和平均耗时。
 - 用户对回复点击有用/无用后，记录为反馈指标。
 - 用户点击无用后，自动生成 Eval 待审核候选样本。
+- 生成候选样本时，会基于反馈原因和助手回复做第一版问题类型分类。
 - 候选样本支持审核为 `APPROVED` 或 `REJECTED`。
 - 审核通过的候选样本支持导出为 Eval case 草稿。
 - 通过接口返回当前 JVM 内存中的摘要。
@@ -67,6 +68,8 @@ src/main/java/com/smartcs/smart_cs_agent/monitor/FeedbackEvalCaseDraft.java
 `FeedbackRecord` 是最近用户反馈摘要。
 
 `FeedbackEvalCandidate` 是由无用反馈生成的评测候选样本，状态可以是 `PENDING_REVIEW`、`APPROVED` 或 `REJECTED`。
+
+`FeedbackIssueType` 是负反馈问题类型，第一版包括 `MISSING_KEY_INFO`、`UNSAFE_PROMISE`、`POLICY_UNCLEAR`、`TOOL_OR_INTERNAL_LEAK`、`TONE_OR_EXPERIENCE` 和 `OTHER`。
 
 `FeedbackEvalCaseDraft` 是审核通过样本导出的评测草稿，后续可人工整理进正式评测集。
 
@@ -152,8 +155,10 @@ monitorService.recordTurn(response);
 - `pendingEvalCandidateCount`：当前候选池中待审核样本数。
 - `approvedEvalCandidateCount`：当前候选池中已审核通过样本数。
 - `rejectedEvalCandidateCount`：当前候选池中已拒绝样本数。
+- `evalCandidateIssueCounts`：按负反馈问题类型聚合的候选样本数量。
 - `recentEvalCandidates`：最近 10 条待审核候选样本。
   - `status`：候选样本审核状态。
+  - `issueType`：候选样本的问题类型。
   - `reviewNote`：审核备注。
   - `reviewedAt`：审核时间。
 
@@ -200,6 +205,7 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 - 最近对话摘要只保留 10 条。
 - 能统计用户反馈数量和有用率。
 - 能把无用反馈生成 Eval 候选样本。
+- 能给无用反馈候选样本打上问题类型，并在 Summary 中聚合数量。
 - 能审核候选样本状态。
 - 能导出审核通过的 Eval case 草稿。
 - Controller 能返回 MonitorSummary。

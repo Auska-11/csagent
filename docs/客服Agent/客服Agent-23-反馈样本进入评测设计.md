@@ -89,6 +89,7 @@ src/main/java/com/smartcs/smart_cs_agent/monitor/FeedbackEvalCandidateStatus.jav
 - `reason`：用户反馈原因。
 - `assistantReply`：被评价回复。
 - `suggestedEvalType`：建议进入哪类评测，第一版为 `response_quality_candidate`。
+- `issueType`：负反馈问题类型，例如缺少关键信息、危险承诺、政策不清楚等。
 - `status`：审核状态，包含 `PENDING_REVIEW`、`APPROVED`、`REJECTED`。
 - `reviewNote`：审核备注。
 - `reviewedAt`：审核时间，未审核时为 0。
@@ -109,6 +110,7 @@ src/main/java/com/smartcs/smart_cs_agent/monitor/FeedbackEvalCaseDraft.java
 - `sourceFeedbackId`：来源反馈。
 - `conversationId` / `userId`：方便回查上下文。
 - `suggestedEvalType`：建议评测类型。
+- `issueType`：来源候选样本的问题类型。
 - `candidateReply`：被用户评价的回复。
 - `requiredKeywords`：第一版留空，后续人工补齐。
 - `forbiddenKeywords`：默认带常见危险承诺和内部工具词。
@@ -160,6 +162,7 @@ GET /api/monitor/feedback/candidates
 - `pendingEvalCandidateCount`
 - `approvedEvalCandidateCount`
 - `rejectedEvalCandidateCount`
+- `evalCandidateIssueCounts`
 - `recentEvalCandidates`
 
 这样前端 Monitor 面板可以直接在一个摘要接口里展示所有在线质量信号。
@@ -214,6 +217,7 @@ Monitor 面板新增：
 
 - `Eval Cand.` 指标卡。
 - `Pending` / `Approved` / `Rejected` 状态数量指标卡。
+- `Top Issue` 问题类型指标卡。
 - `Eval Candidates` 列表。
 
 列表里展示：
@@ -222,6 +226,7 @@ Monitor 面板新增：
 - 状态 `PENDING_REVIEW`。
 - 来源反馈 ID。
 - 建议评测类型。
+- 问题类型 `issueType`。
 - 用户反馈原因。
 - 被评价的助手回复。
 - 审核按钮：`通过` / `拒绝`。
@@ -242,6 +247,7 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 - `HELPFUL` 反馈只进入反馈统计，不生成候选样本。
 - `UNHELPFUL` 反馈会生成 `FeedbackEvalCandidate`。
 - 候选样本能保留 `feedbackId`、`reason`、`assistantReply` 和 `status`。
+- 候选样本能保留 `issueType`，并且 Summary 能统计各类问题数量。
 - 候选样本能从 `PENDING_REVIEW` 审核为 `APPROVED` 或 `REJECTED`。
 - 只有 `APPROVED` 候选样本会导出为 Eval case 草稿。
 - Controller 能返回候选样本列表。

@@ -157,6 +157,7 @@ GET /api/monitor/feedback/candidates/export
 - `pendingEvalCandidateCount`：当前候选池中待审核样本数。
 - `approvedEvalCandidateCount`：当前候选池中已审核通过样本数。
 - `rejectedEvalCandidateCount`：当前候选池中已拒绝样本数。
+- `evalCandidateIssueCounts`：按负反馈问题类型聚合的候选样本数量。
 - `recentEvalCandidates`：最近 10 条由无用反馈生成的候选样本。
 
 第一版只保留内存中的最近反馈，后续可以替换为数据库或日志平台。
@@ -180,6 +181,7 @@ POST /api/monitor/feedback
 - Monitor 面板刷新反馈数和有用率。
 - Monitor 面板展示最近反馈列表。
 - 如果点击无用，Monitor 面板展示 Eval Candidates 待审核样本。
+- Monitor 面板展示 `Top Issue`，快速判断当前负反馈主要集中在哪类问题。
 - 候选样本可以点击 `通过` 或 `拒绝`，审核后展示状态和备注。
 - 点击 `导出样本` 可以复制所有审核通过样本的 JSON 草稿。
 
@@ -200,6 +202,7 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 - 能生成稳定的反馈 ID。
 - 能统计反馈总数、有用数、无用数和有用率。
 - 能把 `UNHELPFUL` 反馈生成 Eval 候选样本。
+- 能把候选样本归类为缺少关键信息、危险承诺、政策不清楚、内部工具泄露、语气体验等问题类型。
 - 能审核 Eval 候选样本状态。
 - 能导出审核通过的 Eval case 草稿。
 - Controller 能接收反馈请求并写入 Monitor。

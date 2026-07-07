@@ -1,6 +1,7 @@
 package com.smartcs.smart_cs_agent.monitor;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Monitor 对外返回的聚合指标。
@@ -45,6 +46,9 @@ public class MonitorSummary {
     /** 当前候选池中已经被人工拒绝、不进入评测草稿的样本数量 */
     private final long rejectedEvalCandidateCount;
 
+    /** 按问题类型统计的候选样本数量，例如 MISSING_KEY_INFO -> 3 */
+    private final Map<String, Long> evalCandidateIssueCounts;
+
     private final List<FeedbackEvalCandidate> recentEvalCandidates;
 
     public MonitorSummary(long totalTurns,
@@ -70,6 +74,7 @@ public class MonitorSummary {
                           long pendingEvalCandidateCount,
                           long approvedEvalCandidateCount,
                           long rejectedEvalCandidateCount,
+                          Map<String, Long> evalCandidateIssueCounts,
                           List<FeedbackEvalCandidate> recentEvalCandidates) {
         this.totalTurns = totalTurns;
         this.toolCallCount = toolCallCount;
@@ -94,6 +99,7 @@ public class MonitorSummary {
         this.pendingEvalCandidateCount = pendingEvalCandidateCount;
         this.approvedEvalCandidateCount = approvedEvalCandidateCount;
         this.rejectedEvalCandidateCount = rejectedEvalCandidateCount;
+        this.evalCandidateIssueCounts = evalCandidateIssueCounts == null ? Map.of() : Map.copyOf(evalCandidateIssueCounts);
         this.recentEvalCandidates = recentEvalCandidates == null ? List.of() : List.copyOf(recentEvalCandidates);
     }
 
@@ -187,6 +193,10 @@ public class MonitorSummary {
 
     public long getRejectedEvalCandidateCount() {
         return rejectedEvalCandidateCount;
+    }
+
+    public Map<String, Long> getEvalCandidateIssueCounts() {
+        return evalCandidateIssueCounts;
     }
 
     public List<FeedbackEvalCandidate> getRecentEvalCandidates() {

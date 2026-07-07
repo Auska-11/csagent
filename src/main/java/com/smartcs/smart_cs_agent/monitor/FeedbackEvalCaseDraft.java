@@ -32,6 +32,9 @@ public class FeedbackEvalCaseDraft {
     /** 建议进入哪类评测 */
     private final String suggestedEvalType;
 
+    /** 负反馈问题类型，方便开发者整理草稿时判断应该补哪类断言 */
+    private final FeedbackIssueType issueType;
+
     /** 被用户评价为无用的回复，第一版默认作为负例候选 */
     private final String candidateReply;
 
@@ -62,6 +65,7 @@ public class FeedbackEvalCaseDraft {
                                  String conversationId,
                                  String userId,
                                  String suggestedEvalType,
+                                 FeedbackIssueType issueType,
                                  String candidateReply,
                                  List<String> requiredKeywords,
                                  List<String> forbiddenKeywords,
@@ -76,6 +80,7 @@ public class FeedbackEvalCaseDraft {
         this.conversationId = conversationId;
         this.userId = userId;
         this.suggestedEvalType = suggestedEvalType;
+        this.issueType = issueType == null ? FeedbackIssueType.OTHER : issueType;
         this.candidateReply = candidateReply;
         this.requiredKeywords = requiredKeywords == null ? List.of() : List.copyOf(requiredKeywords);
         this.forbiddenKeywords = forbiddenKeywords == null ? List.of() : List.copyOf(forbiddenKeywords);
@@ -108,6 +113,10 @@ public class FeedbackEvalCaseDraft {
 
     public String getSuggestedEvalType() {
         return suggestedEvalType;
+    }
+
+    public FeedbackIssueType getIssueType() {
+        return issueType;
     }
 
     public String getCandidateReply() {

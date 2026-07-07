@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.controller;
 
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
 import com.smartcs.smart_cs_agent.agent.context.TraceEvent;
+import com.smartcs.smart_cs_agent.monitor.FeedbackIssueType;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
 import com.smartcs.smart_cs_agent.monitor.MonitorSummary;
 import org.junit.jupiter.api.Test;
@@ -81,6 +82,7 @@ class MonitorControllerTest {
         assertEquals(1, controller.getFeedbackEvalCandidates().size());
         assertEquals("EVAL-CAND-000001", controller.getFeedbackEvalCandidates().get(0).getCandidateId());
         assertEquals("可以为您申请退货", controller.getFeedbackEvalCandidates().get(0).getAssistantReply());
+        assertEquals(FeedbackIssueType.MISSING_KEY_INFO, controller.getFeedbackEvalCandidates().get(0).getIssueType());
     }
 
     @Test

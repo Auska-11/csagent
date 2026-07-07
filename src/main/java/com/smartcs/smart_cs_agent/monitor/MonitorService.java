@@ -152,6 +152,7 @@ public class MonitorService {
                 countEvalCandidates(candidates, FeedbackEvalCandidateStatus.PENDING_REVIEW),
                 countEvalCandidates(candidates, FeedbackEvalCandidateStatus.APPROVED),
                 countEvalCandidates(candidates, FeedbackEvalCandidateStatus.REJECTED),
+                buildEvalCandidateIssueCounts(candidates),
                 candidates
         );
     }
@@ -440,6 +441,62 @@ public class MonitorService {
         return count;
     }
 
+    /**
+     * 按问题类型统计候选样本数量。
+     *
+     * 这里返回 String -> Long，而不是直接返回枚举 Map，
+     * 是为了让前端拿到 JSON 后可以直接用枚举名做展示和排序。
+     */
+    private Map<String, Long> buildEvalCandidateIssueCounts(List<FeedbackEvalCandidate> candidates) {
+        Map<String, Long> counts = new LinkedHashMap<>();
+        for (FeedbackIssueType type : FeedbackIssueType.values()) {
+            counts.put(type.name(), 0L);
+        }
+
+        for (FeedbackEvalCandidate candidate : candidates) {
+            FeedbackIssueType issueType = candidate.getIssueType();
+            String key = (issueType == null ? FeedbackIssueType.OTHER : issueType).name();
+            counts.put(key, counts.getOrDefault(key, 0L) + 1);
+        }
+        return counts;
+    }
+
+    private FeedbackIssueType classifyFeedbackIssue(FeedbackRecord feedback) {
+        String reason = feedback.getReason() == null ? "" : feedback.getReason();
+        String assistantReply = feedback.getAssistantReply() == null ? "" : feedback.getAssistantReply();
+        String text = reason + " " + assistantReply;
+
+        // 内部工具词泄露和危险承诺优先级最高，因为这两类问题最需要尽快拦截。
+        if (containsAny(text, "Tool", "tool_", "内部工具", "工具调用", "debug", "trace")) {
+            return FeedbackIssueType.TOOL_OR_INTERNAL_LEAK;
+        }
+        if (containsAny(text, "一定可以退款", "保证退款", "无条件退款", "一定赔偿", "保证赔偿", "一定可以赔偿")) {
+            return FeedbackIssueType.UNSAFE_PROMISE;
+        }
+        if (containsAny(reason, "没有说明", "没说明", "没说", "没提", "缺少", "不完整", "关键信息", "时效", "订单号", "物流单号")) {
+            return FeedbackIssueType.MISSING_KEY_INFO;
+        }
+        if (containsAny(reason, "政策", "规则", "退货", "退款", "发票", "保修", "配送", "售后")) {
+            return FeedbackIssueType.POLICY_UNCLEAR;
+        }
+        if (containsAny(reason, "语气", "态度", "不礼貌", "敷衍", "不耐烦", "体验不好")) {
+            return FeedbackIssueType.TONE_OR_EXPERIENCE;
+        }
+        return FeedbackIssueType.OTHER;
+    }
+
+    private boolean containsAny(String text, String... keywords) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        for (String keyword : keywords) {
+            if (text.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private long average(long total, long count) {
         if (count <= 0) {
             return 0;
@@ -475,6 +532,7 @@ public class MonitorService {
                 feedback.getReason(),
                 feedback.getAssistantReply(),
                 "response_quality_candidate",
+                classifyFeedbackIssue(feedback),
                 feedback.getTimestamp()
         );
 
@@ -493,6 +551,7 @@ public class MonitorService {
                 candidate.getConversationId(),
                 candidate.getUserId(),
                 candidate.getSuggestedEvalType(),
+                candidate.getIssueType(),
                 candidate.getAssistantReply(),
                 List.of(),
                 DEFAULT_FORBIDDEN_KEYWORDS,
