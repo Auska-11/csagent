@@ -144,9 +144,31 @@ class MonitorServiceTest {
         assertEquals("EVAL-CAND-000001", candidate.getCandidateId());
         assertEquals("FDB-000002", candidate.getFeedbackId());
         assertEquals("response_quality_candidate", candidate.getSuggestedEvalType());
-        assertEquals("PENDING_REVIEW", candidate.getStatus());
+        assertEquals(FeedbackEvalCandidateStatus.PENDING_REVIEW, candidate.getStatus());
         assertEquals("没有说明退货时效", candidate.getReason());
         assertEquals("可以为您申请退货", candidate.getAssistantReply());
+    }
+
+    @Test
+    void shouldReviewEvalCandidate() {
+        MonitorService service = new MonitorService();
+        service.recordFeedback(
+                "conv-1",
+                "USER-001",
+                FeedbackRating.UNHELPFUL,
+                "回答缺少关键信息",
+                "可以为您处理"
+        );
+
+        FeedbackEvalCandidate reviewed = service.reviewFeedbackEvalCandidate(
+                "EVAL-CAND-000001",
+                FeedbackEvalCandidateStatus.APPROVED,
+                "信息完整，可以补进回复质量评测"
+        );
+
+        assertEquals(FeedbackEvalCandidateStatus.APPROVED, reviewed.getStatus());
+        assertEquals("信息完整，可以补进回复质量评测", reviewed.getReviewNote());
+        assertEquals(reviewed.getStatus(), service.getFeedbackEvalCandidates().get(0).getStatus());
     }
 
     private ToolMonitorSnapshot findTool(MonitorSummary summary, String toolName) {

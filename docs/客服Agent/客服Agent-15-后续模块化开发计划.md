@@ -140,6 +140,7 @@ Adapter 的好处是：
   - 用户可以对回复点击有用或无用。
   - Monitor 聚合反馈数和有用率。
   - 无用反馈自动生成 Eval 待审核候选样本。
+  - 候选样本可以人工审核为 `APPROVED` 或 `REJECTED`。
 - 前端增加 Monitor 卡片。
 
 当前第一版实现：
@@ -149,13 +150,16 @@ Adapter 的好处是：
 - 新增 `ToolMonitorSnapshot`，展示单个工具的成功率和平均耗时。
 - 新增 `FeedbackRating` 和 `FeedbackRecord`，记录用户有用/无用反馈。
 - 新增 `FeedbackEvalCandidate`，把无用反馈沉淀成待审核评测候选。
+- 新增 `FeedbackEvalCandidateStatus`，明确候选样本审核状态。
 - 新增 `GET /api/monitor/summary`。
 - 新增 `POST /api/monitor/feedback`。
 - 新增 `GET /api/monitor/feedback/candidates`。
+- 新增 `POST /api/monitor/feedback/candidates/{candidateId}/review`。
 - `ChatApiController` 在每轮聊天成功后调用 `monitorService.recordTurn(response)`。
 - 前端 Agent Inspector 新增 Monitor Tab。
 - 前端普通 Agent 回复下方新增有用/无用反馈按钮。
 - 前端 Monitor 面板新增 Eval Candidates 列表。
+- 前端 Monitor 面板新增候选样本通过/拒绝审核按钮。
 - 新增 `MonitorServiceTest` 和 `MonitorControllerTest`。
 
 ### 4.3 验收标准
@@ -166,6 +170,7 @@ Adapter 的好处是：
 - 可以按工具名定位哪个工具成功率较低或耗时较高。
 - 用户点击反馈后，Monitor 能展示反馈总数、有用率和最近反馈。
 - 用户点击无用后，Monitor 能展示待审核 Eval 候选样本。
+- 用户审核候选样本后，Monitor 能展示审核状态和备注。
 
 ## 5. 模块三：RAG 检索增强
 
@@ -337,7 +342,7 @@ Adapter 的好处是：
 | 模块 | 状态 |
 | --- | --- |
 | 工具协议与 MCP 边界增强 | 第一版已完成 |
-| Monitor 指标与 Eval 闭环增强 | Trace 指标和用户反馈第一版已完成 |
+| Monitor 指标与 Eval 闭环增强 | Trace 指标、用户反馈、候选样本和审核第一版已完成 |
 | RAG 检索增强 | 第一版已完成 |
 | 多轮记忆管理升级 | 第一版已完成 |
 | LLM-as-Judge 评测 | 第一版已完成 |

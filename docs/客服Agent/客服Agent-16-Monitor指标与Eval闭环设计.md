@@ -26,6 +26,7 @@ Monitor 偏在线观察，回答“系统运行时表现怎么样”。
 - 进一步按工具名统计调用次数、成功率和平均耗时。
 - 用户对回复点击有用/无用后，记录为反馈指标。
 - 用户点击无用后，自动生成 Eval 待审核候选样本。
+- 候选样本支持审核为 `APPROVED` 或 `REJECTED`。
 - 通过接口返回当前 JVM 内存中的摘要。
 - 前端 Agent Inspector 增加 Monitor Tab 展示指标。
 
@@ -54,6 +55,7 @@ src/main/java/com/smartcs/smart_cs_agent/monitor/MonitorTurnSnapshot.java
 src/main/java/com/smartcs/smart_cs_agent/monitor/FeedbackRating.java
 src/main/java/com/smartcs/smart_cs_agent/monitor/FeedbackRecord.java
 src/main/java/com/smartcs/smart_cs_agent/monitor/FeedbackEvalCandidate.java
+src/main/java/com/smartcs/smart_cs_agent/monitor/FeedbackEvalCandidateStatus.java
 ```
 
 `MonitorSummary` 是全局聚合结果。
@@ -62,7 +64,7 @@ src/main/java/com/smartcs/smart_cs_agent/monitor/FeedbackEvalCandidate.java
 
 `FeedbackRecord` 是最近用户反馈摘要。
 
-`FeedbackEvalCandidate` 是由无用反馈生成的评测候选样本，第一版状态为 `PENDING_REVIEW`。
+`FeedbackEvalCandidate` 是由无用反馈生成的评测候选样本，状态可以是 `PENDING_REVIEW`、`APPROVED` 或 `REJECTED`。
 
 ### 3.3 指标接口
 
@@ -82,6 +84,10 @@ POST /api/monitor/feedback
 
 ```http
 GET /api/monitor/feedback/candidates
+```
+
+```http
+POST /api/monitor/feedback/candidates/{candidateId}/review
 ```
 
 ### 3.4 聊天链路接入
@@ -136,6 +142,9 @@ monitorService.recordTurn(response);
 - `recentFeedbacks`：最近 10 条用户反馈。
 - `evalCandidateCount`：累计 Eval 候选样本数。
 - `recentEvalCandidates`：最近 10 条待审核候选样本。
+  - `status`：候选样本审核状态。
+  - `reviewNote`：审核备注。
+  - `reviewedAt`：审核时间。
 
 ## 6. 和 Eval 的关系
 
@@ -159,6 +168,7 @@ Monitor：
 - Monitor 发现线上 LLM 失败率升高时，触发降级策略或报警。
 - Monitor 指标长期积累后，可以反过来补充 Eval 测试样本。
 - 用户无用反馈会先进入 `FeedbackEvalCandidate` 候选池，人工审核后再沉淀为正式 Eval case。
+- `APPROVED` 候选样本后续可以导出为正式 Eval case，`REJECTED` 样本则保留为已分析但不采纳的质量信号。
 
 ## 7. 测试设计
 
@@ -178,9 +188,11 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 - 最近对话摘要只保留 10 条。
 - 能统计用户反馈数量和有用率。
 - 能把无用反馈生成 Eval 候选样本。
+- 能审核候选样本状态。
 - Controller 能返回 MonitorSummary。
 - Controller 能记录用户反馈。
 - Controller 能返回候选样本列表。
+- Controller 能拒绝非法审核状态。
 
 ## 8. 面试表达
 
@@ -188,7 +200,7 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 
 可以这样回答：
 
-> 我没有一开始就接复杂的监控系统，而是先把 Agent 每一步执行过程记录成 Trace，包括工具调用、LLM 调用、人工转接和耗时。然后做了一层 MonitorService，它不参与 Agent 决策，只消费每轮 ChatResponse 里的 Trace，聚合出工具成功率、LLM 失败率、转人工次数和平均耗时。后面我又补了用户反馈接口，用户可以对每次回复点有用或无用，Monitor 会统计反馈总数和有用率。对于无用反馈，我不会直接写入正式评测集，而是先生成 PENDING_REVIEW 的 Eval 候选样本，保存反馈原因和被评价的助手回复，后续人工确认后再补进离线 Eval。这样 Trace 是事实日志，Monitor 是统计视图，用户反馈是质量信号，Eval 候选池把在线问题沉淀成回归测试资产。
+> 我没有一开始就接复杂的监控系统，而是先把 Agent 每一步执行过程记录成 Trace，包括工具调用、LLM 调用、人工转接和耗时。然后做了一层 MonitorService，它不参与 Agent 决策，只消费每轮 ChatResponse 里的 Trace，聚合出工具成功率、LLM 失败率、转人工次数和平均耗时。后面我又补了用户反馈接口，用户可以对每次回复点有用或无用，Monitor 会统计反馈总数和有用率。对于无用反馈，我不会直接写入正式评测集，而是先生成 PENDING_REVIEW 的 Eval 候选样本，保存反馈原因和被评价的助手回复，再由人工审核为 APPROVED 或 REJECTED。这样 Trace 是事实日志，Monitor 是统计视图，用户反馈是质量信号，Eval 候选池把在线问题沉淀成回归测试资产。
 
 ## 9. 后续扩展
 
@@ -198,4 +210,5 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 - 指标超过阈值时触发告警或自动降级。
 - 将 Monitor 指标和 Eval 报告结合，形成“离线质量 + 在线表现”的闭环。
 - 将无用反馈沉淀成新的 Eval 候选样本，形成“用户反馈 -> 待审核样本”的闭环。已完成第一版。
-- 增加候选样本审核状态流转，例如 `APPROVED` / `REJECTED`。
+- 增加候选样本审核状态流转，例如 `APPROVED` / `REJECTED`。已完成第一版。
+- 将 `APPROVED` 候选样本导出为正式 Eval case。

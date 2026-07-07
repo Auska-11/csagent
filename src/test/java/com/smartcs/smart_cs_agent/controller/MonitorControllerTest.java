@@ -84,6 +84,43 @@ class MonitorControllerTest {
     }
 
     @Test
+    void shouldReviewFeedbackEvalCandidate() {
+        MonitorService service = new MonitorService();
+        MonitorController controller = new MonitorController(service);
+        controller.recordFeedback(new FeedbackRequest(
+                "conv-1",
+                "USER-001",
+                "UNHELPFUL",
+                "没有说明退货时效",
+                "可以为您申请退货"
+        ));
+
+        EvalCandidateReviewResponse response = controller.reviewFeedbackEvalCandidate(
+                "EVAL-CAND-000001",
+                new EvalCandidateReviewRequest("APPROVED", "可以进入回复质量评测")
+        );
+
+        assertTrue(response.isSuccess());
+        assertEquals("APPROVED", response.getCandidate().getStatus().name());
+        assertEquals("可以进入回复质量评测", response.getCandidate().getReviewNote());
+    }
+
+    @Test
+    void shouldRejectInvalidEvalCandidateStatus() {
+        MonitorController controller = new MonitorController(new MonitorService());
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> controller.reviewFeedbackEvalCandidate(
+                        "EVAL-CAND-000001",
+                        new EvalCandidateReviewRequest("PENDING_REVIEW", "")
+                )
+        );
+
+        assertEquals("Candidate status must be APPROVED or REJECTED", exception.getMessage());
+    }
+
+    @Test
     void shouldRejectInvalidFeedbackRating() {
         MonitorController controller = new MonitorController(new MonitorService());
         FeedbackRequest request = new FeedbackRequest("conv-1", "USER-001", "LIKE", "");

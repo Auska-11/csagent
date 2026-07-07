@@ -1,12 +1,14 @@
 package com.smartcs.smart_cs_agent.controller;
 
 import com.smartcs.smart_cs_agent.monitor.FeedbackEvalCandidate;
+import com.smartcs.smart_cs_agent.monitor.FeedbackEvalCandidateStatus;
 import com.smartcs.smart_cs_agent.monitor.FeedbackRating;
 import com.smartcs.smart_cs_agent.monitor.FeedbackRecord;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
 import com.smartcs.smart_cs_agent.monitor.MonitorSummary;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -72,5 +74,29 @@ public class MonitorController {
     @GetMapping("/feedback/candidates")
     public List<FeedbackEvalCandidate> getFeedbackEvalCandidates() {
         return monitorService.getFeedbackEvalCandidates();
+    }
+
+    /**
+     * 审核 Eval 候选样本。
+     *
+     * 第一版只支持 APPROVED / REJECTED 两种结果。
+     * 通过审核的样本，后续可以导出并整理成正式 Eval case。
+     */
+    @PostMapping("/feedback/candidates/{candidateId}/review")
+    public EvalCandidateReviewResponse reviewFeedbackEvalCandidate(@PathVariable String candidateId,
+                                                                   @Valid @RequestBody(required = false)
+                                                                   EvalCandidateReviewRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("Review request cannot be empty");
+        }
+
+        FeedbackEvalCandidateStatus status = FeedbackEvalCandidateStatus.reviewTargetFrom(request.getStatus());
+        FeedbackEvalCandidate candidate = monitorService.reviewFeedbackEvalCandidate(
+                candidateId,
+                status,
+                request.getReviewNote()
+        );
+
+        return new EvalCandidateReviewResponse(true, "Eval candidate reviewed", candidate);
     }
 }

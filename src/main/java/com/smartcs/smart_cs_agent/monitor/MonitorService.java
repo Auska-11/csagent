@@ -219,6 +219,49 @@ public class MonitorService {
         return new ArrayList<>(recentEvalCandidates);
     }
 
+    /**
+     * 审核一条 Eval 候选样本。
+     *
+     * 【为什么审核后不删除候选样本？】
+     * 审核结果本身也是质量闭环的一部分：
+     * - APPROVED 表示这条线上问题值得进入正式评测集；
+     * - REJECTED 表示这条负反馈暂时不适合做评测样本。
+     *
+     * 保留审核状态可以让前端和后续导出逻辑知道每条样本的去向。
+     */
+    public synchronized FeedbackEvalCandidate reviewFeedbackEvalCandidate(String candidateId,
+                                                                          FeedbackEvalCandidateStatus status,
+                                                                          String reviewNote) {
+        if (candidateId == null || candidateId.isBlank()) {
+            throw new IllegalArgumentException("CandidateId cannot be empty");
+        }
+        if (status == null || status == FeedbackEvalCandidateStatus.PENDING_REVIEW) {
+            throw new IllegalArgumentException("Candidate status must be APPROVED or REJECTED");
+        }
+
+        Deque<FeedbackEvalCandidate> updated = new ArrayDeque<>();
+        FeedbackEvalCandidate reviewed = null;
+        long now = System.currentTimeMillis();
+
+        for (FeedbackEvalCandidate candidate : recentEvalCandidates) {
+            if (candidate.getCandidateId().equals(candidateId.trim())) {
+                reviewed = candidate.reviewedAs(status, reviewNote, now);
+                updated.addLast(reviewed);
+            } else {
+                updated.addLast(candidate);
+            }
+        }
+
+        if (reviewed == null) {
+            throw new IllegalArgumentException("Eval candidate not found: " + candidateId);
+        }
+
+        recentEvalCandidates.clear();
+        recentEvalCandidates.addAll(updated);
+        lastUpdatedAt = now;
+        return reviewed;
+    }
+
     private void collectEvent(TraceEvent event, TurnAccumulator turn) {
         if (event == null || event.getEventType() == null) {
             return;
@@ -383,7 +426,6 @@ public class MonitorService {
                 feedback.getReason(),
                 feedback.getAssistantReply(),
                 "response_quality_candidate",
-                "PENDING_REVIEW",
                 feedback.getTimestamp()
         );
 

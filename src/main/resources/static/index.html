@@ -1088,6 +1088,12 @@
         els.clearUserMemoryBtn.addEventListener('click', clearUserMemory);
         els.refreshMonitorBtn.addEventListener('click', loadMonitorSummary);
         els.copyMonitorBtn.addEventListener('click', copyMonitorSummary);
+        els.monitorPanel.addEventListener('click', event => {
+            const button = event.target.closest('.candidate-review-button');
+            if (button) {
+                submitEvalCandidateReview(button.dataset.candidateId, button.dataset.reviewStatus);
+            }
+        });
         els.refreshEvalBtn.addEventListener('click', loadEvalReports);
         els.copyEvalBtn.addEventListener('click', copyEvalReport);
 
@@ -1898,11 +1904,27 @@
 
         els.evalCandidateList.innerHTML = candidates.map(candidate => {
             const reply = candidate.assistantReply || 'No assistant reply captured';
+            const status = candidate.status || 'PENDING_REVIEW';
+            const actions = status === 'PENDING_REVIEW'
+                    ? `
+                        <div class="tool-actions">
+                            <button class="small-action candidate-review-button"
+                                    data-candidate-id="${escapeHtml(candidate.candidateId || '')}"
+                                    data-review-status="APPROVED">通过</button>
+                            <button class="small-action candidate-review-button"
+                                    data-candidate-id="${escapeHtml(candidate.candidateId || '')}"
+                                    data-review-status="REJECTED">拒绝</button>
+                        </div>
+                    `
+                    : '';
+            const reviewLine = status === 'PENDING_REVIEW'
+                    ? ''
+                    : `<div class="tool-contract">Review: ${escapeHtml(candidate.reviewNote || 'No review note')} · ${escapeHtml(formatTime(candidate.reviewedAt))}</div>`;
             return `
                 <div class="tool-row">
                     <div class="row-head">
                         <div class="row-title">${escapeHtml(candidate.candidateId || '-')}</div>
-                        <span class="badge warn">${escapeHtml(candidate.status || 'PENDING_REVIEW')}</span>
+                        <span class="badge ${candidateStatusBadge(status)}">${escapeHtml(status)}</span>
                     </div>
                     <div class="row-subtitle">
                         ${escapeHtml(candidate.userId || '-')} · ${escapeHtml(candidate.conversationId || '-')}
@@ -1916,6 +1938,8 @@
                         Reason: ${escapeHtml(candidate.reason || 'No reason')}
                     </div>
                     <div class="row-subtitle">${escapeHtml(reply)}</div>
+                    ${reviewLine}
+                    ${actions}
                 </div>
             `;
         }).join('');
@@ -2136,6 +2160,38 @@
         }
     }
 
+    async function submitEvalCandidateReview(candidateId, status) {
+        if (!candidateId || !status) {
+            return;
+        }
+
+        const note = status === 'APPROVED'
+                ? '前端快捷审核：可以进入评测候选'
+                : '前端快捷审核：暂不进入评测集';
+
+        try {
+            const response = await fetch('/api/monitor/feedback/candidates/' + encodeURIComponent(candidateId) + '/review', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    status,
+                    reviewNote: note
+                })
+            });
+
+            const payload = await readJson(response);
+            if (!response.ok) {
+                appendSystemMessage(payload.message || '候选样本审核失败');
+                return;
+            }
+
+            await loadMonitorSummary();
+            appendSystemMessage('Eval 候选样本已标记为 ' + status + '。');
+        } catch (error) {
+            appendSystemMessage('候选样本审核异常：' + error.message);
+        }
+    }
+
     function copyEvalReport() {
         if (!state.evalReport) {
             appendSystemMessage('当前没有可复制的评测报告。');
@@ -2201,6 +2257,16 @@
                         ${disabled}>无用</button>
             </div>
         `;
+    }
+
+    function candidateStatusBadge(status) {
+        if (status === 'APPROVED') {
+            return 'tool';
+        }
+        if (status === 'REJECTED') {
+            return 'error';
+        }
+        return 'warn';
     }
 
     function findLastToolName() {

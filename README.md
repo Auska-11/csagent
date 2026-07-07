@@ -19,7 +19,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - LLM 降级：模型调用失败时不会直接中断接口，会基于工具结构化结果生成模板回复，并记录 `llm_failed` Trace。
 - MCP-style 工具层：工具具备统一 `ToolDefinition`、`ToolCall`、`ToolResult`、`inputSchema`、`outputSchema` 和只读工具列表接口，订单、商品、退货、用户和人工转接等业务工具已升级为明确 DTO 输出。
 - MCP Adapter：新增 `GET /api/mcp/tools` 和 `POST /api/mcp/tools/call`，把内部工具注册表暴露成更接近 MCP `tools/list`、`tools/call` 的协议边界。
-- Monitor 指标与反馈闭环：支持 `GET /api/monitor/summary`、`POST /api/monitor/feedback` 和 `GET /api/monitor/feedback/candidates`，基于 Trace 聚合整体/按工具成功率、LLM 失败率、转人工次数、平均耗时和用户反馈有用率，并能把无用反馈沉淀成 Eval 待审核候选样本。
+- Monitor 指标与反馈闭环：支持 `GET /api/monitor/summary`、`POST /api/monitor/feedback`、`GET /api/monitor/feedback/candidates` 和候选样本审核接口，基于 Trace 聚合整体/按工具成功率、LLM 失败率、转人工次数、平均耗时和用户反馈有用率，并能把无用反馈沉淀成 Eval 待审核候选样本。
 - 接口工程化：聊天接口使用明确 DTO、Spring Validation 和统一 `ApiErrorResponse`。
 - 部署工程化：支持 Docker 多阶段构建、`docker compose` 一键启动、环境变量注入模型配置，并提供 `/api/health` 健康检查接口。
 - 离线评测：覆盖路由、知识库召回、回复质量规则、Agent 链路回复、LLM-as-Judge 五类评测，并输出 JSON 总览、历史快照和趋势指标。
@@ -158,6 +158,18 @@ Content-Type: application/json
 GET /api/monitor/feedback/candidates
 ```
 
+审核 Eval 候选样本：
+
+```http
+POST /api/monitor/feedback/candidates/{candidateId}/review
+Content-Type: application/json
+
+{
+  "status": "APPROVED",
+  "reviewNote": "信息完整，可以进入回复质量评测"
+}
+```
+
 查看最新评测报告和趋势：
 
 ```http
@@ -264,7 +276,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 82 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 85 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -295,4 +307,4 @@ docker compose down
 
 ## 简历表达参考
 
-智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，将意图识别、工具调用、业务查询、知识库检索和回复生成解耦；支持多轮槽位填充、三级会话记忆、长期用户偏好记忆、MCP-style 工具 input/output schema、MCP Adapter 工具协议接口、业务工具 DTO 输出、Agent Trace、RAG 查询改写、多路召回、简单 rerank、Monitor 在线指标、用户反馈闭环、负反馈 Eval 候选样本沉淀、人工转接、LLM 失败降级、接口参数校验、统一错误响应、Docker 多阶段构建部署和五类离线评测，并提供前端 Agent 调试工作台用于演示 Demo 脚本、Trace 过滤、链路指标、Memory 面板、工具 Schema、Monitor 指标、用户反馈有用率、Eval 候选样本和 Eval 评测看板，可生成 JSON 指标、历史快照、趋势报告和 LLM-as-Judge 四维评分报告，提升客服场景下大模型应用的可控性、可观测性、可验证性和可复现部署能力。
+智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，将意图识别、工具调用、业务查询、知识库检索和回复生成解耦；支持多轮槽位填充、三级会话记忆、长期用户偏好记忆、MCP-style 工具 input/output schema、MCP Adapter 工具协议接口、业务工具 DTO 输出、Agent Trace、RAG 查询改写、多路召回、简单 rerank、Monitor 在线指标、用户反馈闭环、负反馈 Eval 候选样本沉淀与审核、人工转接、LLM 失败降级、接口参数校验、统一错误响应、Docker 多阶段构建部署和五类离线评测，并提供前端 Agent 调试工作台用于演示 Demo 脚本、Trace 过滤、链路指标、Memory 面板、工具 Schema、Monitor 指标、用户反馈有用率、Eval 候选样本审核和 Eval 评测看板，可生成 JSON 指标、历史快照、趋势报告和 LLM-as-Judge 四维评分报告，提升客服场景下大模型应用的可控性、可观测性、可验证性和可复现部署能力。

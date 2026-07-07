@@ -38,8 +38,14 @@ public class FeedbackEvalCandidate {
     /** 建议进入哪类评测，第一版先统一进入回复质量候选 */
     private final String suggestedEvalType;
 
-    /** 候选样本状态，第一版固定为 PENDING_REVIEW */
-    private final String status;
+    /** 候选样本状态，初始为 PENDING_REVIEW，审核后变为 APPROVED 或 REJECTED */
+    private final FeedbackEvalCandidateStatus status;
+
+    /** 人工审核备注，例如“信息完整，可补进退货回复质量评测” */
+    private final String reviewNote;
+
+    /** 人工审核时间，未审核时为 0 */
+    private final long reviewedAt;
 
     /** 候选样本生成时间，毫秒时间戳 */
     private final long timestamp;
@@ -52,7 +58,32 @@ public class FeedbackEvalCandidate {
                                  String reason,
                                  String assistantReply,
                                  String suggestedEvalType,
-                                 String status,
+                                 long timestamp) {
+        this(candidateId,
+                feedbackId,
+                conversationId,
+                userId,
+                rating,
+                reason,
+                assistantReply,
+                suggestedEvalType,
+                FeedbackEvalCandidateStatus.PENDING_REVIEW,
+                "",
+                0,
+                timestamp);
+    }
+
+    public FeedbackEvalCandidate(String candidateId,
+                                 String feedbackId,
+                                 String conversationId,
+                                 String userId,
+                                 FeedbackRating rating,
+                                 String reason,
+                                 String assistantReply,
+                                 String suggestedEvalType,
+                                 FeedbackEvalCandidateStatus status,
+                                 String reviewNote,
+                                 long reviewedAt,
                                  long timestamp) {
         this.candidateId = candidateId;
         this.feedbackId = feedbackId;
@@ -63,7 +94,34 @@ public class FeedbackEvalCandidate {
         this.assistantReply = assistantReply;
         this.suggestedEvalType = suggestedEvalType;
         this.status = status;
+        this.reviewNote = reviewNote;
+        this.reviewedAt = reviewedAt;
         this.timestamp = timestamp;
+    }
+
+    /**
+     * 返回审核后的新对象。
+     *
+     * 当前类保持不可变：审核不是直接修改原对象字段，而是创建一个状态更新后的副本。
+     * 这样在多线程或后续持久化时更容易控制对象状态。
+     */
+    public FeedbackEvalCandidate reviewedAs(FeedbackEvalCandidateStatus nextStatus,
+                                            String note,
+                                            long reviewTime) {
+        return new FeedbackEvalCandidate(
+                candidateId,
+                feedbackId,
+                conversationId,
+                userId,
+                rating,
+                reason,
+                assistantReply,
+                suggestedEvalType,
+                nextStatus,
+                note == null ? "" : note.trim(),
+                reviewTime,
+                timestamp
+        );
     }
 
     public String getCandidateId() {
@@ -98,8 +156,16 @@ public class FeedbackEvalCandidate {
         return suggestedEvalType;
     }
 
-    public String getStatus() {
+    public FeedbackEvalCandidateStatus getStatus() {
         return status;
+    }
+
+    public String getReviewNote() {
+        return reviewNote;
+    }
+
+    public long getReviewedAt() {
+        return reviewedAt;
     }
 
     public long getTimestamp() {
