@@ -8,21 +8,23 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
  * 知识库工具。
  *
  * 【当前第一版怎么做？】
- * 先使用 Markdown 文件 + 关键词打分检索，不引入向量数据库。
+ * 先使用 Markdown 文件 + 关键词打分 + 本地轻量向量召回。
  *
  * 这样做的好处：
  * - 新手更容易看懂
  * - 检索结果可解释，Trace 里能看到命中了哪篇文档
- * - 后续可以平滑升级为 embedding 检索、查询改写和 rerank
+ * - 后续可以平滑升级为真实 embedding 模型和向量数据库
  *
  * 【它解决什么问题？】
  * 政策类问题不能让 LLM 自己猜，例如“超过七天还能退吗？”。
@@ -155,17 +157,19 @@ public class KnowledgeTools {
                 score.matchedTerms(),
                 score.matchedFields(),
                 searchPlan.queryVariants(),
-                score.rerankReason()
+                score.rerankReason(),
+                score.vectorScore()
         );
     }
 
     /**
-     * 简单相关性打分。
+     * 简单相关性打分 + 本地向量召回。
      *
      * 第一版故意保持朴素：
      * - 标题命中权重最高
      * - 人工关键词次之
      * - 正文命中也会加分
+     * - 字符 n-gram 向量相似度提供“语义相近但关键词不完全一致”的补充信号
      *
      * 这样面试时可以讲清楚：先做可解释的 baseline，
      * 后续再用 embedding/rerank 优化召回质量。
@@ -199,19 +203,99 @@ public class KnowledgeTools {
             }
         }
 
+        double vectorScore = calculateVectorScore(document, terms);
+        int vectorBoost = vectorScore >= 18 ? (int) Math.round(vectorScore / 3) : 0;
+        if (vectorBoost > 0) {
+            matchedFields.add("vector");
+        }
+
         // 简单 rerank：如果同一篇文档同时命中标题、关键词和正文，
         // 说明它不是“碰巧正文出现某个词”，而是整体更相关，给一点字段覆盖加分。
         int fieldCoverageBonus = matchedFields.size() * 2;
-        int totalScore = titleScore + keywordScore + contentScore + fieldCoverageBonus;
-        String rerankReason = "title=%d, keywords=%d, content=%d, fieldCoverageBonus=%d"
-                .formatted(titleScore, keywordScore, contentScore, fieldCoverageBonus);
+        int totalScore = titleScore + keywordScore + contentScore + vectorBoost + fieldCoverageBonus;
+        String rerankReason = "title=%d, keywords=%d, content=%d, vectorBoost=%d, fieldCoverageBonus=%d"
+                .formatted(titleScore, keywordScore, contentScore, vectorBoost, fieldCoverageBonus);
 
         return new ScoreBreakdown(
                 totalScore,
                 List.copyOf(matchedTerms),
                 List.copyOf(matchedFields),
-                rerankReason
+                rerankReason,
+                vectorScore
         );
+    }
+
+    /**
+     * 本地轻量向量相似度。
+     *
+     * 真实生产里通常会用 embedding 模型把文本转成向量，再放入向量数据库。
+     * 这里为了保持项目可本地运行、CI 不依赖外部模型，先用字符 n-gram 构建“伪向量”：
+     * - 适合中文短文本；
+     * - 不需要额外依赖；
+     * - 能把“配送/送到/物流”这类相近表达纳入排序信号。
+     */
+    private double calculateVectorScore(KnowledgeDocument document, List<String> terms) {
+        if (terms.isEmpty()) {
+            return 0;
+        }
+
+        String queryText = String.join(" ", terms);
+        String documentText = document.getTitle() + " " +
+                String.join(" ", document.getKeywords()) + " " +
+                preview(document.getContent(), 800);
+
+        Map<String, Double> queryVector = toNgramVector(normalize(queryText));
+        Map<String, Double> documentVector = toNgramVector(normalize(documentText));
+        return cosineSimilarity(queryVector, documentVector) * 100;
+    }
+
+    private Map<String, Double> toNgramVector(String text) {
+        Map<String, Double> vector = new HashMap<>();
+        String compact = text.replaceAll("\\s+", "");
+        if (compact.isBlank()) {
+            return vector;
+        }
+
+        // 1 字符特征保证短词可召回，2 字符特征让中文短语更有区分度。
+        addNgrams(vector, compact, 1, 0.4);
+        addNgrams(vector, compact, 2, 1.0);
+        return vector;
+    }
+
+    private void addNgrams(Map<String, Double> vector, String text, int n, double weight) {
+        if (text.length() < n) {
+            return;
+        }
+        for (int i = 0; i <= text.length() - n; i++) {
+            String token = text.substring(i, i + n);
+            vector.merge(token, weight, Double::sum);
+        }
+    }
+
+    private double cosineSimilarity(Map<String, Double> left, Map<String, Double> right) {
+        if (left.isEmpty() || right.isEmpty()) {
+            return 0;
+        }
+
+        double dot = 0;
+        for (Map.Entry<String, Double> entry : left.entrySet()) {
+            dot += entry.getValue() * right.getOrDefault(entry.getKey(), 0.0);
+        }
+
+        double leftNorm = norm(left);
+        double rightNorm = norm(right);
+        if (leftNorm == 0 || rightNorm == 0) {
+            return 0;
+        }
+        return dot / (leftNorm * rightNorm);
+    }
+
+    private double norm(Map<String, Double> vector) {
+        double sum = 0;
+        for (double value : vector.values()) {
+            sum += value * value;
+        }
+        return Math.sqrt(sum);
     }
 
     /**
@@ -428,6 +512,7 @@ public class KnowledgeTools {
     private record ScoreBreakdown(int totalScore,
                                   List<String> matchedTerms,
                                   List<String> matchedFields,
-                                  String rerankReason) {
+                                  String rerankReason,
+                                  double vectorScore) {
     }
 }

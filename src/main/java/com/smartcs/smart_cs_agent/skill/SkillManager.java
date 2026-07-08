@@ -109,4 +109,64 @@ public class SkillManager {
 
         return bestSkill != null ? bestSkill : getActiveSkill();
     }
+
+    /**
+     * Multi-Agent 路由第一版。
+     *
+     * 当前系统仍然复用 CustomerServiceSkill 执行具体动作，
+     * 但会先把用户消息路由到一个“专家域”：
+     * - pre_sales_agent：售前咨询，商品、价格、库存、推荐
+     * - after_sales_agent：售后处理，订单、物流、退换货、政策
+     * - complaint_agent：投诉/人工/赔偿/维权
+     * - general_agent：通用客服兜底
+     *
+     * 这样做的价值是先把路由决策做成可观察 Trace，
+     * 后续要拆真正独立 Agent 时，边界已经清楚。
+     */
+    public AgentRouteResult routeAgent(String message) {
+        String text = message == null ? "" : message.toLowerCase(Locale.ROOT);
+
+        if (containsAny(text, "投诉", "赔偿", "维权", "人工", "真人", "差评", "客服经理")) {
+            return new AgentRouteResult(
+                    "complaint",
+                    "complaint_agent",
+                    "命中投诉、人工或赔偿类表达，优先交给投诉/人工路由",
+                    0.95
+            );
+        }
+
+        if (containsAny(text, "退货", "退款", "换货", "售后", "订单", "物流", "快递", "发货", "签收", "保修", "发票")) {
+            return new AgentRouteResult(
+                    "after_sales",
+                    "after_sales_agent",
+                    "命中订单、物流、退换货或政策类表达，交给售后路由",
+                    0.88
+            );
+        }
+
+        if (containsAny(text, "商品", "产品", "价格", "多少钱", "库存", "有货", "推荐", "耳机", "手表", "充电器", "数据线", "蓝牙")) {
+            return new AgentRouteResult(
+                    "pre_sales",
+                    "pre_sales_agent",
+                    "命中商品咨询、价格、库存或推荐类表达，交给售前路由",
+                    0.86
+            );
+        }
+
+        return new AgentRouteResult(
+                "general",
+                "general_agent",
+                "未命中明确专家域，使用通用客服路由兜底",
+                0.55
+        );
+    }
+
+    private boolean containsAny(String text, String... keywords) {
+        for (String keyword : keywords) {
+            if (text.contains(keyword.toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

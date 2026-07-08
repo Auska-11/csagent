@@ -11,6 +11,7 @@ import java.util.List;
  * - score：本次查询的相关性分数
  * - snippet：命中的片段，方便交给 LLM 或 Trace 展示
  * - matchedTerms / matchedFields：方便解释“为什么命中这篇文档”
+ * - vectorScore：本地轻量向量相似度分数，用于解释向量召回信号
  */
 public class KnowledgeSearchResult {
 
@@ -41,8 +42,11 @@ public class KnowledgeSearchResult {
     /** 简短说明 rerank 为什么把它排到当前位置 */
     private final String rerankReason;
 
+    /** 本地向量相似度分数，范围大致是 0 到 100 */
+    private final double vectorScore;
+
     public KnowledgeSearchResult(String documentId, String category, String title, int score, String snippet) {
-        this(documentId, category, title, score, snippet, List.of(), List.of(), List.of(), "");
+        this(documentId, category, title, score, snippet, List.of(), List.of(), List.of(), "", 0);
     }
 
     public KnowledgeSearchResult(String documentId,
@@ -54,6 +58,19 @@ public class KnowledgeSearchResult {
                                  List<String> matchedFields,
                                  List<String> queryVariants,
                                  String rerankReason) {
+        this(documentId, category, title, score, snippet, matchedTerms, matchedFields, queryVariants, rerankReason, 0);
+    }
+
+    public KnowledgeSearchResult(String documentId,
+                                 String category,
+                                 String title,
+                                 int score,
+                                 String snippet,
+                                 List<String> matchedTerms,
+                                 List<String> matchedFields,
+                                 List<String> queryVariants,
+                                 String rerankReason,
+                                 double vectorScore) {
         this.documentId = documentId;
         this.category = category;
         this.title = title;
@@ -63,6 +80,7 @@ public class KnowledgeSearchResult {
         this.matchedFields = matchedFields == null ? List.of() : List.copyOf(matchedFields);
         this.queryVariants = queryVariants == null ? List.of() : List.copyOf(queryVariants);
         this.rerankReason = rerankReason == null ? "" : rerankReason;
+        this.vectorScore = vectorScore;
     }
 
     public String getDocumentId() {
@@ -101,6 +119,10 @@ public class KnowledgeSearchResult {
         return rerankReason;
     }
 
+    public double getVectorScore() {
+        return vectorScore;
+    }
+
     /**
      * 转成适合放进 Prompt 的文本。
      */
@@ -110,6 +132,7 @@ public class KnowledgeSearchResult {
                 "相关度：" + score + "\n" +
                 "命中词：" + String.join(", ", matchedTerms) + "\n" +
                 "命中字段：" + String.join(", ", matchedFields) + "\n" +
+                "向量分：" + String.format("%.2f", vectorScore) + "\n" +
                 "排序原因：" + rerankReason + "\n" +
                 "片段：" + snippet;
     }

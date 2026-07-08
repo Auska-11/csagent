@@ -78,6 +78,13 @@
             <version>${langchain4j.version}</version>
         </dependency>
 
+        <!-- MySQL JDBC 驱动：只有开启 JDBC 持久化模式时才会真正连接数据库 -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>

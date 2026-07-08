@@ -52,10 +52,10 @@ Smart CS Agent 是一个面向电商客服场景的任务型 Agent 项目。
 - `ConversationState.message` 仍作为兼容旧入口的过渡字段保留。
 - `ConversationState.messages` 已升级为短期记忆窗口，较早消息会压缩进 `summaryMemory`。
 - `CustomerServiceSkill` 已完成第一轮拆分：槽位抽取、意图规则和 Prompt 构造已经分别拆到 `CustomerServiceSlotExtractor`、`CustomerServiceIntentRules`、`CustomerServicePromptBuilder`。
-- 工具层已经引入 `ToolDefinition`、`ToolParameterDefinition`、`ToolCall`、`ToolResult` 和 `ToolRegistry`，并已完成结构化 `data`、参数 `inputSchema` 和返回 `outputSchema` 第一版；订单、商品、退货、用户和人工转接等业务工具已经升级为明确 DTO，并新增 MCP Adapter 第一版，支持 `/api/mcp/tools` 和 `/api/mcp/tools/call`，后续可以继续补充嵌套 outputSchema，并迁移为独立 MCP Server。
+- 工具层已经引入 `ToolDefinition`、`ToolParameterDefinition`、`ToolCall`、`ToolResult` 和 `ToolRegistry`，并已完成结构化 `data`、参数 `inputSchema` 和返回 `outputSchema` 第一版；订单、商品、退货、用户和人工转接等业务工具已经升级为明确 DTO，并新增 MCP Adapter 第一版，支持 `/api/mcp/tools` 和 `/api/mcp/tools/call`；当前还新增 `/mcp` JSON-RPC 风格入口，支持 `initialize`、`tools/list` 和 `tools/call`。
 - 前端调试控制台已经升级为 Agent Inspector，支持典型 Demo 脚本、Trace 过滤、Trace 指标摘要、复制 Trace JSON、复制单条 Trace、工具搜索、展示和复制工具 inputSchema / outputSchema，以及 Eval 评测报告看板。
-- 知识库检索第一版已经完成，并已补充 RAG 检索增强第一版：查询改写、多路召回、简单 rerank、`knowledge_miss` Trace；知识库召回评测已扩展到 8 条。
-- 人工转接第一版已经完成，后续可以接真实工单系统和失败触发规则。
+- 知识库检索第一版已经完成，并已补充 RAG 检索增强第一版：查询改写、多路召回、简单 rerank、本地轻量向量分、`knowledge_miss` Trace；知识库召回评测已扩展到 8 条。
+- 人工转接第一版已经完成，并已新增售后工单平台联调第一版：默认 memory 模式生成模拟工单，开启 `SMARTCS_HANDOFF_MODE=after-sales-http` 后调用桌面 `demo/after-sales-sla-platform` 创建真实售后工单。
 - 聊天接口已经完成明确 DTO、Spring Validation、统一错误响应和 MVC 层测试。
 - Runtime 已支持 LLM 调用失败降级：模型异常时记录 `llm_failed`，并基于工具结果返回模板化客服回复。
 - 离线路由评测、知识库召回评测、回复质量规则评测、Agent 链路回复评测和 LLM-as-Judge 第一版已经完成，并已支持 JSON 指标、历史快照、趋势报告和前端 Eval 看板；Monitor 第一版已经基于 Trace 聚合在线指标，支持按工具名查看成功率和耗时，并新增用户有用/无用反馈闭环、无用反馈 Eval 候选样本、候选样本问题类型分类、候选样本审核状态数量、Eval case 草稿导出、候选样本本地 JSON 持久化、Eval 草稿半自动合并正式评测文件和结构化风险告警；后续需要接入真实模型输出评测。
@@ -459,22 +459,26 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 
 核心任务：
 
-- 新增三个 Skill：
-  - `PreSalesSkill`：商品咨询、推荐、促销
-  - `AfterSalesSkill`：订单、物流、退换货
-  - `ComplaintSkill`：投诉、转人工
-- `SkillManager` 根据用户消息选择 Skill。
-- 第一版使用规则路由。
-- 第二版使用规则 + LLM 路由。
+- 第一版先新增路由层，不急着复制多个 Skill：
+  - `pre_sales_agent`：商品咨询、推荐、价格、库存
+  - `after_sales_agent`：订单、物流、退换货、保修、发票
+  - `complaint_agent`：投诉、转人工、赔偿、维权
+  - `general_agent`：通用兜底
+- `SkillManager.routeAgent()` 根据用户消息选择专家域。已完成第一版。
+- `AgentRuntime` 在 Trace 中记录 `agent_routed`。已完成第一版。
+- 当前具体执行仍复用稳定的 `CustomerServiceSkill`，后续再拆真正独立 Skill。
+- 第二版可升级为规则 + LLM 路由。
 
 验收标准：
 
-- 商品问题进入售前 Skill。
-- 订单和退货问题进入售后 Skill。
-- 投诉问题进入投诉 Skill。
-- Trace 中能看到命中的 Skill。
+- 商品问题进入售前专家域。已完成第一版。
+- 订单和退货问题进入售后专家域。已完成第一版。
+- 投诉问题进入投诉专家域。已完成第一版。
+- Trace 中能看到命中的专家 Agent。已完成第一版。
 
 优先级：中。
+
+状态：第一版已完成。当前没有强行拆多个重复 Skill，而是先完成路由层、专家域标签和 Trace 观测，后续要拆 `PreSalesSkill`、`AfterSalesSkill`、`ComplaintSkill` 时边界已经清楚。
 
 ## Phase 9：Memory 与自动压缩
 
@@ -658,20 +662,25 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 41. 新增质量闭环演示脚本第一版：通过 `scripts/demo-quality-loop.ps1` 演示负反馈、候选样本、审核、合并临时评测文件和运行回复质量评测的完整链路。已完成第一版。
 42. 新增真实模型 Judge 可选评测入口：默认 `mvn test` 使用 Fake Judge，手动运行 `scripts/run-real-judge-eval.ps1` 时调用真实模型生成 LLM-as-Judge 报告。已完成第一版。
 43. 新增 CI 质量门禁第一版：通过 GitHub Actions 在 push / PR 时使用 Java 17 自动运行 `./mvnw -B test`，验证单元测试、接口测试和核心 Eval 链路。已完成第一版。
+44. 新增数据库持久化第一版：Repository 层支持 `memory` / `jdbc` 双模式，开启 JDBC 后用户、商品、订单和退货记录可持久化到 MySQL。已完成第一版。
+45. 新增独立 MCP Server 第一版：新增 `/mcp` JSON-RPC 风格入口，支持 `initialize`、`tools/list`、`tools/call`，复用现有 `ToolRegistry`。已完成第一版。
+46. 新增 RAG 本地向量检索升级第一版：使用字符 n-gram 伪向量和余弦相似度补充召回分，并在结果中暴露 `vectorScore`。已完成第一版。
+47. 新增 Multi-Agent 路由第一版：新增 `AgentRouteResult`，支持售前、售后、投诉、通用专家域路由，并写入 `agent_routed` Trace。已完成第一版。
+48. 新增售后工单平台联调第一版：`HandoffTools` 支持 `memory` / `after-sales-http` 双模式，联调时调用桌面 `demo/after-sales-sla-platform` 创建真实售后工单。已完成第一版。
 
 ## 9. 暂缓事项
 
 以下内容暂时不要急着做：
 
 - MySQL 持久化
-- 完整 MCP Server
+- 完整 MCP Server 高级能力，例如鉴权、独立进程部署和流式协议
 - 多模型路由
 - Monitor 动态调参
 - 复杂 UI 重构
 
 原因：
 
-这些能力确实高级，但如果基础 Agent 链路、多轮状态、Trace 和评测没有做好，提前做这些会让项目变成“概念很多，但核心不稳”。
+这些能力确实高级，但如果基础 Agent 链路、多轮状态、Trace 和评测没有做好，提前做这些会让项目变成“概念很多，但核心不稳”。其中 MySQL 持久化已经完成第一版，后续暂缓的是更完整的连接池、迁移工具、外键索引和会话/反馈数据迁移。
 
 ## 10. 当前结论
 
@@ -691,14 +700,19 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 - [客服Agent-25-面试亮点总结.md](客服Agent-25-面试亮点总结.md)
 - [客服Agent-26-演示流程.md](客服Agent-26-演示流程.md)
 - [客服Agent-27-CI质量门禁设计.md](客服Agent-27-CI质量门禁设计.md)
+- [客服Agent-28-数据库持久化设计.md](客服Agent-28-数据库持久化设计.md)
+- [客服Agent-29-独立MCPServer设计.md](客服Agent-29-独立MCPServer设计.md)
+- [客服Agent-30-RAG向量检索升级设计.md](客服Agent-30-RAG向量检索升级设计.md)
+- [客服Agent-31-Multi-Agent路由设计.md](客服Agent-31-Multi-Agent路由设计.md)
+- [客服Agent-32-售后工单平台联调设计.md](客服Agent-32-售后工单平台联调设计.md)
 
 如果后续继续做二期功能，建议从下面候选项中选择，不建议同时铺开：
 
 - 真实 Agent 回复候选样本采集：让 Judge 可以评估真实模型生成的客服回复。
-- 独立 MCP Server：把当前 MCP-style Adapter 拆成真正可独立部署的工具服务。
-- 数据库持久化：将模拟 Repository、会话记忆、用户反馈和候选样本迁移到 MySQL。
+- 独立 MCP Server 增强：当前已完成同进程 `/mcp` JSON-RPC 第一版，后续再拆成真正可独立部署的工具服务。
+- 数据库持久化增强：当前已完成业务核心表第一版，后续再迁移会话记忆、用户偏好和反馈候选样本。
 - CI 质量门禁增强：当前已完成 GitHub Actions 第一版，后续可以上传 Eval 报告 artifact 或在 PR 中展示指标摘要。
-- RAG 向量检索升级：当知识库规模变大时，引入向量召回和更强 rerank。
+- RAG 向量检索增强：当前已完成本地轻量向量分，知识库规模变大后再引入真实 embedding、向量数据库和更强 rerank。
 
 下一阶段不再零散堆功能，而是按模块推进。详细任务拆分见：
 
@@ -714,3 +728,8 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 6. LLM-as-Judge 评测。已完成第一版。
 7. Docker 与部署工程化。已完成第一版。
 8. CI 质量门禁。已完成第一版。
+9. 数据库持久化。已完成第一版。
+10. 独立 MCP Server。已完成同进程 JSON-RPC 第一版。
+11. RAG 本地向量检索。已完成第一版。
+12. Multi-Agent 路由。已完成第一版。
+13. 售后工单平台联调。已完成第一版。

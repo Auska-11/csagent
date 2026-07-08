@@ -277,6 +277,7 @@ public class ToolRegistry {
                                 outputField("matchedTerms", "array", "本次检索命中的关键词", "[\"退货\", \"七天\"]"),
                                 outputField("matchedFields", "array", "命中的字段，例如 title、keywords、content", "[\"keywords\", \"content\"]"),
                                 outputField("queryVariants", "array", "查询改写后的候选表达", "[\"超过七天还能退吗\", \"退货 退款 七天无理由\"]"),
+                                outputField("vector_score", "number", "本地轻量向量相似度分数，用于解释语义召回信号", "23.5"),
                                 outputField("rerankReason", "string", "排序原因，便于解释 rerank 结果", "title=0, keywords=20, content=8, fieldCoverageBonus=4")
                         )
                 ),

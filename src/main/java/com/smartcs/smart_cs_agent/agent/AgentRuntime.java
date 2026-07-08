@@ -4,6 +4,7 @@ import com.smartcs.smart_cs_agent.agent.action.*;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
+import com.smartcs.smart_cs_agent.skill.AgentRouteResult;
 import com.smartcs.smart_cs_agent.skill.Skill;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.tools.HandoffTicketData;
@@ -113,9 +114,19 @@ public class AgentRuntime {
         context.addTrace("turn_started", "开始处理用户本轮消息", startData);
         context.addTrace("memory_loaded", "读取会话记忆", buildMemoryTraceData(state));
 
-        // 1. 获取当前活跃的 Skill
-        Skill skill = skillManager.getActiveSkill();
-        context.addTrace("skill_selected", "选择当前客服 Skill", Map.of("skill", skill.getName()));
+        // 1. 先做 Multi-Agent 路由，再选择底层 Skill。
+        //
+        // 当前第一版路由会把请求分到售前、售后、投诉、通用几个专家域；
+        // 具体执行仍复用已经稳定的 CustomerServiceSkill。
+        // 这样既能在 Trace 里看到“应该交给哪个专家 Agent”，又不会把成熟链路拆散。
+        AgentRouteResult routeResult = skillManager.routeAgent(context.getMessage());
+        context.addTrace("agent_routed", "Multi-Agent 路由完成", buildAgentRouteTraceData(routeResult));
+
+        Skill skill = skillManager.selectSkill(context.getMessage());
+        context.addTrace("skill_selected", "选择当前客服 Skill", Map.of(
+                "skill", skill.getName(),
+                "routedAgent", routeResult.getAgentName()
+        ));
 
         // 2. 循环执行（最多 10 次，防止死循环）
         int maxIterations = 10;
@@ -486,6 +497,15 @@ public class AgentRuntime {
             data.put("answerPreview", preview(((FinalAnswerAction) action).getAnswer(), 160));
         }
 
+        return data;
+    }
+
+    private Map<String, Object> buildAgentRouteTraceData(AgentRouteResult routeResult) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("routeKey", routeResult.getRouteKey());
+        data.put("agentName", routeResult.getAgentName());
+        data.put("confidence", routeResult.getConfidence());
+        data.put("reason", routeResult.getReason());
         return data;
     }
 

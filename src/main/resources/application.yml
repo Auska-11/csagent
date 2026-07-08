@@ -6,6 +6,24 @@ spring:
     name: smart-cs-agent
 
 smartcs:
+  handoff:
+    # memory：默认生成本地模拟人工工单，适合单独启动 Agent 项目和跑测试。
+    # after-sales-http：调用桌面 demo/after-sales-sla-platform 的售后工单接口创建真实工单。
+    mode: ${SMARTCS_HANDOFF_MODE:memory}
+    after-sales:
+      base-url: ${SMARTCS_AFTER_SALES_BASE_URL:http://localhost:8081}
+      tenant-id: ${SMARTCS_AFTER_SALES_TENANT_ID:demo}
+      agent-user-id: ${SMARTCS_AFTER_SALES_AGENT_USER_ID:agent-service}
+      agent-user-role: ${SMARTCS_AFTER_SALES_AGENT_USER_ROLE:AGENT}
+  persistence:
+    # memory：默认使用内存模拟数据，适合本地学习、测试和 CI。
+    # jdbc：使用 JDBC 连接真实数据库，适合面试演示“业务数据持久化”。
+    mode: ${SMARTCS_PERSISTENCE_MODE:memory}
+    jdbc:
+      driver-class-name: ${SMARTCS_JDBC_DRIVER:com.mysql.cj.jdbc.Driver}
+      url: ${SMARTCS_JDBC_URL:jdbc:mysql://localhost:3306/smart_cs_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+      username: ${SMARTCS_JDBC_USERNAME:root}
+      password: ${SMARTCS_JDBC_PASSWORD:}
   monitor:
     # Eval 候选样本默认保存到本地 data 目录。
     # 这样用户点“无用”后生成的待审核样本，项目重启后仍然可以继续审核。

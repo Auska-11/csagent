@@ -125,4 +125,26 @@ class KnowledgeToolsTest {
         assertTrue(result.getRerankReason().contains("keywords="));
         assertTrue(result.toPromptText().contains("排序原因"));
     }
+
+    @Test
+    void shouldExposeLocalVectorScoreForRagSearch() {
+        KnowledgeTools knowledgeTools = new KnowledgeTools(List.of(
+                new KnowledgeDocument(
+                        "logistics/delivery_policy.md",
+                        "logistics",
+                        "配送政策",
+                        "正常情况下，订单会在 24 小时内发货。用户可以通过物流单号查询配送进度。",
+                        List.of("配送", "物流", "发货", "时效")
+                )
+        ));
+
+        List<KnowledgeSearchResult> results = knowledgeTools.search("什么时候送到", 3);
+
+        assertFalse(results.isEmpty());
+        KnowledgeSearchResult result = results.get(0);
+        assertEquals("logistics/delivery_policy.md", result.getDocumentId());
+        assertTrue(result.getVectorScore() > 0);
+        assertTrue(result.getRerankReason().contains("vectorBoost="));
+        assertTrue(result.toPromptText().contains("向量分"));
+    }
 }

@@ -11,14 +11,18 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - 退换货：支持退货进度查询，以及“我要退货 -> 追问订单号 -> 追问原因 -> 提交退货申请”的多轮流程。
 - 多轮记忆：支持短期消息窗口、任务记忆快照、规则摘要压缩，Trace 会记录 `memory_loaded` / `memory_compressed`，前端 Memory 面板可查看当前会话记忆。
 - 长期用户偏好：支持记录“我喜欢蓝牙耳机”等商品偏好，后续泛化推荐时可读取用户长期记忆，Trace 会记录 `user_memory_updated` / `user_memory_used`，并支持清空会话记忆和用户长期记忆。
-- 知识库问答：支持退货政策、发票、保修、配送、转人工规则等 Markdown 知识库检索，并已增强查询改写、多路召回、简单 rerank 和 `knowledge_miss` Trace。
-- 人工转接：支持用户主动要求人工、投诉、赔偿或维权类表达，创建模拟人工工单。
+- 知识库问答：支持退货政策、发票、保修、配送、转人工规则等 Markdown 知识库检索，并已增强查询改写、多路召回、本地轻量向量分、简单 rerank 和 `knowledge_miss` Trace。
+- Multi-Agent 路由：支持把用户消息路由到售前、售后、投诉和通用专家域，并在 Trace 中记录 `agent_routed`。
+- 人工转接：支持用户主动要求人工、投诉、赔偿或维权类表达；默认创建模拟人工工单，开启联调模式后可调用售后工单平台创建真实工单。
 - Agent Trace：接口和前端调试面板可以看到 Action、工具调用、LLM 调用、转人工、耗时等事件。
 - 前端调试工作台：支持多用户会话、典型 Demo 脚本、Trace 过滤/复制、Trace 指标摘要，以及工具 input/output schema 可视化。
 - 评测报告看板：前端 Eval 面板可以展示最新评测概览、历史趋势和核心指标变化。
 - LLM 降级：模型调用失败时不会直接中断接口，会基于工具结构化结果生成模板回复，并记录 `llm_failed` Trace。
 - MCP-style 工具层：工具具备统一 `ToolDefinition`、`ToolCall`、`ToolResult`、`inputSchema`、`outputSchema` 和只读工具列表接口，订单、商品、退货、用户和人工转接等业务工具已升级为明确 DTO 输出。
 - MCP Adapter：新增 `GET /api/mcp/tools` 和 `POST /api/mcp/tools/call`，把内部工具注册表暴露成更接近 MCP `tools/list`、`tools/call` 的协议边界。
+- 独立 MCP Server 第一版：新增 `POST /mcp` JSON-RPC 风格入口，支持 `initialize`、`tools/list` 和 `tools/call`。
+- 数据库持久化：支持 `memory` / `jdbc` 双模式，默认内存模式保证本地测试和 CI 稳定，开启 `SMARTCS_PERSISTENCE_MODE=jdbc` 后，用户、商品、订单和退货记录可从 MySQL 读写。
+- 后端联调：`HandoffTools` 支持 `memory` / `after-sales-http` 双模式，可调用桌面 `demo/after-sales-sla-platform` 的 `POST /api/tickets` 创建真实售后工单。
 - Monitor 指标与反馈闭环：支持 `GET /api/monitor/summary`、`POST /api/monitor/feedback`、`GET /api/monitor/feedback/candidates`、候选样本审核接口、Eval case 草稿导出接口和半自动合并正式评测集接口，基于 Trace 聚合整体/按工具成功率、LLM 失败率、转人工次数、平均耗时、用户反馈有用率、候选样本审核状态数量和负反馈问题类型分布，并能把无用反馈沉淀成 Eval 待审核候选样本；候选样本会持久化到本地 JSON 文件，服务重启后仍可继续审核；Monitor Summary 会进一步生成结构化风险告警，前端 Monitor 面板可以直接看到工具失败率、LLM 失败率、低有用反馈率、不安全承诺和内部实现泄露等风险。
 - 接口工程化：聊天接口使用明确 DTO、Spring Validation 和统一 `ApiErrorResponse`。
 - 部署工程化：支持 Docker 多阶段构建、`docker compose` 一键启动、环境变量注入模型配置，并提供 `/api/health` 健康检查接口。
@@ -33,11 +37,12 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
   -> CustomerServiceAgent
   -> ConversationStore / TurnContext
   -> AgentRuntime
+  -> SkillManager Multi-Agent 路由
   -> CustomerServiceSkill
   -> AgentAction
   -> ToolManager / ToolRegistry
   -> OrderTools / ProductTools / ReturnTools / UserTools / KnowledgeTools / HandoffTools
-  -> Repository 模拟数据层 / Markdown 知识库
+  -> Repository 内存/JDBC 双模式数据层 / Markdown 知识库 / 售后工单平台 HTTP Client
 ```
 
 核心设计取舍：
@@ -46,6 +51,8 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - 高频明确场景优先用规则，表达模糊时再用 LLM 兜底。
 - 当前输入、跨轮状态、本轮执行过程分别放在 `ChatRequest`、`ConversationState`、`TurnContext`。
 - 工具层先做本地 MCP-style 边界，后续再演进为独立 MCP Server。
+- Repository 默认使用内存模式，开启 JDBC 模式后可连接 MySQL，保证学习演示和真实持久化两种需求都能覆盖。
+- 人工转接默认使用本地工单，联调时再切换到售后工单平台，保证单项目运行和双项目联动都稳定。
 - 先做稳定、可解释的规则评测，再补 LLM-as-Judge。
 
 ## 主要接口
@@ -127,6 +134,25 @@ Content-Type: application/json
   "name": "order_lookup",
   "arguments": {
     "order_id": "ORD-001"
+  }
+}
+```
+
+通过 JSON-RPC 风格 MCP Server 调用工具：
+
+```http
+POST /mcp
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "order_lookup",
+    "arguments": {
+      "order_id": "ORD-001"
+    }
   }
 }
 ```
@@ -256,6 +282,42 @@ $env:OPENAI_MODEL_NAME="your-model-name"
 http://localhost:8080
 ```
 
+默认使用内存数据。如果要开启 MySQL 持久化，先创建数据库：
+
+```sql
+CREATE DATABASE smart_cs_agent DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+再设置环境变量：
+
+```powershell
+$env:SMARTCS_PERSISTENCE_MODE="jdbc"
+$env:SMARTCS_JDBC_URL="jdbc:mysql://localhost:3306/smart_cs_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"
+$env:SMARTCS_JDBC_USERNAME="root"
+$env:SMARTCS_JDBC_PASSWORD="your-password"
+```
+
+启动后，项目会自动创建 `cs_user`、`cs_product`、`cs_order`、`cs_return_record` 四张表，并写入演示种子数据。设计说明见 [客服Agent-28-数据库持久化设计.md](docs/客服Agent/客服Agent-28-数据库持久化设计.md)。
+
+默认人工转接使用本地模拟工单。如果要联调桌面售后工单平台，先启动后端项目：
+
+```powershell
+cd C:\Users\feasycom\Desktop\demo\after-sales-sla-platform
+mvn -s .mvn\settings.xml spring-boot:run
+```
+
+再设置 Agent 项目环境变量：
+
+```powershell
+$env:SMARTCS_HANDOFF_MODE="after-sales-http"
+$env:SMARTCS_AFTER_SALES_BASE_URL="http://localhost:8081"
+$env:SMARTCS_AFTER_SALES_TENANT_ID="demo"
+$env:SMARTCS_AFTER_SALES_AGENT_USER_ID="agent-service"
+$env:SMARTCS_AFTER_SALES_AGENT_USER_ROLE="AGENT"
+```
+
+此时用户触发转人工后，Agent 会调用售后工单平台 `POST /api/tickets` 创建真实工单，返回 `AS-{id}`。设计说明见 [客服Agent-32-售后工单平台联调设计.md](docs/客服Agent/客服Agent-32-售后工单平台联调设计.md)。
+
 运行测试：
 
 ```powershell
@@ -358,7 +420,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 99 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 113 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -390,15 +452,24 @@ docker compose down
 - [面试亮点总结](docs/客服Agent/客服Agent-25-面试亮点总结.md)
 - [演示流程](docs/客服Agent/客服Agent-26-演示流程.md)
 - [CI 质量门禁设计](docs/客服Agent/客服Agent-27-CI质量门禁设计.md)
+- [数据库持久化设计](docs/客服Agent/客服Agent-28-数据库持久化设计.md)
+- [独立 MCP Server 设计](docs/客服Agent/客服Agent-29-独立MCPServer设计.md)
+- [RAG 向量检索升级设计](docs/客服Agent/客服Agent-30-RAG向量检索升级设计.md)
+- [Multi-Agent 路由设计](docs/客服Agent/客服Agent-31-Multi-Agent路由设计.md)
+- [售后工单平台联调设计](docs/客服Agent/客服Agent-32-售后工单平台联调设计.md)
 
 ## 简历表达参考
 
-智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，支持多轮任务状态、MCP-style 工具调用、RAG 知识库、Agent Trace、Monitor 反馈闭环、LLM-as-Judge 与离线评测，提升客服场景下大模型应用的可控性、可观测性和可验证性。
+智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，支持多轮任务状态、MCP-style/JSON-RPC 工具调用、RAG 知识库、本地向量召回、Multi-Agent 路由、Agent Trace、Monitor 反馈闭环、LLM-as-Judge、数据库持久化和售后工单平台联调，提升客服场景下大模型应用的可控性、可观测性和可验证性。
 
 可展开描述：
 
 - 设计 Skill / Runtime / Tool 分层架构，将意图识别、工具调用、业务查询、知识库检索和回复生成解耦，支持订单查询、商品咨询、退货申请、政策问答和人工转接等客服场景。
 - 实现多轮会话状态管理，使用 `ConversationState` 保存任务槽位、短期消息窗口和摘要记忆，支持退货申请等跨轮槽位填充流程。
 - 设计 MCP-style 工具注册与调用层，统一 `ToolDefinition`、`ToolCall`、`ToolResult`、`inputSchema` 和 `outputSchema`，并提供 MCP Adapter 接口暴露工具列表和工具调用能力。
+- 实现 `/mcp` JSON-RPC 风格入口，支持 `initialize`、`tools/list` 和 `tools/call`，让内部工具注册表具备独立 MCP Server 的协议边界。
+- 实现轻量 Multi-Agent 路由，将用户消息分配到售前、售后、投诉和通用专家域，并通过 Trace 记录路由原因和置信度。
+- 实现 Repository 层 `memory` / `jdbc` 双模式，默认内存模式保证测试稳定，开启 JDBC 模式后可将用户、商品、订单和退货记录持久化到 MySQL。
+- 实现人工转接 `memory` / `after-sales-http` 双模式，联调时通过幂等 HTTP 请求调用售后工单平台创建真实工单，并在后端不可用时降级为待补建工单。
 - 构建 Agent Trace、Monitor 指标和用户反馈闭环，将无用反馈沉淀为 Eval 候选样本，支持审核、导出、半自动合并正式评测集和回归测试。
 - 建设五类离线评测，包括路由评测、知识库召回评测、回复质量规则评测、Agent 链路评测和 LLM-as-Judge 评测，并输出 JSON 报告、历史快照和趋势指标；通过 GitHub Actions 在 push / PR 时自动运行 Maven 测试，形成基础 CI 质量门禁。
