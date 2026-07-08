@@ -657,6 +657,7 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 40. 新增 Eval 草稿半自动合并正式评测集第一版：开发者补齐断言后，可以把 `APPROVED` 草稿合并到 `response_quality_eval_cases.json`，并支持重复 ID 跳过和基础断言校验。已完成第一版。
 41. 新增质量闭环演示脚本第一版：通过 `scripts/demo-quality-loop.ps1` 演示负反馈、候选样本、审核、合并临时评测文件和运行回复质量评测的完整链路。已完成第一版。
 42. 新增真实模型 Judge 可选评测入口：默认 `mvn test` 使用 Fake Judge，手动运行 `scripts/run-real-judge-eval.ps1` 时调用真实模型生成 LLM-as-Judge 报告。已完成第一版。
+43. 新增 CI 质量门禁第一版：通过 GitHub Actions 在 push / PR 时使用 Java 17 自动运行 `./mvnw -B test`，验证单元测试、接口测试和核心 Eval 链路。已完成第一版。
 
 ## 9. 暂缓事项
 
@@ -676,14 +677,28 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 
 我们当前项目的方向是正确的。
 
-下一步最重要的不是继续堆功能，而是把以下几个能力继续做扎实：
+下一步最重要的不是继续堆功能，而是进入“稳定、演示、面试准备”阶段：
 
-- 真实 Agent 回复质量评测
-- 真实 MCP Server 或工具嵌套 outputSchema 进一步标准化
-- Skill 按售前、售后、投诉等业务域继续拆分
-- 评测报告可视化或 CI 集成，基于现有 JSON、history 和 trend 做展示
+- 固化面试讲解主线，确保每个亮点都能讲清楚“为什么做、怎么做、怎么验证”。
+- 固化演示流程，优先演示多轮退货申请、RAG 政策问答、Trace、Monitor 和质量闭环。
+- 保持测试稳定，后续每次改动都要确认核心评测和相关单元测试通过。
+- 把二期能力放入候选池，不急着一次性做完，避免项目从“扎实”变成“堆概念”。
 
-多轮任务状态、三级会话记忆第一版、长期用户偏好记忆第一版、记忆清除与隐私控制、Agent Trace、MCP-style 工具层、MCP Adapter、工具 inputSchema/outputSchema、业务工具 DTO、知识库 RAG、RAG 查询改写、多路召回、简单 rerank、人工转接、LLM 失败降级、Monitor 在线指标、按工具名成功率统计、Monitor 风险告警、用户反馈闭环、反馈样本进入 Eval 候选池、Eval 候选样本问题类型分类、Eval 候选样本审核、Eval 候选样本本地 JSON 持久化、Eval case 草稿导出、Eval 草稿半自动合并正式评测集、质量闭环演示脚本、可选真实模型 Judge 评测、前端 Agent Inspector、Memory 面板、Demo 演示脚本、Eval 评测报告看板、离线路由评测、知识库召回评测、回复质量规则评测、Agent 链路回复评测、LLM-as-Judge 第一版、Docker 部署第一版、评测报告 JSON 化、评测历史趋势、结构化工具数据、Skill 第一轮拆分、接口 DTO、参数校验和统一错误响应已经完成。接下来建议补“真实 Agent 回复候选样本采集”，让 Judge 可以评估真实模型生成的客服回复。
+多轮任务状态、三级会话记忆第一版、长期用户偏好记忆第一版、记忆清除与隐私控制、Agent Trace、MCP-style 工具层、MCP Adapter、工具 inputSchema/outputSchema、业务工具 DTO、知识库 RAG、RAG 查询改写、多路召回、简单 rerank、人工转接、LLM 失败降级、Monitor 在线指标、按工具名成功率统计、Monitor 风险告警、用户反馈闭环、反馈样本进入 Eval 候选池、Eval 候选样本问题类型分类、Eval 候选样本审核、Eval 候选样本本地 JSON 持久化、Eval case 草稿导出、Eval 草稿半自动合并正式评测集、质量闭环演示脚本、可选真实模型 Judge 评测、前端 Agent Inspector、Memory 面板、Demo 演示脚本、Eval 评测报告看板、离线路由评测、知识库召回评测、回复质量规则评测、Agent 链路回复评测、LLM-as-Judge 第一版、Docker 部署第一版、评测报告 JSON 化、评测历史趋势、结构化工具数据、Skill 第一轮拆分、接口 DTO、参数校验和统一错误响应已经完成。
+
+当前新增了两份面试和演示准备文档：
+
+- [客服Agent-25-面试亮点总结.md](客服Agent-25-面试亮点总结.md)
+- [客服Agent-26-演示流程.md](客服Agent-26-演示流程.md)
+- [客服Agent-27-CI质量门禁设计.md](客服Agent-27-CI质量门禁设计.md)
+
+如果后续继续做二期功能，建议从下面候选项中选择，不建议同时铺开：
+
+- 真实 Agent 回复候选样本采集：让 Judge 可以评估真实模型生成的客服回复。
+- 独立 MCP Server：把当前 MCP-style Adapter 拆成真正可独立部署的工具服务。
+- 数据库持久化：将模拟 Repository、会话记忆、用户反馈和候选样本迁移到 MySQL。
+- CI 质量门禁增强：当前已完成 GitHub Actions 第一版，后续可以上传 Eval 报告 artifact 或在 PR 中展示指标摘要。
+- RAG 向量检索升级：当知识库规模变大时，引入向量召回和更强 rerank。
 
 下一阶段不再零散堆功能，而是按模块推进。详细任务拆分见：
 
@@ -691,9 +706,11 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 
 优先级顺序为：
 
-1. 工具协议与 MCP 边界增强。
-2. Monitor 指标与 Eval 闭环增强。
-3. RAG 检索增强。
-4. 多轮记忆管理升级。已完成第一版。
-5. LLM-as-Judge 评测。已完成第一版。
-6. Docker 与部署工程化。已完成第一版。
+1. 面试亮点总结与演示流程固化。已完成第一版。
+2. 工具协议与 MCP 边界增强。已完成本地 Adapter 第一版，二期待拆独立 MCP Server。
+3. Monitor 指标与 Eval 闭环增强。已完成第一版，二期待接 CI artifact 或真实线上数据。
+4. RAG 检索增强。已完成轻量召回第一版，二期待接向量检索。
+5. 多轮记忆管理升级。已完成第一版。
+6. LLM-as-Judge 评测。已完成第一版。
+7. Docker 与部署工程化。已完成第一版。
+8. CI 质量门禁。已完成第一版。

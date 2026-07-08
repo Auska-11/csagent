@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+  test:
+    name: Maven Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Grant Maven wrapper permission
+        run: chmod +x ./mvnw
+
+      - name: Run unit and eval tests
+        run: ./mvnw -B test
+        env:
+          # CI 不依赖真实模型 Key。项目默认会使用 Fake Judge 和 dummy 模型配置，
+          # 这样可以稳定验证 Agent 路由、工具、RAG、Monitor 和 Eval 这些工程链路。
+          OPENAI_API_KEY: dummy-test-key
+          OPENAI_BASE_URL: https://api.openai.com/v1
+          OPENAI_MODEL_NAME: dummy-model

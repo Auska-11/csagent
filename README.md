@@ -262,6 +262,8 @@ http://localhost:8080
 mvn "-Dmaven.repo.local=.m2\repository" test
 ```
 
+GitHub Actions 会在 push 或 Pull Request 时自动运行 Maven 测试，作为项目的基础质量门禁。CI 详情见 [客服Agent-27-CI质量门禁设计.md](docs/客服Agent/客服Agent-27-CI质量门禁设计.md)。
+
 测试运行后，五类评测会自动输出 JSON 指标报告到：
 
 ```text
@@ -385,7 +387,18 @@ docker compose down
 - [用户反馈闭环设计](docs/客服Agent/客服Agent-22-用户反馈闭环设计.md)
 - [反馈样本进入评测设计](docs/客服Agent/客服Agent-23-反馈样本进入评测设计.md)
 - [质量闭环演示脚本](docs/客服Agent/客服Agent-24-质量闭环演示脚本.md)
+- [面试亮点总结](docs/客服Agent/客服Agent-25-面试亮点总结.md)
+- [演示流程](docs/客服Agent/客服Agent-26-演示流程.md)
+- [CI 质量门禁设计](docs/客服Agent/客服Agent-27-CI质量门禁设计.md)
 
 ## 简历表达参考
 
-智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，将意图识别、工具调用、业务查询、知识库检索和回复生成解耦；支持多轮槽位填充、三级会话记忆、长期用户偏好记忆、MCP-style 工具 input/output schema、MCP Adapter 工具协议接口、业务工具 DTO 输出、Agent Trace、RAG 查询改写、多路召回、简单 rerank、Monitor 在线指标、结构化风险告警、用户反馈闭环、负反馈 Eval 候选样本沉淀与审核、本地 JSON 持久化、负反馈问题类型分类、审核通过样本导出为 Eval case 草稿、人工补齐断言后半自动合并正式评测集、人工转接、LLM 失败降级、接口参数校验、统一错误响应、Docker 多阶段构建部署和五类离线评测，并提供前端 Agent 调试工作台用于演示 Demo 脚本、Trace 过滤、链路指标、Memory 面板、工具 Schema、Monitor 指标、Monitor 告警、用户反馈有用率、Eval 候选样本审核/导出/合并和 Eval 评测看板，可生成 JSON 指标、历史快照、趋势报告和 LLM-as-Judge 四维评分报告，提升客服场景下大模型应用的可控性、可观测性、可验证性和可复现部署能力。
+智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，支持多轮任务状态、MCP-style 工具调用、RAG 知识库、Agent Trace、Monitor 反馈闭环、LLM-as-Judge 与离线评测，提升客服场景下大模型应用的可控性、可观测性和可验证性。
+
+可展开描述：
+
+- 设计 Skill / Runtime / Tool 分层架构，将意图识别、工具调用、业务查询、知识库检索和回复生成解耦，支持订单查询、商品咨询、退货申请、政策问答和人工转接等客服场景。
+- 实现多轮会话状态管理，使用 `ConversationState` 保存任务槽位、短期消息窗口和摘要记忆，支持退货申请等跨轮槽位填充流程。
+- 设计 MCP-style 工具注册与调用层，统一 `ToolDefinition`、`ToolCall`、`ToolResult`、`inputSchema` 和 `outputSchema`，并提供 MCP Adapter 接口暴露工具列表和工具调用能力。
+- 构建 Agent Trace、Monitor 指标和用户反馈闭环，将无用反馈沉淀为 Eval 候选样本，支持审核、导出、半自动合并正式评测集和回归测试。
+- 建设五类离线评测，包括路由评测、知识库召回评测、回复质量规则评测、Agent 链路评测和 LLM-as-Judge 评测，并输出 JSON 报告、历史快照和趋势指标；通过 GitHub Actions 在 push / PR 时自动运行 Maven 测试，形成基础 CI 质量门禁。
