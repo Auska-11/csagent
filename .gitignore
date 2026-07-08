@@ -33,6 +33,7 @@ build/
 .vscode/
 app.log
 logs/
+data/
 .m2/
 .env
 .env.*

@@ -5,8 +5,11 @@ import com.smartcs.smart_cs_agent.monitor.FeedbackEvalCandidate;
 import com.smartcs.smart_cs_agent.monitor.FeedbackEvalCandidateStatus;
 import com.smartcs.smart_cs_agent.monitor.FeedbackRating;
 import com.smartcs.smart_cs_agent.monitor.FeedbackRecord;
+import com.smartcs.smart_cs_agent.monitor.EvalCaseMergeResult;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
 import com.smartcs.smart_cs_agent.monitor.MonitorSummary;
+import com.smartcs.smart_cs_agent.monitor.ResponseQualityEvalCase;
+import com.smartcs.smart_cs_agent.monitor.ResponseQualityEvalCaseFileService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,7 +18,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Monitor 指标接口。
@@ -31,9 +37,12 @@ import java.util.List;
 public class MonitorController {
 
     private final MonitorService monitorService;
+    private final ResponseQualityEvalCaseFileService evalCaseFileService;
 
-    public MonitorController(MonitorService monitorService) {
+    public MonitorController(MonitorService monitorService,
+                             ResponseQualityEvalCaseFileService evalCaseFileService) {
         this.monitorService = monitorService;
+        this.evalCaseFileService = evalCaseFileService;
     }
 
     @GetMapping("/summary")
@@ -110,5 +119,79 @@ public class MonitorController {
     @GetMapping("/feedback/candidates/export")
     public List<FeedbackEvalCaseDraft> exportApprovedEvalCaseDrafts() {
         return monitorService.exportApprovedEvalCaseDrafts();
+    }
+
+    /**
+     * 将人工补齐断言后的草稿合并到正式回复质量评测文件。
+     *
+     * 这里故意要求 sourceCandidateId 必须来自 APPROVED 草稿：
+     * - 用户点击“无用”只说明有质量信号；
+     * - APPROVED 说明开发者已经人工确认值得沉淀；
+     * - merge 请求里的 requiredKeywords / forbiddenKeywords 说明开发者已经补齐评测断言。
+     *
+     * 这三步合在一起，才允许写入正式 response_quality_eval_cases.json。
+     */
+    @PostMapping("/feedback/candidates/merge")
+    public EvalCaseMergeResponse mergeApprovedEvalCaseDrafts(@Valid @RequestBody(required = false)
+                                                             EvalCaseMergeRequest request) {
+        if (request == null || request.getCases().isEmpty()) {
+            throw new IllegalArgumentException("Eval case merge request cannot be empty");
+        }
+
+        Map<String, FeedbackEvalCaseDraft> approvedDrafts = approvedDraftsByCandidateId();
+        List<ResponseQualityEvalCase> cases = new ArrayList<>();
+        for (EvalCaseMergeItem item : request.getCases()) {
+            FeedbackEvalCaseDraft draft = approvedDraft(item, approvedDrafts);
+            cases.add(toResponseQualityEvalCase(item, draft));
+        }
+
+        EvalCaseMergeResult result = evalCaseFileService.merge(cases);
+        return new EvalCaseMergeResponse(true, "Eval cases merged", result);
+    }
+
+    private Map<String, FeedbackEvalCaseDraft> approvedDraftsByCandidateId() {
+        Map<String, FeedbackEvalCaseDraft> drafts = new LinkedHashMap<>();
+        for (FeedbackEvalCaseDraft draft : monitorService.exportApprovedEvalCaseDrafts()) {
+            drafts.put(draft.getSourceCandidateId(), draft);
+        }
+        return drafts;
+    }
+
+    private FeedbackEvalCaseDraft approvedDraft(EvalCaseMergeItem item,
+                                                Map<String, FeedbackEvalCaseDraft> approvedDrafts) {
+        if (item == null) {
+            throw new IllegalArgumentException("Eval case merge item cannot be empty");
+        }
+        if (item.getSourceCandidateId() == null || item.getSourceCandidateId().isBlank()) {
+            throw new IllegalArgumentException("Source candidate id cannot be empty");
+        }
+
+        FeedbackEvalCaseDraft draft = approvedDrafts.get(item.getSourceCandidateId().trim());
+        if (draft == null) {
+            throw new IllegalArgumentException("Eval candidate is not approved or does not exist: " + item.getSourceCandidateId());
+        }
+        return draft;
+    }
+
+    private ResponseQualityEvalCase toResponseQualityEvalCase(EvalCaseMergeItem item,
+                                                              FeedbackEvalCaseDraft draft) {
+        String id = item.getId() == null || item.getId().isBlank()
+                ? draft.getId()
+                : item.getId().trim();
+        String candidateReply = item.getCandidateReply() == null || item.getCandidateReply().isBlank()
+                ? draft.getCandidateReply()
+                : item.getCandidateReply().trim();
+        List<String> requiredKeywords = item.getRequiredKeywords();
+        List<String> forbiddenKeywords = item.getForbiddenKeywords().isEmpty()
+                ? draft.getForbiddenKeywords()
+                : item.getForbiddenKeywords();
+
+        return new ResponseQualityEvalCase(
+                id,
+                candidateReply,
+                requiredKeywords,
+                forbiddenKeywords,
+                item.isExpectedPass()
+        );
     }
 }

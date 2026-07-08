@@ -1,12 +1,16 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
 import com.smartcs.smart_cs_agent.agent.context.TraceEvent;
 import com.smartcs.smart_cs_agent.monitor.FeedbackIssueType;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
 import com.smartcs.smart_cs_agent.monitor.MonitorSummary;
+import com.smartcs.smart_cs_agent.monitor.ResponseQualityEvalCaseFileService;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -15,11 +19,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * MonitorController 单元测试。
+ * MonitorController unit tests.
  *
- * 直接实例化 Controller，可以快速验证接口层是否正确调用 MonitorService。
+ * Tests use direct controller instances instead of a Spring container, so they can focus on
+ * whether the controller correctly connects HTTP-layer DTOs with MonitorService.
  */
 class MonitorControllerTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     void shouldReturnMonitorSummary() {
@@ -28,13 +36,13 @@ class MonitorControllerTest {
                 "conv-1",
                 "USER-001",
                 "ok",
-                List.of(new TraceEvent("tool_observed", 1, "工具成功", Map.of(
+                List.of(new TraceEvent("tool_observed", 1, "tool success", Map.of(
                         "success", true,
                         "durationMs", 15
                 )))
         ));
 
-        MonitorController controller = new MonitorController(service);
+        MonitorController controller = newController(service);
 
         MonitorSummary summary = controller.getSummary();
         assertEquals(1, summary.getTotalTurns());
@@ -45,13 +53,13 @@ class MonitorControllerTest {
     @Test
     void shouldRecordFeedback() {
         MonitorService service = new MonitorService();
-        MonitorController controller = new MonitorController(service);
+        MonitorController controller = newController(service);
         FeedbackRequest request = new FeedbackRequest(
                 "conv-1",
                 "USER-001",
                 "HELPFUL",
-                "很清楚",
-                "您的订单已经发货"
+                "clear answer",
+                "order shipped"
         );
 
         FeedbackResponse response = controller.recordFeedback(request);
@@ -60,7 +68,7 @@ class MonitorControllerTest {
         assertTrue(response.isSuccess());
         assertEquals("FDB-000001", response.getFeedback().getFeedbackId());
         assertEquals("HELPFUL", response.getFeedback().getRating().name());
-        assertEquals("您的订单已经发货", response.getFeedback().getAssistantReply());
+        assertEquals("order shipped", response.getFeedback().getAssistantReply());
         assertEquals(1, summary.getFeedbackCount());
         assertEquals(1.0, summary.getHelpfulFeedbackRate());
     }
@@ -68,43 +76,43 @@ class MonitorControllerTest {
     @Test
     void shouldReturnFeedbackEvalCandidates() {
         MonitorService service = new MonitorService();
-        MonitorController controller = new MonitorController(service);
+        MonitorController controller = newController(service);
         FeedbackRequest request = new FeedbackRequest(
                 "conv-1",
                 "USER-001",
                 "UNHELPFUL",
-                "没有说明退货时效",
-                "可以为您申请退货"
+                "\u6ca1\u6709\u8bf4\u660e\u9000\u8d27\u65f6\u6548",
+                "we can submit a return request"
         );
 
         controller.recordFeedback(request);
 
         assertEquals(1, controller.getFeedbackEvalCandidates().size());
         assertEquals("EVAL-CAND-000001", controller.getFeedbackEvalCandidates().get(0).getCandidateId());
-        assertEquals("可以为您申请退货", controller.getFeedbackEvalCandidates().get(0).getAssistantReply());
+        assertEquals("we can submit a return request", controller.getFeedbackEvalCandidates().get(0).getAssistantReply());
         assertEquals(FeedbackIssueType.MISSING_KEY_INFO, controller.getFeedbackEvalCandidates().get(0).getIssueType());
     }
 
     @Test
     void shouldReviewFeedbackEvalCandidate() {
         MonitorService service = new MonitorService();
-        MonitorController controller = new MonitorController(service);
+        MonitorController controller = newController(service);
         controller.recordFeedback(new FeedbackRequest(
                 "conv-1",
                 "USER-001",
                 "UNHELPFUL",
-                "没有说明退货时效",
-                "可以为您申请退货"
+                "\u6ca1\u6709\u8bf4\u660e\u9000\u8d27\u65f6\u6548",
+                "we can submit a return request"
         ));
 
         EvalCandidateReviewResponse response = controller.reviewFeedbackEvalCandidate(
                 "EVAL-CAND-000001",
-                new EvalCandidateReviewRequest("APPROVED", "可以进入回复质量评测")
+                new EvalCandidateReviewRequest("APPROVED", "can enter response quality eval")
         );
 
         assertTrue(response.isSuccess());
         assertEquals("APPROVED", response.getCandidate().getStatus().name());
-        assertEquals("可以进入回复质量评测", response.getCandidate().getReviewNote());
+        assertEquals("can enter response quality eval", response.getCandidate().getReviewNote());
         assertEquals(0, controller.getSummary().getPendingEvalCandidateCount());
         assertEquals(1, controller.getSummary().getApprovedEvalCandidateCount());
         assertEquals(0, controller.getSummary().getRejectedEvalCandidateCount());
@@ -113,17 +121,17 @@ class MonitorControllerTest {
     @Test
     void shouldExportApprovedEvalCaseDrafts() {
         MonitorService service = new MonitorService();
-        MonitorController controller = new MonitorController(service);
+        MonitorController controller = newController(service);
         controller.recordFeedback(new FeedbackRequest(
                 "conv-1",
                 "USER-001",
                 "UNHELPFUL",
-                "没有说明退货时效",
-                "可以为您申请退货"
+                "\u6ca1\u6709\u8bf4\u660e\u9000\u8d27\u65f6\u6548",
+                "we can submit a return request"
         ));
         controller.reviewFeedbackEvalCandidate(
                 "EVAL-CAND-000001",
-                new EvalCandidateReviewRequest("APPROVED", "可以作为负例")
+                new EvalCandidateReviewRequest("APPROVED", "can be used as a negative sample")
         );
 
         assertEquals(1, controller.exportApprovedEvalCaseDrafts().size());
@@ -134,8 +142,76 @@ class MonitorControllerTest {
     }
 
     @Test
+    void shouldMergeApprovedEvalCaseDraftsIntoResponseQualityFile() {
+        MonitorService service = new MonitorService();
+        MonitorController controller = newController(service);
+        controller.recordFeedback(new FeedbackRequest(
+                "conv-merge",
+                "USER-001",
+                "UNHELPFUL",
+                "\u6ca1\u6709\u8bf4\u660e\u9000\u8d27\u65f6\u6548",
+                "we can submit a return request"
+        ));
+        controller.reviewFeedbackEvalCandidate(
+                "EVAL-CAND-000001",
+                new EvalCandidateReviewRequest("APPROVED", "requiredKeywords completed")
+        );
+
+        EvalCaseMergeResponse response = controller.mergeApprovedEvalCaseDrafts(new EvalCaseMergeRequest(List.of(
+                new EvalCaseMergeItem(
+                        "EVAL-CAND-000001",
+                        "feedback_eval_cand_000001",
+                        "we can submit a return request",
+                        List.of("\u9000\u8d27\u65f6\u6548"),
+                        List.of("Tool"),
+                        false
+                )
+        )));
+
+        assertTrue(response.isSuccess());
+        assertEquals(1, response.getResult().getMergedCount());
+        assertEquals(0, response.getResult().getBeforeCount());
+        assertEquals(1, response.getResult().getAfterCount());
+
+        EvalCaseMergeResponse duplicated = controller.mergeApprovedEvalCaseDrafts(new EvalCaseMergeRequest(List.of(
+                new EvalCaseMergeItem(
+                        "EVAL-CAND-000001",
+                        "feedback_eval_cand_000001",
+                        "we can submit a return request",
+                        List.of("\u9000\u8d27\u65f6\u6548"),
+                        List.of("Tool"),
+                        false
+                )
+        )));
+
+        assertEquals(0, duplicated.getResult().getMergedCount());
+        assertEquals(List.of("feedback_eval_cand_000001"), duplicated.getResult().getSkippedDuplicateIds());
+    }
+
+    @Test
+    void shouldRejectMergeWhenCandidateIsNotApproved() {
+        MonitorController controller = newController(new MonitorService());
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> controller.mergeApprovedEvalCaseDrafts(new EvalCaseMergeRequest(List.of(
+                        new EvalCaseMergeItem(
+                                "EVAL-CAND-404",
+                                "case-404",
+                                "reply",
+                                List.of("keyword"),
+                                List.of(),
+                                false
+                        )
+                )))
+        );
+
+        assertEquals("Eval candidate is not approved or does not exist: EVAL-CAND-404", exception.getMessage());
+    }
+
+    @Test
     void shouldRejectInvalidEvalCandidateStatus() {
-        MonitorController controller = new MonitorController(new MonitorService());
+        MonitorController controller = newController(new MonitorService());
 
         IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
@@ -150,7 +226,7 @@ class MonitorControllerTest {
 
     @Test
     void shouldRejectInvalidFeedbackRating() {
-        MonitorController controller = new MonitorController(new MonitorService());
+        MonitorController controller = newController(new MonitorService());
         FeedbackRequest request = new FeedbackRequest("conv-1", "USER-001", "LIKE", "");
 
         IllegalArgumentException exception = assertThrows(
@@ -159,5 +235,13 @@ class MonitorControllerTest {
         );
 
         assertEquals("Rating must be HELPFUL or UNHELPFUL", exception.getMessage());
+    }
+
+    private MonitorController newController(MonitorService service) {
+        Path evalFile = tempDir.resolve("response_quality_eval_cases.json");
+        return new MonitorController(
+                service,
+                new ResponseQualityEvalCaseFileService(new ObjectMapper(), evalFile.toString())
+        );
     }
 }

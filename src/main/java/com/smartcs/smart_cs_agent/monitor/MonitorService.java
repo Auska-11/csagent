@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.monitor;
 
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
 import com.smartcs.smart_cs_agent.agent.context.TraceEvent;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayDeque;
@@ -66,10 +67,21 @@ public class MonitorService {
     private long llmDurationSamples;
     private long lastUpdatedAt;
 
+    private final FeedbackEvalCandidateStore candidateStore;
     private final Deque<MonitorTurnSnapshot> recentTurns = new ArrayDeque<>();
     private final Deque<FeedbackRecord> recentFeedbacks = new ArrayDeque<>();
     private final Deque<FeedbackEvalCandidate> recentEvalCandidates = new ArrayDeque<>();
     private final Map<String, ToolAccumulator> toolStats = new LinkedHashMap<>();
+
+    public MonitorService() {
+        this(FeedbackEvalCandidateStore.disabled());
+    }
+
+    @Autowired
+    public MonitorService(FeedbackEvalCandidateStore candidateStore) {
+        this.candidateStore = candidateStore == null ? FeedbackEvalCandidateStore.disabled() : candidateStore;
+        restoreEvalCandidateState(this.candidateStore.load());
+    }
 
     /**
      * 记录一轮聊天响应。
@@ -123,37 +135,54 @@ public class MonitorService {
      */
     public synchronized MonitorSummary getSummary() {
         long successfulToolCallCount = Math.max(0, toolCallCount - failedToolCallCount);
+        double toolSuccessRate = rate(successfulToolCallCount, toolCallCount);
+        double llmFailureRate = rate(llmFailureCount, llmCallCount);
+        double helpfulFeedbackRate = rate(helpfulFeedbackCount, feedbackCount);
+        long averageToolDurationMs = average(totalToolDurationMs, toolDurationSamples);
+        long averageLlmDurationMs = average(totalLlmDurationMs, llmDurationSamples);
         List<MonitorTurnSnapshot> recent = new ArrayList<>(recentTurns);
         List<FeedbackRecord> feedbacks = new ArrayList<>(recentFeedbacks);
         List<FeedbackEvalCandidate> candidates = new ArrayList<>(recentEvalCandidates);
         List<ToolMonitorSnapshot> tools = buildToolStats();
+        long pendingEvalCandidateCount = countEvalCandidates(candidates, FeedbackEvalCandidateStatus.PENDING_REVIEW);
+        long approvedEvalCandidateCount = countEvalCandidates(candidates, FeedbackEvalCandidateStatus.APPROVED);
+        long rejectedEvalCandidateCount = countEvalCandidates(candidates, FeedbackEvalCandidateStatus.REJECTED);
+        Map<String, Long> issueCounts = buildEvalCandidateIssueCounts(candidates);
+        List<MonitorAlert> alerts = buildAlerts(
+                toolSuccessRate,
+                llmFailureRate,
+                helpfulFeedbackRate,
+                pendingEvalCandidateCount,
+                issueCounts
+        );
 
         return new MonitorSummary(
                 totalTurns,
                 toolCallCount,
                 successfulToolCallCount,
                 failedToolCallCount,
-                rate(successfulToolCallCount, toolCallCount),
+                toolSuccessRate,
                 llmCallCount,
                 llmFailureCount,
-                rate(llmFailureCount, llmCallCount),
+                llmFailureRate,
                 handoffCount,
                 feedbackCount,
                 helpfulFeedbackCount,
                 unhelpfulFeedbackCount,
-                rate(helpfulFeedbackCount, feedbackCount),
-                average(totalToolDurationMs, toolDurationSamples),
-                average(totalLlmDurationMs, llmDurationSamples),
+                helpfulFeedbackRate,
+                averageToolDurationMs,
+                averageLlmDurationMs,
                 lastUpdatedAt,
                 recent,
                 tools,
                 feedbacks,
                 evalCandidateCount,
-                countEvalCandidates(candidates, FeedbackEvalCandidateStatus.PENDING_REVIEW),
-                countEvalCandidates(candidates, FeedbackEvalCandidateStatus.APPROVED),
-                countEvalCandidates(candidates, FeedbackEvalCandidateStatus.REJECTED),
-                buildEvalCandidateIssueCounts(candidates),
-                candidates
+                pendingEvalCandidateCount,
+                approvedEvalCandidateCount,
+                rejectedEvalCandidateCount,
+                issueCounts,
+                candidates,
+                alerts
         );
     }
 
@@ -274,6 +303,7 @@ public class MonitorService {
         recentEvalCandidates.clear();
         recentEvalCandidates.addAll(updated);
         lastUpdatedAt = now;
+        persistEvalCandidateState();
         return reviewed;
     }
 
@@ -461,6 +491,158 @@ public class MonitorService {
         return counts;
     }
 
+    /**
+     * 根据当前 Monitor 指标生成风险告警。
+     *
+     * 【为什么这里先写固定阈值？】
+     * 第一版项目更重要的是把“线上指标 -> 风险判断 -> 处理建议”的闭环跑通。
+     * 阈值先写在代码里，测试最稳定、理解成本最低；后续如果接真实流量，再把这些阈值放到配置文件或数据库里。
+     */
+    private List<MonitorAlert> buildAlerts(double toolSuccessRate,
+                                           double llmFailureRate,
+                                           double helpfulFeedbackRate,
+                                           long pendingEvalCandidateCount,
+                                           Map<String, Long> issueCounts) {
+        List<MonitorAlert> alerts = new ArrayList<>();
+
+        if (toolCallCount >= 3 && toolSuccessRate < 0.8) {
+            alerts.add(new MonitorAlert(
+                    MonitorAlertSeverity.WARN,
+                    "TOOL_SUCCESS_RATE_LOW",
+                    "工具调用成功率偏低",
+                    "最近累计工具调用成功率为 " + percentText(toolSuccessRate) + "，可能影响订单查询、退货申请等关键流程。",
+                    "优先查看 Tool Stats 中失败率最高的工具，再检查参数校验、模拟数据和 MCP 调用链路。"
+            ));
+        }
+
+        if (llmCallCount >= 2 && llmFailureRate >= 0.5) {
+            MonitorAlertSeverity severity = llmFailureRate >= 0.8
+                    ? MonitorAlertSeverity.CRITICAL
+                    : MonitorAlertSeverity.WARN;
+            alerts.add(new MonitorAlert(
+                    severity,
+                    "LLM_FAILURE_RATE_HIGH",
+                    "LLM 调用失败率偏高",
+                    "最近累计 LLM 失败率为 " + percentText(llmFailureRate) + "，Agent 可能频繁走降级回复。",
+                    "检查模型配置、API Key、网络状态和降级策略是否符合预期。"
+            ));
+        }
+
+        if (feedbackCount >= 3 && helpfulFeedbackRate < 0.6) {
+            alerts.add(new MonitorAlert(
+                    MonitorAlertSeverity.WARN,
+                    "HELPFUL_FEEDBACK_RATE_LOW",
+                    "用户有用反馈比例偏低",
+                    "当前有用反馈比例为 " + percentText(helpfulFeedbackRate) + "，说明回复质量可能没有稳定满足用户预期。",
+                    "结合 Recent Feedback 和 Eval Candidates，优先补充缺失信息、政策边界和回复模板。"
+            ));
+        }
+
+        long unsafePromiseCount = countIssue(issueCounts, FeedbackIssueType.UNSAFE_PROMISE);
+        if (unsafePromiseCount > 0) {
+            alerts.add(new MonitorAlert(
+                    MonitorAlertSeverity.CRITICAL,
+                    "UNSAFE_PROMISE_DETECTED",
+                    "发现不安全承诺反馈",
+                    "候选样本中存在 " + unsafePromiseCount + " 条不安全承诺问题，例如保证退款、保证赔偿等。",
+                    "把相关样本优先加入 Eval，强化提示词里的政策边界和禁止承诺规则。"
+            ));
+        }
+
+        long internalLeakCount = countIssue(issueCounts, FeedbackIssueType.TOOL_OR_INTERNAL_LEAK);
+        if (internalLeakCount > 0) {
+            alerts.add(new MonitorAlert(
+                    MonitorAlertSeverity.CRITICAL,
+                    "INTERNAL_DETAIL_LEAK_DETECTED",
+                    "发现内部实现泄露反馈",
+                    "候选样本中存在 " + internalLeakCount + " 条内部工具或 Trace 泄露问题。",
+                    "检查最终回复过滤逻辑，避免把 tool、trace、debug 等内部词泄露给用户。"
+            ));
+        }
+
+        if (pendingEvalCandidateCount >= 5) {
+            alerts.add(new MonitorAlert(
+                    MonitorAlertSeverity.WARN,
+                    "EVAL_CANDIDATE_BACKLOG",
+                    "待审核评测候选样本较多",
+                    "当前仍有 " + pendingEvalCandidateCount + " 条负反馈候选样本等待人工审核。",
+                    "建议定期审核候选样本，把高价值问题沉淀到正式 Eval case，避免反馈闭环断掉。"
+            ));
+        }
+
+        return alerts;
+    }
+
+    private long countIssue(Map<String, Long> issueCounts, FeedbackIssueType issueType) {
+        if (issueCounts == null || issueType == null) {
+            return 0;
+        }
+        return issueCounts.getOrDefault(issueType.name(), 0L);
+    }
+
+    /**
+     * 从本地存储恢复 Eval 候选样本池。
+     *
+     * 这里只恢复“候选样本池”相关数据，不恢复工具调用数、LLM 调用数等在线指标。
+     * 原因是那些指标更像运行期监控数据，项目重启后重新统计即可；候选样本则是需要人工审核的质量资产，不能丢。
+     */
+    private void restoreEvalCandidateState(FeedbackEvalCandidateStore.State state) {
+        if (state == null) {
+            return;
+        }
+
+        recentEvalCandidates.clear();
+        for (FeedbackEvalCandidate candidate : state.getCandidates()) {
+            recentEvalCandidates.addLast(candidate);
+            if (recentEvalCandidates.size() >= RECENT_EVAL_CANDIDATE_LIMIT) {
+                break;
+            }
+        }
+
+        feedbackSequence = Math.max(state.getFeedbackSequence(), maxFeedbackSequence(state.getCandidates()));
+        evalCandidateSequence = Math.max(state.getEvalCandidateSequence(), maxEvalCandidateSequence(state.getCandidates()));
+        evalCandidateCount = Math.max(state.getEvalCandidateCount(), recentEvalCandidates.size());
+        if (!recentEvalCandidates.isEmpty()) {
+            lastUpdatedAt = System.currentTimeMillis();
+        }
+    }
+
+    private void persistEvalCandidateState() {
+        candidateStore.save(new FeedbackEvalCandidateStore.State(
+                new ArrayList<>(recentEvalCandidates),
+                feedbackSequence,
+                evalCandidateSequence,
+                evalCandidateCount
+        ));
+    }
+
+    private long maxFeedbackSequence(List<FeedbackEvalCandidate> candidates) {
+        long max = 0;
+        for (FeedbackEvalCandidate candidate : candidates) {
+            max = Math.max(max, sequenceFromId(candidate.getFeedbackId(), "FDB-"));
+        }
+        return max;
+    }
+
+    private long maxEvalCandidateSequence(List<FeedbackEvalCandidate> candidates) {
+        long max = 0;
+        for (FeedbackEvalCandidate candidate : candidates) {
+            max = Math.max(max, sequenceFromId(candidate.getCandidateId(), "EVAL-CAND-"));
+        }
+        return max;
+    }
+
+    private long sequenceFromId(String id, String prefix) {
+        if (id == null || !id.startsWith(prefix)) {
+            return 0;
+        }
+        try {
+            return Long.parseLong(id.substring(prefix.length()));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
     private FeedbackIssueType classifyFeedbackIssue(FeedbackRecord feedback) {
         String reason = feedback.getReason() == null ? "" : feedback.getReason();
         String assistantReply = feedback.getAssistantReply() == null ? "" : feedback.getAssistantReply();
@@ -512,6 +694,10 @@ public class MonitorService {
         return Math.round(value * 10_000.0) / 10_000.0;
     }
 
+    private String percentText(double value) {
+        return Math.round(value * 10_000.0) / 100.0 + "%";
+    }
+
     private String nextFeedbackId() {
         feedbackSequence++;
         return "FDB-" + String.format("%06d", feedbackSequence);
@@ -541,6 +727,7 @@ public class MonitorService {
         while (recentEvalCandidates.size() > RECENT_EVAL_CANDIDATE_LIMIT) {
             recentEvalCandidates.removeLast();
         }
+        persistEvalCandidateState();
     }
 
     private FeedbackEvalCaseDraft toEvalCaseDraft(FeedbackEvalCandidate candidate, long generatedAt) {

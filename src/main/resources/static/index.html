@@ -935,8 +935,11 @@
                 <button class="small-action" id="refreshMonitorBtn">刷新指标</button>
                 <button class="small-action" id="copyMonitorBtn">复制指标</button>
                 <button class="small-action" id="exportEvalDraftBtn">导出样本</button>
+                <button class="small-action" id="mergeEvalCaseBtn">合并样本</button>
             </div>
             <div class="metric-list" id="monitorMetrics"></div>
+            <div class="eval-section-title">Alerts</div>
+            <div class="eval-list" id="monitorAlertList"></div>
             <div class="eval-section-title">Tool Stats</div>
             <div class="eval-list" id="toolStatsList"></div>
             <div class="eval-section-title">Recent Turns</div>
@@ -1021,6 +1024,7 @@
         summaryMemoryList: document.getElementById('summaryMemoryList'),
         shortTermMemoryList: document.getElementById('shortTermMemoryList'),
         monitorMetrics: document.getElementById('monitorMetrics'),
+        monitorAlertList: document.getElementById('monitorAlertList'),
         toolStatsList: document.getElementById('toolStatsList'),
         monitorList: document.getElementById('monitorList'),
         feedbackList: document.getElementById('feedbackList'),
@@ -1036,6 +1040,7 @@
         refreshMonitorBtn: document.getElementById('refreshMonitorBtn'),
         copyMonitorBtn: document.getElementById('copyMonitorBtn'),
         exportEvalDraftBtn: document.getElementById('exportEvalDraftBtn'),
+        mergeEvalCaseBtn: document.getElementById('mergeEvalCaseBtn'),
         refreshMemoryBtn: document.getElementById('refreshMemoryBtn'),
         copyMemoryBtn: document.getElementById('copyMemoryBtn'),
         clearConversationMemoryBtn: document.getElementById('clearConversationMemoryBtn'),
@@ -1091,6 +1096,7 @@
         els.refreshMonitorBtn.addEventListener('click', loadMonitorSummary);
         els.copyMonitorBtn.addEventListener('click', copyMonitorSummary);
         els.exportEvalDraftBtn.addEventListener('click', exportEvalCaseDrafts);
+        els.mergeEvalCaseBtn.addEventListener('click', mergeEvalCaseDrafts);
         els.monitorPanel.addEventListener('click', event => {
             const button = event.target.closest('.candidate-review-button');
             if (button) {
@@ -1755,6 +1761,7 @@
     function renderMonitorSummary(errorMessage) {
         if (errorMessage) {
             els.monitorMetrics.innerHTML = '';
+            els.monitorAlertList.innerHTML = '';
             els.toolStatsList.innerHTML = '';
             els.monitorList.innerHTML = `<div class="tool-row"><div class="row-title">${escapeHtml(errorMessage)}</div></div>`;
             els.feedbackList.innerHTML = '';
@@ -1793,10 +1800,38 @@
             </div>
         `).join('');
 
+        renderMonitorAlerts(summary.alerts || []);
         renderMonitorToolStats(summary.toolStats || []);
         renderMonitorTurns(summary.recentTurns || []);
         renderMonitorFeedback(summary.recentFeedbacks || []);
         renderMonitorEvalCandidates(summary.recentEvalCandidates || []);
+    }
+
+    function renderMonitorAlerts(alerts) {
+        if (!alerts.length) {
+            els.monitorAlertList.innerHTML = `
+                <div class="tool-row">
+                    <div class="row-title">No alerts</div>
+                    <div class="row-subtitle">当前 Monitor 指标没有触发风险告警，可以继续观察工具、LLM 和用户反馈表现。</div>
+                </div>
+            `;
+            return;
+        }
+
+        els.monitorAlertList.innerHTML = alerts.map(alert => {
+            const severity = alert.severity || 'INFO';
+            return `
+                <div class="tool-row">
+                    <div class="row-head">
+                        <div class="row-title">${escapeHtml(alert.title || alert.code || 'Monitor Alert')}</div>
+                        <span class="badge ${alertSeverityBadge(severity)}">${escapeHtml(severity)}</span>
+                    </div>
+                    <div class="row-subtitle">${escapeHtml(alert.code || '-')}</div>
+                    <div class="tool-contract">${escapeHtml(alert.message || '')}</div>
+                    <div class="tool-contract">Suggestion: ${escapeHtml(alert.suggestion || '-')}</div>
+                </div>
+            `;
+        }).join('');
     }
 
     function renderMonitorToolStats(toolStats) {
@@ -2155,6 +2190,71 @@
         }
     }
 
+    async function mergeEvalCaseDrafts() {
+        try {
+            const response = await fetch('/api/monitor/feedback/candidates/export');
+            const payload = await readJson(response);
+            if (!response.ok) {
+                appendSystemMessage(payload.message || 'Eval 样本草稿加载失败。');
+                return;
+            }
+
+            const drafts = Array.isArray(payload) ? payload : [];
+            if (!drafts.length) {
+                appendSystemMessage('当前没有 APPROVED 的 Eval 样本草稿可合并。');
+                return;
+            }
+
+            const mergeRequest = {
+                cases: drafts.map(draft => ({
+                    sourceCandidateId: draft.sourceCandidateId,
+                    id: draft.id,
+                    candidateReply: draft.candidateReply || '',
+                    requiredKeywords: draft.requiredKeywords || [],
+                    forbiddenKeywords: draft.forbiddenKeywords || [],
+                    expectedPass: draft.expectedPass === true
+                }))
+            };
+
+            const edited = window.prompt(
+                    '请补齐 requiredKeywords / forbiddenKeywords 后再合并到正式评测集：',
+                    JSON.stringify(mergeRequest, null, 2)
+            );
+            if (!edited) {
+                return;
+            }
+
+            let requestBody;
+            try {
+                requestBody = JSON.parse(edited);
+            } catch (error) {
+                appendSystemMessage('合并样本失败：JSON 格式不正确。');
+                return;
+            }
+
+            const mergeResponse = await fetch('/api/monitor/feedback/candidates/merge', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(requestBody)
+            });
+            const mergePayload = await readJson(mergeResponse);
+            if (!mergeResponse.ok) {
+                appendSystemMessage(mergePayload.message || 'Eval 样本合并失败。');
+                return;
+            }
+
+            const result = mergePayload.result || {};
+            appendSystemMessage(
+                    'Eval 样本合并完成：新增 ' + (result.mergedCount ?? 0)
+                    + ' 条，当前共 ' + (result.afterCount ?? 0)
+                    + ' 条，重复跳过 ' + ((result.skippedDuplicateIds || []).length) + ' 条。'
+            );
+            await loadEvalReports();
+        } catch (error) {
+            appendSystemMessage('Eval 样本合并异常：' + error.message);
+        }
+    }
+
     async function submitFeedback(messageId, rating) {
         if (!messageId || !rating) {
             return;
@@ -2300,6 +2400,16 @@
             return 'error';
         }
         return 'warn';
+    }
+
+    function alertSeverityBadge(severity) {
+        if (severity === 'CRITICAL') {
+            return 'error';
+        }
+        if (severity === 'WARN') {
+            return 'warn';
+        }
+        return 'tool';
     }
 
     function findTopIssue(issueCounts) {

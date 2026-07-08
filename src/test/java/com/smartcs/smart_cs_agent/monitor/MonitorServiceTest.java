@@ -1,13 +1,17 @@
 package com.smartcs.smart_cs_agent.monitor;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
 import com.smartcs.smart_cs_agent.agent.context.TraceEvent;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * MonitorService 单元测试。
@@ -16,6 +20,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * 这样可以专注验证“Trace -> Monitor 指标”的转换逻辑。
  */
 class MonitorServiceTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     void shouldAggregateMetricsFromTraceEvents() {
@@ -26,25 +33,25 @@ class MonitorServiceTest {
                 "USER-001",
                 "ok",
                 List.of(
-                        new TraceEvent("tool_observed", 1, "订单工具成功", Map.of(
+                        new TraceEvent("tool_observed", 1, "order tool success", Map.of(
                                 "capability", "order_lookup",
                                 "success", true,
                                 "durationMs", 20
                         )),
-                        new TraceEvent("tool_observed", 2, "退货工具失败", Map.of(
+                        new TraceEvent("tool_observed", 2, "return tool failed", Map.of(
                                 "capability", "return_apply",
                                 "success", false,
                                 "durationMs", 10
                         )),
-                        new TraceEvent("llm_called", 3, "调用 LLM", Map.of()),
-                        new TraceEvent("llm_failed", 3, "LLM 失败", Map.of(
+                        new TraceEvent("llm_called", 3, "call llm", Map.of()),
+                        new TraceEvent("llm_failed", 3, "llm failed", Map.of(
                                 "durationMs", 100
                         )),
-                        new TraceEvent("llm_observed", 3, "LLM 降级结果", Map.of(
+                        new TraceEvent("llm_observed", 3, "llm fallback result", Map.of(
                                 "durationMs", 120
                         )),
-                        new TraceEvent("handoff_requested", 4, "请求转人工", Map.of()),
-                        new TraceEvent("handoff_created", 4, "创建人工工单", Map.of(
+                        new TraceEvent("handoff_requested", 4, "request handoff", Map.of()),
+                        new TraceEvent("handoff_created", 4, "create handoff ticket", Map.of(
                                 "success", true,
                                 "durationMs", 5
                         ))
@@ -100,13 +107,13 @@ class MonitorServiceTest {
                 "conv-1",
                 "USER-001",
                 FeedbackRating.HELPFUL,
-                "回答解决了我的问题"
+                "answer helped"
         );
         FeedbackRecord unhelpful = service.recordFeedback(
                 "conv-1",
                 "USER-001",
                 FeedbackRating.UNHELPFUL,
-                "没有说明退货时效"
+                "\u6ca1\u6709\u8bf4\u660e\u9000\u8d27\u65f6\u6548"
         );
 
         MonitorSummary summary = service.getSummary();
@@ -133,15 +140,15 @@ class MonitorServiceTest {
                 "conv-1",
                 "USER-001",
                 FeedbackRating.HELPFUL,
-                "回答清楚",
-                "您的订单已经发货"
+                "answer clear",
+                "order shipped"
         );
         service.recordFeedback(
                 "conv-1",
                 "USER-001",
                 FeedbackRating.UNHELPFUL,
-                "没有说明退货时效",
-                "可以为您申请退货"
+                "\u6ca1\u6709\u8bf4\u660e\u9000\u8d27\u65f6\u6548",
+                "we can submit a return request"
         );
 
         MonitorSummary summary = service.getSummary();
@@ -155,8 +162,8 @@ class MonitorServiceTest {
         assertEquals("response_quality_candidate", candidate.getSuggestedEvalType());
         assertEquals(FeedbackIssueType.MISSING_KEY_INFO, candidate.getIssueType());
         assertEquals(FeedbackEvalCandidateStatus.PENDING_REVIEW, candidate.getStatus());
-        assertEquals("没有说明退货时效", candidate.getReason());
-        assertEquals("可以为您申请退货", candidate.getAssistantReply());
+        assertEquals("\u6ca1\u6709\u8bf4\u660e\u9000\u8d27\u65f6\u6548", candidate.getReason());
+        assertEquals("we can submit a return request", candidate.getAssistantReply());
     }
 
     @Test
@@ -166,18 +173,18 @@ class MonitorServiceTest {
                 "conv-1",
                 "USER-001",
                 FeedbackRating.UNHELPFUL,
-                "回答缺少关键信息",
-                "可以为您处理"
+                "\u56de\u7b54\u7f3a\u5c11\u5173\u952e\u4fe1\u606f",
+                "we can handle it"
         );
 
         FeedbackEvalCandidate reviewed = service.reviewFeedbackEvalCandidate(
                 "EVAL-CAND-000001",
                 FeedbackEvalCandidateStatus.APPROVED,
-                "信息完整，可以补进回复质量评测"
+                "good negative sample"
         );
 
         assertEquals(FeedbackEvalCandidateStatus.APPROVED, reviewed.getStatus());
-        assertEquals("信息完整，可以补进回复质量评测", reviewed.getReviewNote());
+        assertEquals("good negative sample", reviewed.getReviewNote());
         assertEquals(reviewed.getStatus(), service.getFeedbackEvalCandidates().get(0).getStatus());
         assertEquals(0, service.getSummary().getPendingEvalCandidateCount());
         assertEquals(1, service.getSummary().getApprovedEvalCandidateCount());
@@ -191,26 +198,26 @@ class MonitorServiceTest {
                 "conv-1",
                 "USER-001",
                 FeedbackRating.UNHELPFUL,
-                "回答缺少退货时效",
-                "可以为您申请退货"
+                "\u56de\u7b54\u7f3a\u5c11\u9000\u8d27\u65f6\u6548",
+                "we can submit a return request"
         );
         service.recordFeedback(
                 "conv-2",
                 "USER-002",
                 FeedbackRating.UNHELPFUL,
-                "用户误点，不适合作为样本",
-                "您的订单已经发货"
+                "user clicked by mistake",
+                "order shipped"
         );
 
         service.reviewFeedbackEvalCandidate(
                 "EVAL-CAND-000001",
                 FeedbackEvalCandidateStatus.APPROVED,
-                "可以作为负例"
+                "can be used as a negative example"
         );
         service.reviewFeedbackEvalCandidate(
                 "EVAL-CAND-000002",
                 FeedbackEvalCandidateStatus.REJECTED,
-                "误点，不导出"
+                "not exported"
         );
 
         List<FeedbackEvalCaseDraft> drafts = service.exportApprovedEvalCaseDrafts();
@@ -218,10 +225,10 @@ class MonitorServiceTest {
         assertEquals(1, drafts.size());
         assertEquals("feedback_eval_cand_000001", drafts.get(0).getId());
         assertEquals("EVAL-CAND-000001", drafts.get(0).getSourceCandidateId());
-        assertEquals("可以为您申请退货", drafts.get(0).getCandidateReply());
+        assertEquals("we can submit a return request", drafts.get(0).getCandidateReply());
         assertEquals(FeedbackIssueType.MISSING_KEY_INFO, drafts.get(0).getIssueType());
         assertEquals(false, drafts.get(0).isExpectedPass());
-        assertEquals("可以作为负例", drafts.get(0).getReviewNote());
+        assertEquals("can be used as a negative example", drafts.get(0).getReviewNote());
         assertEquals(0, service.getSummary().getPendingEvalCandidateCount());
         assertEquals(1, service.getSummary().getApprovedEvalCandidateCount());
         assertEquals(1, service.getSummary().getRejectedEvalCandidateCount());
@@ -235,22 +242,22 @@ class MonitorServiceTest {
                 "conv-1",
                 "USER-001",
                 FeedbackRating.UNHELPFUL,
-                "回复承诺一定可以退款",
-                "一定可以退款，请放心"
+                "\u56de\u590d\u627f\u8bfa\u4e00\u5b9a\u53ef\u4ee5\u9000\u6b3e",
+                "\u4e00\u5b9a\u53ef\u4ee5\u9000\u6b3e"
         );
         service.recordFeedback(
                 "conv-2",
                 "USER-002",
                 FeedbackRating.UNHELPFUL,
-                "回复里出现内部工具调用",
-                "Tool order_lookup 返回了订单信息"
+                "\u56de\u590d\u91cc\u51fa\u73b0\u5185\u90e8\u5de5\u5177\u8c03\u7528",
+                "Tool order_lookup returned order data"
         );
         service.recordFeedback(
                 "conv-3",
                 "USER-003",
                 FeedbackRating.UNHELPFUL,
-                "语气太敷衍，体验不好",
-                "自己看规则"
+                "\u8bed\u6c14\u592a\u6577\u884d\uff0c\u4f53\u9a8c\u4e0d\u597d",
+                "read the policy yourself"
         );
 
         MonitorSummary summary = service.getSummary();
@@ -263,10 +270,132 @@ class MonitorServiceTest {
         assertEquals(1, summary.getEvalCandidateIssueCounts().get("TONE_OR_EXPERIENCE"));
     }
 
+    @Test
+    void shouldBuildMonitorAlertsFromRiskSignals() {
+        MonitorService service = new MonitorService();
+
+        service.recordTurn(new ChatResponse(
+                "conv-risk",
+                "USER-001",
+                "fallback",
+                List.of(
+                        new TraceEvent("tool_observed", 1, "order tool failed", Map.of(
+                                "capability", "order_lookup",
+                                "success", false,
+                                "durationMs", 20
+                        )),
+                        new TraceEvent("tool_observed", 2, "return tool failed", Map.of(
+                                "capability", "return_apply",
+                                "success", false,
+                                "durationMs", 30
+                        )),
+                        new TraceEvent("tool_observed", 3, "product tool failed", Map.of(
+                                "capability", "product_search",
+                                "success", false,
+                                "durationMs", 10
+                        )),
+                        new TraceEvent("llm_called", 4, "first llm call", Map.of()),
+                        new TraceEvent("llm_failed", 4, "first llm failed", Map.of()),
+                        new TraceEvent("llm_called", 5, "second llm call", Map.of()),
+                        new TraceEvent("llm_failed", 5, "second llm failed", Map.of())
+                )
+        ));
+
+        service.recordFeedback(
+                "conv-risk",
+                "USER-001",
+                FeedbackRating.UNHELPFUL,
+                "\u56de\u590d\u627f\u8bfa\u4e00\u5b9a\u53ef\u4ee5\u9000\u6b3e",
+                "\u4e00\u5b9a\u53ef\u4ee5\u9000\u6b3e"
+        );
+        service.recordFeedback(
+                "conv-risk",
+                "USER-001",
+                FeedbackRating.UNHELPFUL,
+                "\u56de\u590d\u91cc\u51fa\u73b0\u4e86\u5185\u90e8\u5de5\u5177\u8c03\u7528",
+                "Tool order_lookup returned order data"
+        );
+        service.recordFeedback(
+                "conv-ok",
+                "USER-002",
+                FeedbackRating.HELPFUL,
+                "answer helped"
+        );
+
+        MonitorSummary summary = service.getSummary();
+        List<String> alertCodes = summary.getAlerts()
+                .stream()
+                .map(MonitorAlert::getCode)
+                .toList();
+
+        assertTrue(alertCodes.contains("TOOL_SUCCESS_RATE_LOW"));
+        assertTrue(alertCodes.contains("LLM_FAILURE_RATE_HIGH"));
+        assertTrue(alertCodes.contains("HELPFUL_FEEDBACK_RATE_LOW"));
+        assertTrue(alertCodes.contains("UNSAFE_PROMISE_DETECTED"));
+        assertTrue(alertCodes.contains("INTERNAL_DETAIL_LEAK_DETECTED"));
+        assertEquals(MonitorAlertSeverity.CRITICAL, findAlert(summary, "LLM_FAILURE_RATE_HIGH").getSeverity());
+        assertEquals(MonitorAlertSeverity.CRITICAL, findAlert(summary, "UNSAFE_PROMISE_DETECTED").getSeverity());
+        assertEquals(MonitorAlertSeverity.CRITICAL, findAlert(summary, "INTERNAL_DETAIL_LEAK_DETECTED").getSeverity());
+    }
+
+    @Test
+    void shouldPersistAndRestoreFeedbackEvalCandidatesAfterRestart() {
+        Path storageFile = tempDir.resolve("feedback-eval-candidates.json");
+        FeedbackEvalCandidateStore firstStore = new FeedbackEvalCandidateStore(storageFile, new ObjectMapper());
+        MonitorService firstService = new MonitorService(firstStore);
+
+        firstService.recordFeedback(
+                "conv-persist",
+                "USER-001",
+                FeedbackRating.UNHELPFUL,
+                "missing return timeline",
+                "we can submit a return request"
+        );
+        firstService.reviewFeedbackEvalCandidate(
+                "EVAL-CAND-000001",
+                FeedbackEvalCandidateStatus.APPROVED,
+                "review note should survive restart"
+        );
+
+        FeedbackEvalCandidateStore secondStore = new FeedbackEvalCandidateStore(storageFile, new ObjectMapper());
+        MonitorService secondService = new MonitorService(secondStore);
+
+        MonitorSummary restoredSummary = secondService.getSummary();
+        FeedbackEvalCandidate restoredCandidate = secondService.getFeedbackEvalCandidates().get(0);
+
+        assertEquals(1, restoredSummary.getEvalCandidateCount());
+        assertEquals(0, restoredSummary.getPendingEvalCandidateCount());
+        assertEquals(1, restoredSummary.getApprovedEvalCandidateCount());
+        assertEquals("EVAL-CAND-000001", restoredCandidate.getCandidateId());
+        assertEquals(FeedbackEvalCandidateStatus.APPROVED, restoredCandidate.getStatus());
+        assertEquals("review note should survive restart", restoredCandidate.getReviewNote());
+
+        secondService.recordFeedback(
+                "conv-persist-2",
+                "USER-002",
+                FeedbackRating.UNHELPFUL,
+                "internal tool leaked",
+                "Tool order_lookup returned data"
+        );
+
+        FeedbackEvalCandidate newestCandidate = secondService.getFeedbackEvalCandidates().get(0);
+        assertEquals("EVAL-CAND-000002", newestCandidate.getCandidateId());
+        assertEquals("FDB-000002", newestCandidate.getFeedbackId());
+        assertEquals(2, secondService.getSummary().getEvalCandidateCount());
+    }
+
     private ToolMonitorSnapshot findTool(MonitorSummary summary, String toolName) {
         return summary.getToolStats()
                 .stream()
                 .filter(tool -> tool.getToolName().equals(toolName))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private MonitorAlert findAlert(MonitorSummary summary, String code) {
+        return summary.getAlerts()
+                .stream()
+                .filter(alert -> alert.getCode().equals(code))
                 .findFirst()
                 .orElseThrow();
     }

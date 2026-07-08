@@ -38,9 +38,20 @@ class LlmAsJudgeEvaluationTest {
         List<LlmJudgeEvalCase> cases = loadCases();
         LlmJudgeReport report = new LlmJudgeReport();
         List<String> failures = new ArrayList<>();
+        boolean realJudgeEnabled = OptionalRealJudgeModelFactory.enabled();
+        boolean assertExpectation = !realJudgeEnabled || OptionalRealJudgeModelFactory.shouldAssertExpectation();
+        LlmJudgeEvaluator realJudgeEvaluator = realJudgeEnabled
+                ? new LlmJudgeEvaluator(OptionalRealJudgeModelFactory.create())
+                : null;
 
         for (LlmJudgeEvalCase evalCase : cases) {
-            LlmJudgeEvaluator evaluator = new LlmJudgeEvaluator(new FakeJudgeModel(evalCase.fakeJudgeJson));
+            /*
+             * 默认使用 Fake Judge：测试稳定、速度快、不会消耗 API。
+             * 显式打开真实 Judge 后，才把同一组评测样本交给真实模型打分。
+             */
+            LlmJudgeEvaluator evaluator = realJudgeEnabled
+                    ? realJudgeEvaluator
+                    : new LlmJudgeEvaluator(new FakeJudgeModel(evalCase.fakeJudgeJson));
             LlmJudgeResult result = evaluator.judge(evalCase);
             report.record(evalCase, result);
 
@@ -51,7 +62,10 @@ class LlmAsJudgeEvaluationTest {
 
         System.out.println(report.toText());
         report.writeJson();
-        assertTrue(failures.isEmpty(), String.join("\n", failures));
+        if (!failures.isEmpty() && !assertExpectation) {
+            System.out.println("真实 Judge 已运行，但当前配置为只生成报告，不因为期望不一致而失败：\n" + String.join("\n", failures));
+        }
+        assertTrue(!assertExpectation || failures.isEmpty(), String.join("\n", failures));
     }
 
     @Test
@@ -164,6 +178,9 @@ class LlmAsJudgeEvaluationTest {
 
         private void writeJson() throws IOException {
             Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("judgeMode", OptionalRealJudgeModelFactory.judgeMode());
+            summary.put("assertExpectation", !OptionalRealJudgeModelFactory.enabled()
+                    || OptionalRealJudgeModelFactory.shouldAssertExpectation());
             summary.put("total", total);
             summary.put("passed", passed);
             summary.put("passRate", EvalReportWriter.rate(passed, total));

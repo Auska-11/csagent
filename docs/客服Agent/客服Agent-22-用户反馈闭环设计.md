@@ -20,9 +20,12 @@
   -> POST /api/monitor/feedback
   -> MonitorService 记录反馈
   -> 无用反馈生成 Eval 候选样本
+  -> 本地 JSON 保存候选样本
   -> 人工审核候选样本
   -> 审核通过后导出 Eval case 草稿
+  -> 人工补齐断言后合并正式评测集
   -> MonitorSummary 聚合满意度
+  -> MonitorSummary 生成风险告警
   -> 前端 Monitor 面板展示最近反馈和候选样本
 ```
 
@@ -129,6 +132,22 @@ Content-Type: application/json
 GET /api/monitor/feedback/candidates/export
 ```
 
+人工补齐断言后，可以继续合并到正式回复质量评测文件：
+
+```http
+POST /api/monitor/feedback/candidates/merge
+```
+
+合并接口要求样本必须来自 `APPROVED` 候选池，并且请求中必须包含可执行的评测断言。这样可以避免把“用户觉得无用”这种弱信号直接写进正式回归测试。
+
+Eval 候选样本默认持久化到：
+
+```text
+data/feedback-eval-candidates.json
+```
+
+部署时可以通过 `SMARTCS_MONITOR_EVAL_CANDIDATES_FILE` 修改保存路径。`data/` 已经加入 `.gitignore`，避免本地演示数据进入 Git 仓库。
+
 ## 3. 为什么放在 MonitorService
 
 反馈发生在 Agent 已经回答之后。
@@ -159,8 +178,9 @@ GET /api/monitor/feedback/candidates/export
 - `rejectedEvalCandidateCount`：当前候选池中已拒绝样本数。
 - `evalCandidateIssueCounts`：按负反馈问题类型聚合的候选样本数量。
 - `recentEvalCandidates`：最近 10 条由无用反馈生成的候选样本。
+- `alerts`：基于反馈和运行指标生成的风险告警，例如有用反馈率偏低、不安全承诺、内部实现泄露和待审核样本积压。
 
-第一版只保留内存中的最近反馈，后续可以替换为数据库或日志平台。
+第一版中，最近反馈列表仍然只保留在内存里，用来服务前端调试面板；Eval 候选样本已经通过本地 JSON 文件持久化，避免服务重启后丢失待审核质量样本。后续如果接入 MySQL 或日志平台，可以优先替换 `FeedbackEvalCandidateStore`。
 
 ## 5. 前端交互
 
@@ -182,6 +202,7 @@ POST /api/monitor/feedback
 - Monitor 面板展示最近反馈列表。
 - 如果点击无用，Monitor 面板展示 Eval Candidates 待审核样本。
 - Monitor 面板展示 `Top Issue`，快速判断当前负反馈主要集中在哪类问题。
+- Monitor 面板展示 `Alerts`，把低有用反馈率、不安全承诺和内部工具泄露这类问题直接变成可处理的风险提示。
 - 候选样本可以点击 `通过` 或 `拒绝`，审核后展示状态和备注。
 - 点击 `导出样本` 可以复制所有审核通过样本的 JSON 草稿。
 
@@ -203,8 +224,11 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 - 能统计反馈总数、有用数、无用数和有用率。
 - 能把 `UNHELPFUL` 反馈生成 Eval 候选样本。
 - 能把候选样本归类为缺少关键信息、危险承诺、政策不清楚、内部工具泄露、语气体验等问题类型。
+- 能根据负反馈类型和有用反馈率生成 Monitor 告警。
 - 能审核 Eval 候选样本状态。
 - 能导出审核通过的 Eval case 草稿。
+- 能把 Eval 候选样本保存到本地 JSON 文件，并在服务重启后恢复。
+- 能把人工补齐断言后的草稿合并进正式 `response_quality_eval_cases.json`。
 - Controller 能接收反馈请求并写入 Monitor。
 - Controller 能返回候选样本列表。
 - Controller 能拒绝非法审核状态。
@@ -216,7 +240,7 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 
 可以这样讲：
 
-> 我把 Agent 的质量闭环拆成离线 Eval 和在线 Monitor 两部分。Eval 用固定测试集验证版本质量；Monitor 基于真实请求 Trace 统计工具成功率、LLM 失败率和转人工次数。后面我又加了用户反馈闭环，用户可以对每次回复点有用或无用，反馈会进入 MonitorSummary，形成满意度指标和最近反馈列表。对于无用反馈，我会额外生成 Eval 候选样本，保存反馈原因和被评价的助手回复，再通过审核接口标记为 APPROVED 或 REJECTED。审核通过的样本可以导出为 Eval case 草稿，由开发者补齐断言后加入正式评测集。这样项目不只是能回答，还能持续收集“用户是否觉得回答有用”的信号，并把真实问题沉淀成回归测试资产。
+> 我把 Agent 的质量闭环拆成离线 Eval 和在线 Monitor 两部分。Eval 用固定测试集验证版本质量；Monitor 基于真实请求 Trace 统计工具成功率、LLM 失败率和转人工次数。后面我又加了用户反馈闭环，用户可以对每次回复点有用或无用，反馈会进入 MonitorSummary，形成满意度指标和最近反馈列表。对于无用反馈，我会额外生成 Eval 候选样本，保存反馈原因和被评价的助手回复，再通过审核接口标记为 APPROVED 或 REJECTED。候选样本会保存到本地 JSON 文件，服务重启后不会丢失；后续升级数据库时也只需要替换 Store 层。审核通过的样本可以导出为 Eval case 草稿，开发者补齐断言后还能通过合并接口进入正式 response_quality_eval_cases.json。同时 Monitor 会把低有用反馈率、不安全承诺、内部实现泄露等问题生成结构化风险告警。这样项目不只是能回答，还能持续收集“用户是否觉得回答有用”的信号，把真实问题沉淀成回归测试资产，并提示开发者优先处理高风险问题。
 
 ## 8. 后续优化
 
@@ -230,6 +254,7 @@ src/test/java/com/smartcs/smart_cs_agent/controller/MonitorControllerTest.java
 - 将负反馈样本自动导出为 Eval 候选样本。已完成第一版。
 - 增加候选样本人工审核接口。已完成第一版。
 - 将审核通过的候选样本导出为 Eval case 草稿。已完成第一版。
-- 将 Eval case 草稿半自动合并到正式评测文件。
-- 持久化到 MySQL 或日志系统，支持跨服务重启保留。
-- 当某类意图负反馈升高时，触发人工复核或降级策略。
+- 将 Eval 候选样本持久化到本地 JSON 文件，支持跨服务重启保留。已完成第一版。
+- 将 Eval case 草稿半自动合并到正式评测文件。已完成第一版。
+- 将反馈记录和候选样本升级到 MySQL 或日志系统，支持更完整的查询、分页和长期分析。
+- 当某类意图负反馈升高时，触发人工复核或降级策略。当前已先完成基于反馈问题类型的风险告警，自动降级留到后续。

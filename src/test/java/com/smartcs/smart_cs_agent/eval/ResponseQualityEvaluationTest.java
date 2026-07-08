@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -52,6 +54,16 @@ class ResponseQualityEvaluationTest {
 
     private List<ResponseQualityCase> loadCases() throws IOException {
         ObjectMapper objectMapper = new ObjectMapper();
+        String overrideFile = System.getProperty("smartcs.eval.response-quality-file");
+        if (overrideFile != null && !overrideFile.isBlank()) {
+            Path path = Path.of(overrideFile);
+            if (!Files.exists(path)) {
+                throw new IllegalStateException("Response quality eval override file does not exist: " + path);
+            }
+            return objectMapper.readValue(path.toFile(), new TypeReference<List<ResponseQualityCase>>() {
+            });
+        }
+
         try (InputStream inputStream = getClass().getResourceAsStream("/eval/response_quality_eval_cases.json")) {
             if (inputStream == null) {
                 throw new IllegalStateException("评测用例文件不存在：/eval/response_quality_eval_cases.json");

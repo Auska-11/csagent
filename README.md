@@ -19,7 +19,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - LLM 降级：模型调用失败时不会直接中断接口，会基于工具结构化结果生成模板回复，并记录 `llm_failed` Trace。
 - MCP-style 工具层：工具具备统一 `ToolDefinition`、`ToolCall`、`ToolResult`、`inputSchema`、`outputSchema` 和只读工具列表接口，订单、商品、退货、用户和人工转接等业务工具已升级为明确 DTO 输出。
 - MCP Adapter：新增 `GET /api/mcp/tools` 和 `POST /api/mcp/tools/call`，把内部工具注册表暴露成更接近 MCP `tools/list`、`tools/call` 的协议边界。
-- Monitor 指标与反馈闭环：支持 `GET /api/monitor/summary`、`POST /api/monitor/feedback`、`GET /api/monitor/feedback/candidates`、候选样本审核接口和 Eval case 草稿导出接口，基于 Trace 聚合整体/按工具成功率、LLM 失败率、转人工次数、平均耗时、用户反馈有用率、候选样本审核状态数量和负反馈问题类型分布，并能把无用反馈沉淀成 Eval 待审核候选样本。
+- Monitor 指标与反馈闭环：支持 `GET /api/monitor/summary`、`POST /api/monitor/feedback`、`GET /api/monitor/feedback/candidates`、候选样本审核接口、Eval case 草稿导出接口和半自动合并正式评测集接口，基于 Trace 聚合整体/按工具成功率、LLM 失败率、转人工次数、平均耗时、用户反馈有用率、候选样本审核状态数量和负反馈问题类型分布，并能把无用反馈沉淀成 Eval 待审核候选样本；候选样本会持久化到本地 JSON 文件，服务重启后仍可继续审核；Monitor Summary 会进一步生成结构化风险告警，前端 Monitor 面板可以直接看到工具失败率、LLM 失败率、低有用反馈率、不安全承诺和内部实现泄露等风险。
 - 接口工程化：聊天接口使用明确 DTO、Spring Validation 和统一 `ApiErrorResponse`。
 - 部署工程化：支持 Docker 多阶段构建、`docker compose` 一键启动、环境变量注入模型配置，并提供 `/api/health` 健康检查接口。
 - 离线评测：覆盖路由、知识库召回、回复质量规则、Agent 链路回复、LLM-as-Judge 五类评测，并输出 JSON 总览、历史快照和趋势指标。
@@ -176,6 +176,52 @@ Content-Type: application/json
 GET /api/monitor/feedback/candidates/export
 ```
 
+人工补齐断言后，半自动合并到正式回复质量评测文件：
+
+```http
+POST /api/monitor/feedback/candidates/merge
+Content-Type: application/json
+
+{
+  "cases": [
+    {
+      "sourceCandidateId": "EVAL-CAND-000001",
+      "id": "feedback_eval_cand_000001",
+      "candidateReply": "可以为您申请退货",
+      "requiredKeywords": ["退货时效"],
+      "forbiddenKeywords": ["Tool"],
+      "expectedPass": false
+    }
+  ]
+}
+```
+
+Eval 候选样本默认保存到本地文件：
+
+```text
+data/feedback-eval-candidates.json
+```
+
+这个路径可以通过环境变量覆盖：
+
+```powershell
+$env:SMARTCS_MONITOR_EVAL_CANDIDATES_FILE="data/feedback-eval-candidates.json"
+```
+
+`data/` 目录已经加入 `.gitignore`，避免把本地演示数据提交到仓库。
+
+正式回复质量评测文件默认写入：
+
+```text
+src/test/resources/eval/response_quality_eval_cases.json
+```
+
+这个路径可以通过环境变量覆盖：
+
+```powershell
+$env:SMARTCS_MONITOR_RESPONSE_QUALITY_EVAL_FILE="src/test/resources/eval/response_quality_eval_cases.json"
+```
+
 查看最新评测报告和趋势：
 
 ```http
@@ -222,7 +268,35 @@ mvn "-Dmaven.repo.local=.m2\repository" test
 target/eval-reports/
 ```
 
+可选运行真实 LLM-as-Judge 评测：
+```powershell
+$env:OPENAI_API_KEY="your-api-key"
+$env:OPENAI_BASE_URL="your-openai-compatible-base-url"
+$env:OPENAI_MODEL_NAME="your-judge-model"
+.\scripts\run-real-judge-eval.ps1
+```
+
+默认 `mvn test` 使用 Fake Judge 保持稳定；上面的脚本会显式开启真实 Judge，并把 `judgeMode` 写入 `target/eval-reports/llm-as-judge.json`。
+
 其中 `summary.json` 是当前聚合入口，`trend.json` 是趋势入口，`history/` 会保存每次评测的历史快照，其余文件对应各类评测明细。
+
+## 质量闭环演示
+
+项目提供了一个 PowerShell 脚本，用来演示“用户负反馈如何变成回归测试”：
+
+```powershell
+$env:SMARTCS_MONITOR_RESPONSE_QUALITY_EVAL_FILE="target/demo-quality-loop/response_quality_eval_cases.json"
+$env:SMARTCS_MONITOR_EVAL_CANDIDATES_FILE="target/demo-quality-loop/feedback-eval-candidates.json"
+.\mvnw.cmd spring-boot:run
+```
+
+另开一个 PowerShell 窗口运行：
+
+```powershell
+.\scripts\demo-quality-loop.ps1
+```
+
+脚本会模拟 `UNHELPFUL` 反馈、审核候选样本、合并临时评测文件，并运行 `ResponseQualityEvaluationTest`。详细说明见 [客服Agent-24-质量闭环演示脚本.md](docs/客服Agent/客服Agent-24-质量闭环演示脚本.md)。
 
 ## Docker 运行
 
@@ -282,7 +356,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 88 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 99 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -310,7 +384,8 @@ docker compose down
 - [记忆清除与隐私控制设计](docs/客服Agent/客服Agent-21-记忆清除与隐私控制设计.md)
 - [用户反馈闭环设计](docs/客服Agent/客服Agent-22-用户反馈闭环设计.md)
 - [反馈样本进入评测设计](docs/客服Agent/客服Agent-23-反馈样本进入评测设计.md)
+- [质量闭环演示脚本](docs/客服Agent/客服Agent-24-质量闭环演示脚本.md)
 
 ## 简历表达参考
 
-智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，将意图识别、工具调用、业务查询、知识库检索和回复生成解耦；支持多轮槽位填充、三级会话记忆、长期用户偏好记忆、MCP-style 工具 input/output schema、MCP Adapter 工具协议接口、业务工具 DTO 输出、Agent Trace、RAG 查询改写、多路召回、简单 rerank、Monitor 在线指标、用户反馈闭环、负反馈 Eval 候选样本沉淀与审核、负反馈问题类型分类、审核通过样本导出为 Eval case 草稿、人工转接、LLM 失败降级、接口参数校验、统一错误响应、Docker 多阶段构建部署和五类离线评测，并提供前端 Agent 调试工作台用于演示 Demo 脚本、Trace 过滤、链路指标、Memory 面板、工具 Schema、Monitor 指标、用户反馈有用率、Eval 候选样本审核/导出和 Eval 评测看板，可生成 JSON 指标、历史快照、趋势报告和 LLM-as-Judge 四维评分报告，提升客服场景下大模型应用的可控性、可观测性、可验证性和可复现部署能力。
+智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，将意图识别、工具调用、业务查询、知识库检索和回复生成解耦；支持多轮槽位填充、三级会话记忆、长期用户偏好记忆、MCP-style 工具 input/output schema、MCP Adapter 工具协议接口、业务工具 DTO 输出、Agent Trace、RAG 查询改写、多路召回、简单 rerank、Monitor 在线指标、结构化风险告警、用户反馈闭环、负反馈 Eval 候选样本沉淀与审核、本地 JSON 持久化、负反馈问题类型分类、审核通过样本导出为 Eval case 草稿、人工补齐断言后半自动合并正式评测集、人工转接、LLM 失败降级、接口参数校验、统一错误响应、Docker 多阶段构建部署和五类离线评测，并提供前端 Agent 调试工作台用于演示 Demo 脚本、Trace 过滤、链路指标、Memory 面板、工具 Schema、Monitor 指标、Monitor 告警、用户反馈有用率、Eval 候选样本审核/导出/合并和 Eval 评测看板，可生成 JSON 指标、历史快照、趋势报告和 LLM-as-Judge 四维评分报告，提升客服场景下大模型应用的可控性、可观测性、可验证性和可复现部署能力。

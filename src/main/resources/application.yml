@@ -5,6 +5,16 @@ spring:
   application:
     name: smart-cs-agent
 
+smartcs:
+  monitor:
+    # Eval 候选样本默认保存到本地 data 目录。
+    # 这样用户点“无用”后生成的待审核样本，项目重启后仍然可以继续审核。
+    # 如果后续部署到服务器，可以通过环境变量 SMARTCS_MONITOR_EVAL_CANDIDATES_FILE 改成挂载目录。
+    eval-candidates-file: ${SMARTCS_MONITOR_EVAL_CANDIDATES_FILE:data/feedback-eval-candidates.json}
+    # 半自动合并 Eval 草稿时写入的回复质量评测文件。
+    # 这个能力主要用于本地开发和面试演示：人工补齐断言后，再把 APPROVED 样本沉淀成正式回归测试。
+    response-quality-eval-file: ${SMARTCS_MONITOR_RESPONSE_QUALITY_EVAL_FILE:src/test/resources/eval/response_quality_eval_cases.json}
+
 langchain4j:
   open-ai:
     chat-model:

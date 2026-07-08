@@ -51,6 +51,9 @@ public class MonitorSummary {
 
     private final List<FeedbackEvalCandidate> recentEvalCandidates;
 
+    /** 由 Monitor 指标自动生成的风险告警，帮助开发者优先处理最值得关注的问题 */
+    private final List<MonitorAlert> alerts;
+
     public MonitorSummary(long totalTurns,
                           long toolCallCount,
                           long successfulToolCallCount,
@@ -75,7 +78,8 @@ public class MonitorSummary {
                           long approvedEvalCandidateCount,
                           long rejectedEvalCandidateCount,
                           Map<String, Long> evalCandidateIssueCounts,
-                          List<FeedbackEvalCandidate> recentEvalCandidates) {
+                          List<FeedbackEvalCandidate> recentEvalCandidates,
+                          List<MonitorAlert> alerts) {
         this.totalTurns = totalTurns;
         this.toolCallCount = toolCallCount;
         this.successfulToolCallCount = successfulToolCallCount;
@@ -101,6 +105,7 @@ public class MonitorSummary {
         this.rejectedEvalCandidateCount = rejectedEvalCandidateCount;
         this.evalCandidateIssueCounts = evalCandidateIssueCounts == null ? Map.of() : Map.copyOf(evalCandidateIssueCounts);
         this.recentEvalCandidates = recentEvalCandidates == null ? List.of() : List.copyOf(recentEvalCandidates);
+        this.alerts = alerts == null ? List.of() : List.copyOf(alerts);
     }
 
     public long getTotalTurns() {
@@ -201,5 +206,9 @@ public class MonitorSummary {
 
     public List<FeedbackEvalCandidate> getRecentEvalCandidates() {
         return recentEvalCandidates;
+    }
+
+    public List<MonitorAlert> getAlerts() {
+        return alerts;
     }
 }

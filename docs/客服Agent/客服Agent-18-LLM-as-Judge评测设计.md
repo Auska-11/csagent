@@ -73,7 +73,44 @@ src/test/java/com/smartcs/smart_cs_agent/eval/LlmAsJudgeEvaluationTest.java
 target/eval-reports/llm-as-judge.json
 ```
 
-## 5. 样例覆盖
+## 5. 可选真实 Judge 运行方式
+
+默认运行：
+```powershell
+mvn "-Dmaven.repo.local=.m2\repository" "-Dtest=LlmAsJudgeEvaluationTest" test
+```
+
+默认模式使用 Fake Judge，报告里的 `judgeMode` 为 `fake`。这样普通测试不依赖网络、API Key 和真实模型稳定性。
+
+如果要运行真实 Judge，先配置模型环境变量：
+```powershell
+$env:OPENAI_API_KEY="your-api-key"
+$env:OPENAI_BASE_URL="your-openai-compatible-base-url"
+$env:OPENAI_MODEL_NAME="your-judge-model"
+```
+
+然后运行：
+```powershell
+.\scripts\run-real-judge-eval.ps1
+```
+
+等价 Maven 命令：
+```powershell
+mvn "-Dmaven.repo.local=.m2\repository" "-Dsmartcs.eval.real-judge.enabled=true" "-Dtest=LlmAsJudgeEvaluationTest" test
+```
+
+如果希望真实 Judge 的判断和 `expectedPass` 不一致时直接让测试失败，可以运行：
+```powershell
+.\scripts\run-real-judge-eval.ps1 -AssertExpectation
+```
+
+报告字段说明：
+- `judgeMode`：`fake` 或 `real:模型名`。
+- `assertExpectation`：是否把 Judge 判断不一致当成测试失败。
+- `expectationMatchRate`：Judge 结果和人工预期是否一致。
+- `averageAccuracyScore` / `averageCompletenessScore` / `averageToneScore` / `averageSafetyScore`：四个维度平均分。
+
+## 6. 样例覆盖
 
 当前第一版有 3 条样例：
 
@@ -87,7 +124,7 @@ target/eval-reports/llm-as-judge.json
 - 危险承诺。
 - 信息不完整。
 
-## 6. 面试表达
+## 7. 面试表达
 
 如果面试官问：“你为什么要做 LLM-as-Judge？”
 
@@ -101,11 +138,10 @@ target/eval-reports/llm-as-judge.json
 
 > 因为默认 CI 或本地测试应该稳定、便宜、可复现。真实模型依赖网络和 API Key，而且输出有随机性。我的第一版先把 Judge Prompt、JSON 解析和报告结构固定下来，真实模型可以作为可选评测入口，不影响主链路测试稳定性。
 
-## 7. 后续优化
+## 8. 后续优化
 
 后续可以继续做：
 
-- 增加真实 Judge 模型可选开关，例如 `-Djudge.real=true`。
 - 保存真实 Agent 回复作为 candidateReply。
 - 扩展 Judge 样本到 20 条以上。
 - 对 Judge 输出做更严格的 schema 校验。
