@@ -1,5 +1,7 @@
 # 客服Agent-30-RAG 向量检索升级设计
 
+> 本文记录的是本地轻量向量 baseline：用字符 n-gram 和余弦相似度补充召回分。真 embedding + Qdrant 向量数据库方案见 [客服Agent-33-Embedding向量数据库RAG设计.md](客服Agent-33-Embedding向量数据库RAG设计.md)。
+
 ## 1. 为什么升级 RAG 检索
 
 早期知识库检索主要依赖关键词：
@@ -137,4 +139,3 @@ mvn "-Dmaven.repo.local=.m2\repository" "-Dtest=KnowledgeToolsTest" test
 如果被追问生产怎么升级：
 
 > 生产里我会把当前 `calculateVectorScore` 替换成真实 embedding 模型，把文档切块后写入 pgvector、Milvus 或 Elasticsearch，并在召回后增加 rerank。当前代码已经把 `vectorScore` 和 `rerankReason` 放进结构化结果里，后续替换底层召回方式时，上层 Agent 和评测逻辑可以基本复用。
-

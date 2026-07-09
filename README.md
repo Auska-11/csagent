@@ -11,7 +11,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - 退换货：支持退货进度查询，以及“我要退货 -> 追问订单号 -> 追问原因 -> 提交退货申请”的多轮流程。
 - 多轮记忆：支持短期消息窗口、任务记忆快照、规则摘要压缩，Trace 会记录 `memory_loaded` / `memory_compressed`，前端 Memory 面板可查看当前会话记忆。
 - 长期用户偏好：支持记录“我喜欢蓝牙耳机”等商品偏好，后续泛化推荐时可读取用户长期记忆，Trace 会记录 `user_memory_updated` / `user_memory_used`，并支持清空会话记忆和用户长期记忆。
-- 知识库问答：支持退货政策、发票、保修、配送、转人工规则等 Markdown 知识库检索，并已增强查询改写、多路召回、本地轻量向量分、简单 rerank 和 `knowledge_miss` Trace。
+- 知识库问答：支持退货政策、发票、保修、配送、转人工规则等 Markdown 知识库检索，并已增强查询改写、多路召回、本地轻量向量分、简单 rerank 和 `knowledge_miss` Trace；可选开启真 embedding + Qdrant 向量数据库模式。
 - Multi-Agent 路由：支持把用户消息路由到售前、售后、投诉和通用专家域，并在 Trace 中记录 `agent_routed`。
 - 人工转接：支持用户主动要求人工、投诉、赔偿或维权类表达；默认创建模拟人工工单，开启联调模式后可调用售后工单平台创建真实工单。
 - Agent Trace：接口和前端调试面板可以看到 Action、工具调用、LLM 调用、转人工、耗时等事件。
@@ -42,7 +42,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
   -> AgentAction
   -> ToolManager / ToolRegistry
   -> OrderTools / ProductTools / ReturnTools / UserTools / KnowledgeTools / HandoffTools
-  -> Repository 内存/JDBC 双模式数据层 / Markdown 知识库 / 售后工单平台 HTTP Client
+  -> Repository 内存/JDBC 双模式数据层 / Markdown 知识库 / Embedding + Qdrant / 售后工单平台 HTTP Client
 ```
 
 核心设计取舍：
@@ -53,6 +53,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - 工具层先做本地 MCP-style 边界，后续再演进为独立 MCP Server。
 - Repository 默认使用内存模式，开启 JDBC 模式后可连接 MySQL，保证学习演示和真实持久化两种需求都能覆盖。
 - 人工转接默认使用本地工单，联调时再切换到售后工单平台，保证单项目运行和双项目联动都稳定。
+- RAG 默认使用本地检索，开启 `embedding-qdrant` 后再依赖真实 embedding API 和 Qdrant，保证基础演示和高级检索都能覆盖。
 - 先做稳定、可解释的规则评测，再补 LLM-as-Judge。
 
 ## 主要接口
@@ -299,6 +300,26 @@ $env:SMARTCS_JDBC_PASSWORD="your-password"
 
 启动后，项目会自动创建 `cs_user`、`cs_product`、`cs_order`、`cs_return_record` 四张表，并写入演示种子数据。设计说明见 [客服Agent-28-数据库持久化设计.md](docs/客服Agent/客服Agent-28-数据库持久化设计.md)。
 
+默认 RAG 使用本地检索，不依赖外部向量库。如果要演示真 embedding + Qdrant，可以先启动 Qdrant：
+
+```powershell
+docker compose up -d qdrant
+```
+
+再设置环境变量：
+
+```powershell
+$env:SMARTCS_RAG_MODE="embedding-qdrant"
+$env:SMARTCS_EMBEDDING_BASE_URL="https://api.openai.com/v1"
+$env:SMARTCS_EMBEDDING_API_KEY="your-api-key"
+$env:SMARTCS_EMBEDDING_MODEL_NAME="text-embedding-3-small"
+$env:SMARTCS_EMBEDDING_DIMENSIONS="1536"
+$env:SMARTCS_QDRANT_BASE_URL="http://localhost:6333"
+$env:SMARTCS_QDRANT_COLLECTION="smart_cs_knowledge"
+```
+
+开启后，`KnowledgeTools` 会把 Markdown 知识库向量化后写入 Qdrant，并用用户问题的 query embedding 做相似度检索；如果 embedding 或 Qdrant 暂时不可用，会自动回退本地 RAG。设计说明见 [客服Agent-33-Embedding向量数据库RAG设计.md](docs/客服Agent/客服Agent-33-Embedding向量数据库RAG设计.md)。
+
 默认人工转接使用本地模拟工单。如果要联调桌面售后工单平台，先启动后端项目：
 
 ```powershell
@@ -384,6 +405,14 @@ OPENAI_MODEL_NAME=your-model-name
 docker compose up --build
 ```
 
+`docker-compose.yml` 会同时启动 Qdrant。默认 `.env.example` 中 `SMARTCS_RAG_MODE=local`，所以 Agent 不会强制依赖 embedding 服务；需要在容器中演示真向量库时，把 `.env` 改成：
+
+```text
+SMARTCS_RAG_MODE=embedding-qdrant
+SMARTCS_EMBEDDING_API_KEY=your-api-key
+SMARTCS_QDRANT_BASE_URL=http://qdrant:6333
+```
+
 访问页面和健康检查：
 
 ```text
@@ -420,7 +449,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 113 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 115 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -457,10 +486,11 @@ docker compose down
 - [RAG 向量检索升级设计](docs/客服Agent/客服Agent-30-RAG向量检索升级设计.md)
 - [Multi-Agent 路由设计](docs/客服Agent/客服Agent-31-Multi-Agent路由设计.md)
 - [售后工单平台联调设计](docs/客服Agent/客服Agent-32-售后工单平台联调设计.md)
+- [Embedding 向量数据库 RAG 设计](docs/客服Agent/客服Agent-33-Embedding向量数据库RAG设计.md)
 
 ## 简历表达参考
 
-智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，支持多轮任务状态、MCP-style/JSON-RPC 工具调用、RAG 知识库、本地向量召回、Multi-Agent 路由、Agent Trace、Monitor 反馈闭环、LLM-as-Judge、数据库持久化和售后工单平台联调，提升客服场景下大模型应用的可控性、可观测性和可验证性。
+智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，支持多轮任务状态、MCP-style/JSON-RPC 工具调用、RAG 知识库、本地向量召回、真 embedding + Qdrant 向量数据库、Multi-Agent 路由、Agent Trace、Monitor 反馈闭环、LLM-as-Judge、数据库持久化和售后工单平台联调，提升客服场景下大模型应用的可控性、可观测性和可验证性。
 
 可展开描述：
 
@@ -468,6 +498,7 @@ docker compose down
 - 实现多轮会话状态管理，使用 `ConversationState` 保存任务槽位、短期消息窗口和摘要记忆，支持退货申请等跨轮槽位填充流程。
 - 设计 MCP-style 工具注册与调用层，统一 `ToolDefinition`、`ToolCall`、`ToolResult`、`inputSchema` 和 `outputSchema`，并提供 MCP Adapter 接口暴露工具列表和工具调用能力。
 - 实现 `/mcp` JSON-RPC 风格入口，支持 `initialize`、`tools/list` 和 `tools/call`，让内部工具注册表具备独立 MCP Server 的协议边界。
+- 实现 RAG 双模式：默认 local 模式保证测试和演示稳定，高级模式接入 OpenAI-compatible embedding API 与 Qdrant 向量数据库，并在外部服务失败时回退本地检索。
 - 实现轻量 Multi-Agent 路由，将用户消息分配到售前、售后、投诉和通用专家域，并通过 Trace 记录路由原因和置信度。
 - 实现 Repository 层 `memory` / `jdbc` 双模式，默认内存模式保证测试稳定，开启 JDBC 模式后可将用户、商品、订单和退货记录持久化到 MySQL。
 - 实现人工转接 `memory` / `after-sales-http` 双模式，联调时通过幂等 HTTP 请求调用售后工单平台创建真实工单，并在后端不可用时降级为待补建工单。

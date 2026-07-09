@@ -54,7 +54,7 @@ Smart CS Agent 是一个面向电商客服场景的任务型 Agent 项目。
 - `CustomerServiceSkill` 已完成第一轮拆分：槽位抽取、意图规则和 Prompt 构造已经分别拆到 `CustomerServiceSlotExtractor`、`CustomerServiceIntentRules`、`CustomerServicePromptBuilder`。
 - 工具层已经引入 `ToolDefinition`、`ToolParameterDefinition`、`ToolCall`、`ToolResult` 和 `ToolRegistry`，并已完成结构化 `data`、参数 `inputSchema` 和返回 `outputSchema` 第一版；订单、商品、退货、用户和人工转接等业务工具已经升级为明确 DTO，并新增 MCP Adapter 第一版，支持 `/api/mcp/tools` 和 `/api/mcp/tools/call`；当前还新增 `/mcp` JSON-RPC 风格入口，支持 `initialize`、`tools/list` 和 `tools/call`。
 - 前端调试控制台已经升级为 Agent Inspector，支持典型 Demo 脚本、Trace 过滤、Trace 指标摘要、复制 Trace JSON、复制单条 Trace、工具搜索、展示和复制工具 inputSchema / outputSchema，以及 Eval 评测报告看板。
-- 知识库检索第一版已经完成，并已补充 RAG 检索增强第一版：查询改写、多路召回、简单 rerank、本地轻量向量分、`knowledge_miss` Trace；知识库召回评测已扩展到 8 条。
+- 知识库检索第一版已经完成，并已补充 RAG 检索增强第一版：查询改写、多路召回、简单 rerank、本地轻量向量分、`knowledge_miss` Trace；当前还新增真 embedding + Qdrant 向量数据库可选模式，默认 local 保持测试稳定；知识库召回评测已扩展到 8 条。
 - 人工转接第一版已经完成，并已新增售后工单平台联调第一版：默认 memory 模式生成模拟工单，开启 `SMARTCS_HANDOFF_MODE=after-sales-http` 后调用桌面 `demo/after-sales-sla-platform` 创建真实售后工单。
 - 聊天接口已经完成明确 DTO、Spring Validation、统一错误响应和 MVC 层测试。
 - Runtime 已支持 LLM 调用失败降级：模型异常时记录 `llm_failed`，并基于工具结果返回模板化客服回复。
@@ -345,7 +345,7 @@ knowledge/
   - 简单 rerank。已完成第一版。
 - 召回失败 Trace：
   - `knowledge_miss`。已完成第一版。
-- 后续再考虑向量检索和 LLM rerank。
+- 已新增真 embedding + Qdrant 向量数据库第一版，后续再考虑文档切块、增量索引和 LLM rerank。
 
 示例问题：
 
@@ -362,7 +362,7 @@ knowledge/
 
 优先级：高。
 
-状态：第一版和检索增强第一版已完成。当前已经新增 Markdown 知识库、`KnowledgeTools`、`KnowledgeDocument`、`KnowledgeSearchResult`，并把 `knowledge_search` 注册进 `ToolRegistry`。`CustomerServiceSkill` 已支持退换货政策、发票、保修、配送、转人工规则等问题的知识库路由。`KnowledgeTools` 现在支持查询改写、多路召回、简单 rerank，检索结果会返回命中词、命中字段、查询变体和排序原因；当知识库没有可靠命中时，Runtime 会记录 `knowledge_miss` Trace。
+状态：第一版和检索增强第一版已完成。当前已经新增 Markdown 知识库、`KnowledgeTools`、`KnowledgeDocument`、`KnowledgeSearchResult`，并把 `knowledge_search` 注册进 `ToolRegistry`。`CustomerServiceSkill` 已支持退换货政策、发票、保修、配送、转人工规则等问题的知识库路由。`KnowledgeTools` 现在支持查询改写、多路召回、简单 rerank，检索结果会返回命中词、命中字段、查询变体和排序原因；当知识库没有可靠命中时，Runtime 会记录 `knowledge_miss` Trace。当前还新增 `embedding-qdrant` 高级模式，支持调用 OpenAI-compatible embedding API 并使用 Qdrant 做向量检索，外部服务失败时会回退本地 RAG。
 
 ## Phase 6：人工转接机制
 
@@ -667,6 +667,7 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 46. 新增 RAG 本地向量检索升级第一版：使用字符 n-gram 伪向量和余弦相似度补充召回分，并在结果中暴露 `vectorScore`。已完成第一版。
 47. 新增 Multi-Agent 路由第一版：新增 `AgentRouteResult`，支持售前、售后、投诉、通用专家域路由，并写入 `agent_routed` Trace。已完成第一版。
 48. 新增售后工单平台联调第一版：`HandoffTools` 支持 `memory` / `after-sales-http` 双模式，联调时调用桌面 `demo/after-sales-sla-platform` 创建真实售后工单。已完成第一版。
+49. 新增真 embedding + Qdrant 向量数据库 RAG 第一版：`KnowledgeTools` 支持 `local` / `embedding-qdrant` 双模式，高级模式调用 embedding API 并写入 Qdrant，失败时回退本地 RAG。已完成第一版。
 
 ## 9. 暂缓事项
 
@@ -693,7 +694,7 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 - 保持测试稳定，后续每次改动都要确认核心评测和相关单元测试通过。
 - 把二期能力放入候选池，不急着一次性做完，避免项目从“扎实”变成“堆概念”。
 
-多轮任务状态、三级会话记忆第一版、长期用户偏好记忆第一版、记忆清除与隐私控制、Agent Trace、MCP-style 工具层、MCP Adapter、工具 inputSchema/outputSchema、业务工具 DTO、知识库 RAG、RAG 查询改写、多路召回、简单 rerank、人工转接、LLM 失败降级、Monitor 在线指标、按工具名成功率统计、Monitor 风险告警、用户反馈闭环、反馈样本进入 Eval 候选池、Eval 候选样本问题类型分类、Eval 候选样本审核、Eval 候选样本本地 JSON 持久化、Eval case 草稿导出、Eval 草稿半自动合并正式评测集、质量闭环演示脚本、可选真实模型 Judge 评测、前端 Agent Inspector、Memory 面板、Demo 演示脚本、Eval 评测报告看板、离线路由评测、知识库召回评测、回复质量规则评测、Agent 链路回复评测、LLM-as-Judge 第一版、Docker 部署第一版、评测报告 JSON 化、评测历史趋势、结构化工具数据、Skill 第一轮拆分、接口 DTO、参数校验和统一错误响应已经完成。
+多轮任务状态、三级会话记忆第一版、长期用户偏好记忆第一版、记忆清除与隐私控制、Agent Trace、MCP-style 工具层、MCP Adapter、工具 inputSchema/outputSchema、业务工具 DTO、知识库 RAG、RAG 查询改写、多路召回、简单 rerank、本地轻量向量分、真 embedding + Qdrant 向量数据库 RAG、人工转接、LLM 失败降级、Monitor 在线指标、按工具名成功率统计、Monitor 风险告警、用户反馈闭环、反馈样本进入 Eval 候选池、Eval 候选样本问题类型分类、Eval 候选样本审核、Eval 候选样本本地 JSON 持久化、Eval case 草稿导出、Eval 草稿半自动合并正式评测集、质量闭环演示脚本、可选真实模型 Judge 评测、前端 Agent Inspector、Memory 面板、Demo 演示脚本、Eval 评测报告看板、离线路由评测、知识库召回评测、回复质量规则评测、Agent 链路回复评测、LLM-as-Judge 第一版、Docker 部署第一版、评测报告 JSON 化、评测历史趋势、结构化工具数据、Skill 第一轮拆分、接口 DTO、参数校验和统一错误响应已经完成。
 
 当前新增了两份面试和演示准备文档：
 
@@ -705,6 +706,7 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 - [客服Agent-30-RAG向量检索升级设计.md](客服Agent-30-RAG向量检索升级设计.md)
 - [客服Agent-31-Multi-Agent路由设计.md](客服Agent-31-Multi-Agent路由设计.md)
 - [客服Agent-32-售后工单平台联调设计.md](客服Agent-32-售后工单平台联调设计.md)
+- [客服Agent-33-Embedding向量数据库RAG设计.md](客服Agent-33-Embedding向量数据库RAG设计.md)
 
 如果后续继续做二期功能，建议从下面候选项中选择，不建议同时铺开：
 
@@ -712,7 +714,7 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 - 独立 MCP Server 增强：当前已完成同进程 `/mcp` JSON-RPC 第一版，后续再拆成真正可独立部署的工具服务。
 - 数据库持久化增强：当前已完成业务核心表第一版，后续再迁移会话记忆、用户偏好和反馈候选样本。
 - CI 质量门禁增强：当前已完成 GitHub Actions 第一版，后续可以上传 Eval 报告 artifact 或在 PR 中展示指标摘要。
-- RAG 向量检索增强：当前已完成本地轻量向量分，知识库规模变大后再引入真实 embedding、向量数据库和更强 rerank。
+- RAG 向量检索增强：当前已完成本地轻量向量分和真 embedding + Qdrant 第一版，后续再做文档切块、增量索引和更强 rerank。
 
 下一阶段不再零散堆功能，而是按模块推进。详细任务拆分见：
 
@@ -723,7 +725,7 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 1. 面试亮点总结与演示流程固化。已完成第一版。
 2. 工具协议与 MCP 边界增强。已完成本地 Adapter 第一版，二期待拆独立 MCP Server。
 3. Monitor 指标与 Eval 闭环增强。已完成第一版，二期待接 CI artifact 或真实线上数据。
-4. RAG 检索增强。已完成轻量召回第一版，二期待接向量检索。
+4. RAG 检索增强。已完成轻量召回第一版和真 embedding + Qdrant 第一版，二期待补文档切块、增量索引和更强 rerank。
 5. 多轮记忆管理升级。已完成第一版。
 6. LLM-as-Judge 评测。已完成第一版。
 7. Docker 与部署工程化。已完成第一版。
@@ -733,3 +735,4 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 11. RAG 本地向量检索。已完成第一版。
 12. Multi-Agent 路由。已完成第一版。
 13. 售后工单平台联调。已完成第一版。
+14. 真 embedding + Qdrant 向量数据库 RAG。已完成第一版。

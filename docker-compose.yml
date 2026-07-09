@@ -1,4 +1,13 @@
 services:
+  qdrant:
+    image: qdrant/qdrant:v1.9.7
+    container_name: smart-cs-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
   smart-cs-agent:
     build:
       context: .
@@ -12,4 +21,16 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL}
       OPENAI_MODEL_NAME: ${OPENAI_MODEL_NAME}
+      SMARTCS_RAG_MODE: ${SMARTCS_RAG_MODE:-local}
+      SMARTCS_EMBEDDING_BASE_URL: ${SMARTCS_EMBEDDING_BASE_URL:-https://api.openai.com/v1}
+      SMARTCS_EMBEDDING_API_KEY: ${SMARTCS_EMBEDDING_API_KEY:-dummy-test-key}
+      SMARTCS_EMBEDDING_MODEL_NAME: ${SMARTCS_EMBEDDING_MODEL_NAME:-text-embedding-3-small}
+      SMARTCS_EMBEDDING_DIMENSIONS: ${SMARTCS_EMBEDDING_DIMENSIONS:-1536}
+      SMARTCS_QDRANT_BASE_URL: ${SMARTCS_QDRANT_BASE_URL:-http://qdrant:6333}
+      SMARTCS_QDRANT_COLLECTION: ${SMARTCS_QDRANT_COLLECTION:-smart_cs_knowledge}
+    depends_on:
+      - qdrant
     restart: unless-stopped
+
+volumes:
+  qdrant_data:

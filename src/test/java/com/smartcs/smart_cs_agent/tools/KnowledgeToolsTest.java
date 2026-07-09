@@ -147,4 +147,105 @@ class KnowledgeToolsTest {
         assertTrue(result.getRerankReason().contains("vectorBoost="));
         assertTrue(result.toPromptText().contains("向量分"));
     }
+
+    @Test
+    void shouldUseEmbeddingVectorStoreWhenEnabled() {
+        RagProperties properties = new RagProperties();
+        properties.setMode("embedding-qdrant");
+        FakeEmbeddingClient embeddingClient = new FakeEmbeddingClient();
+        FakeVectorStore vectorStore = new FakeVectorStore(false);
+        KnowledgeTools knowledgeTools = new KnowledgeTools(
+                List.of(new KnowledgeDocument(
+                        "policy/return_policy.md",
+                        "policy",
+                        "退换货政策",
+                        "超过 7 天后，不再默认支持七天无理由退货。",
+                        List.of("退货", "七天")
+                )),
+                properties,
+                embeddingClient,
+                vectorStore
+        );
+
+        List<KnowledgeSearchResult> results = knowledgeTools.search("超过七天还能退吗", 3);
+
+        assertEquals(2, embeddingClient.callCount);
+        assertTrue(vectorStore.collectionEnsured);
+        assertTrue(vectorStore.documentsUpserted);
+        assertFalse(results.isEmpty());
+        KnowledgeSearchResult result = results.get(0);
+        assertEquals("policy/return_policy.md", result.getDocumentId());
+        assertTrue(result.getMatchedFields().contains("embedding_vector"));
+        assertTrue(result.getRerankReason().contains("embedding=qdrant"));
+    }
+
+    @Test
+    void shouldFallbackToLocalSearchWhenEmbeddingVectorStoreFails() {
+        RagProperties properties = new RagProperties();
+        properties.setMode("embedding-qdrant");
+        KnowledgeTools knowledgeTools = new KnowledgeTools(
+                List.of(new KnowledgeDocument(
+                        "policy/return_policy.md",
+                        "policy",
+                        "退换货政策",
+                        "超过 7 天后，不再默认支持七天无理由退货。",
+                        List.of("退货", "七天", "超过七天")
+                )),
+                properties,
+                new FakeEmbeddingClient(),
+                new FakeVectorStore(true)
+        );
+
+        List<KnowledgeSearchResult> results = knowledgeTools.search("超过七天还能退吗", 3);
+
+        assertFalse(results.isEmpty());
+        assertEquals("policy/return_policy.md", results.get(0).getDocumentId());
+        assertFalse(results.get(0).getMatchedFields().contains("embedding_vector"));
+    }
+
+    private static class FakeEmbeddingClient implements TextEmbeddingClient {
+
+        private int callCount;
+
+        @Override
+        public List<Double> embed(String text) {
+            callCount++;
+            return List.of(0.1, 0.2, 0.3);
+        }
+    }
+
+    private static class FakeVectorStore implements KnowledgeVectorStore {
+
+        private final boolean fail;
+        private boolean collectionEnsured;
+        private boolean documentsUpserted;
+
+        private FakeVectorStore(boolean fail) {
+            this.fail = fail;
+        }
+
+        @Override
+        public void ensureCollection(int dimensions) {
+            if (fail) {
+                throw new IllegalStateException("qdrant unavailable");
+            }
+            collectionEnsured = dimensions == 3;
+        }
+
+        @Override
+        public void upsertDocuments(List<KnowledgeDocument> documents, List<List<Double>> embeddings) {
+            documentsUpserted = !documents.isEmpty() && !embeddings.isEmpty();
+        }
+
+        @Override
+        public List<VectorKnowledgeHit> search(List<Double> queryEmbedding, int topK) {
+            return List.of(new VectorKnowledgeHit(
+                    "policy/return_policy.md",
+                    "policy",
+                    "退换货政策",
+                    "超过 7 天后，不再默认支持七天无理由退货。",
+                    0.91
+            ));
+        }
+    }
 }

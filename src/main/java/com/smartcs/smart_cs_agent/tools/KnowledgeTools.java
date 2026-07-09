@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.tools;
 
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -42,11 +43,26 @@ public class KnowledgeTools {
     /** 当前加载到内存里的知识库文档 */
     private final List<KnowledgeDocument> documents;
 
+    private final RagProperties ragProperties;
+    private final TextEmbeddingClient embeddingClient;
+    private final KnowledgeVectorStore vectorStore;
+    private volatile boolean vectorIndexReady = false;
+
     /**
      * Spring 创建 Bean 时会走这个构造函数，从 classpath 加载 Markdown 文档。
      */
     public KnowledgeTools() {
-        this.documents = loadDocumentsFromClasspath();
+        this(loadDocumentsFromClasspath(), new RagProperties(), null, null);
+    }
+
+    /**
+     * Spring 运行时使用的构造函数。
+     */
+    @Autowired
+    public KnowledgeTools(RagProperties ragProperties,
+                          TextEmbeddingClient embeddingClient,
+                          KnowledgeVectorStore vectorStore) {
+        this(loadDocumentsFromClasspath(), ragProperties, embeddingClient, vectorStore);
     }
 
     /**
@@ -56,7 +72,17 @@ public class KnowledgeTools {
      * 测试会更轻、更稳定。
      */
     public KnowledgeTools(List<KnowledgeDocument> documents) {
+        this(documents, new RagProperties(), null, null);
+    }
+
+    KnowledgeTools(List<KnowledgeDocument> documents,
+                   RagProperties ragProperties,
+                   TextEmbeddingClient embeddingClient,
+                   KnowledgeVectorStore vectorStore) {
         this.documents = List.copyOf(documents);
+        this.ragProperties = ragProperties == null ? new RagProperties() : ragProperties;
+        this.embeddingClient = embeddingClient;
+        this.vectorStore = vectorStore;
     }
 
     /**
@@ -76,6 +102,14 @@ public class KnowledgeTools {
      * 后续做评测时可以直接判断命中了哪篇文档。
      */
     public List<KnowledgeSearchResult> search(String query, int topK) {
+        if (ragProperties.isEmbeddingQdrantMode() && embeddingClient != null && vectorStore != null) {
+            return searchByEmbedding(query, topK);
+        }
+
+        return searchLocal(query, topK);
+    }
+
+    private List<KnowledgeSearchResult> searchLocal(String query, int topK) {
         if (query == null || query.isBlank()) {
             return List.of();
         }
@@ -91,6 +125,76 @@ public class KnowledgeTools {
                 .sorted(rerankComparator())
                 .limit(topK)
                 .toList();
+    }
+
+    private List<KnowledgeSearchResult> searchByEmbedding(String query, int topK) {
+        if (query == null || query.isBlank()) {
+            return List.of();
+        }
+
+        try {
+            ensureVectorIndex();
+            SearchPlan searchPlan = buildSearchPlan(query);
+            List<Double> queryEmbedding = embeddingClient.embed(query);
+            List<KnowledgeSearchResult> vectorResults = vectorStore.search(queryEmbedding, topK)
+                    .stream()
+                    .map(hit -> toVectorSearchResult(hit, searchPlan))
+                    .filter(result -> result.getDocumentId() != null && !result.getDocumentId().isBlank())
+                    .limit(topK)
+                    .toList();
+
+            // 如果向量库没有返回结果，回退到本地检索，避免“高级模式”反而降低可用性。
+            return vectorResults.isEmpty() ? searchLocal(query, topK) : vectorResults;
+        } catch (RuntimeException e) {
+            // 真实 embedding 或 Qdrant 暂时不可用时，不应该让客服知识问答直接失败。
+            // 这里退回本地 RAG，既保留可用性，也方便面试时讲降级策略。
+            return searchLocal(query, topK);
+        }
+    }
+
+    private synchronized void ensureVectorIndex() {
+        if (vectorIndexReady) {
+            return;
+        }
+
+        List<List<Double>> embeddings = new ArrayList<>();
+        for (KnowledgeDocument document : documents) {
+            embeddings.add(embeddingClient.embed(toEmbeddingText(document)));
+        }
+
+        int dimensions = embeddings.isEmpty() || embeddings.get(0).isEmpty()
+                ? ragProperties.getEmbedding().getDimensions()
+                : embeddings.get(0).size();
+        vectorStore.ensureCollection(dimensions);
+        vectorStore.upsertDocuments(documents, embeddings);
+        vectorIndexReady = true;
+    }
+
+    private String toEmbeddingText(KnowledgeDocument document) {
+        return document.getTitle() + "\n"
+                + "分类：" + document.getCategory() + "\n"
+                + "关键词：" + String.join("，", document.getKeywords()) + "\n"
+                + preview(document.getContent(), 1200);
+    }
+
+    private KnowledgeSearchResult toVectorSearchResult(VectorKnowledgeHit hit, SearchPlan searchPlan) {
+        int score = (int) Math.round(hit.score() * 100);
+        String content = hit.content() == null || hit.content().isBlank()
+                ? hit.title()
+                : hit.content();
+        String snippet = buildSnippet(content, searchPlan.terms());
+        return new KnowledgeSearchResult(
+                hit.documentId(),
+                hit.category(),
+                hit.title(),
+                score,
+                snippet,
+                List.of("embedding"),
+                List.of("embedding_vector"),
+                searchPlan.queryVariants(),
+                "embedding=qdrant, cosineScore=%.4f".formatted(hit.score()),
+                score
+        );
     }
 
     /**
@@ -122,7 +226,7 @@ public class KnowledgeTools {
         return builder.toString().trim();
     }
 
-    private List<KnowledgeDocument> loadDocumentsFromClasspath() {
+    private static List<KnowledgeDocument> loadDocumentsFromClasspath() {
         PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
 
         try {
@@ -422,7 +526,7 @@ public class KnowledgeTools {
         return preview(compactContent.substring(start, end).trim(), 340);
     }
 
-    private String buildDocumentId(Resource resource) throws IOException {
+    private static String buildDocumentId(Resource resource) throws IOException {
         String path = resource.getURL().toString().replace("\\", "/");
         int index = path.indexOf("/knowledge/");
         if (index >= 0) {
@@ -431,7 +535,7 @@ public class KnowledgeTools {
         return resource.getFilename() == null ? "unknown.md" : resource.getFilename();
     }
 
-    private String extractCategory(String documentId) {
+    private static String extractCategory(String documentId) {
         int slashIndex = documentId.indexOf("/");
         if (slashIndex > 0) {
             return documentId.substring(0, slashIndex);
@@ -439,7 +543,7 @@ public class KnowledgeTools {
         return "general";
     }
 
-    private String extractTitle(String content, String fallbackName) {
+    private static String extractTitle(String content, String fallbackName) {
         for (String line : content.split("\\R")) {
             String trimmed = line.trim();
             if (trimmed.startsWith("# ")) {
@@ -453,7 +557,7 @@ public class KnowledgeTools {
         return fallbackName.replace(".md", "");
     }
 
-    private List<String> extractKeywords(String content, String title) {
+    private static List<String> extractKeywords(String content, String title) {
         List<String> keywords = new ArrayList<>();
         keywords.add(title);
 
@@ -470,7 +574,7 @@ public class KnowledgeTools {
         return keywords;
     }
 
-    private void addKeywords(List<String> keywords, String rawKeywords) {
+    private static void addKeywords(List<String> keywords, String rawKeywords) {
         for (String keyword : rawKeywords.split("[,，、\\s]+")) {
             if (!keyword.isBlank()) {
                 keywords.add(keyword.trim());
