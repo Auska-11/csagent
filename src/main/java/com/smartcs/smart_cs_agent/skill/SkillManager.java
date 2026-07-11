@@ -1,6 +1,17 @@
 package com.smartcs.smart_cs_agent.skill;
 
 import com.smartcs.smart_cs_agent.config.SkillConfig;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
+import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
+import com.smartcs.smart_cs_agent.agent.context.ConversationState;
+import com.smartcs.smart_cs_agent.skill.api.AgentSkillPackage;
+import com.smartcs.smart_cs_agent.skill.api.ResolvedSkillPrompt;
+import com.smartcs.smart_cs_agent.skill.registry.AgentSkillPackageRegistry;
+import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
+import com.smartcs.smart_cs_agent.workflow.core.WorkflowRouteResult;
+import com.smartcs.smart_cs_agent.workflow.core.WorkflowRouter;
+import com.smartcs.smart_cs_agent.workflow.legacy.LegacySkillWorkflowAdapter;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -23,13 +34,37 @@ public class SkillManager {
 
     private final Map<String, Skill> skills = new HashMap<>();
     private final SkillConfig skillConfig;
+    private final AgentSkillPackageRegistry skillPackageRegistry;
+    private final WorkflowRouter workflowRouter;
     private String activeSkillName;
 
     /**
-     * 构造函数注入
+     * 兼容旧单元测试和不启动 Spring 的纯 Java 用法。
+     *
+     * <p>registry 为 null 表示使用旧的统一 System Prompt。生产环境由下面带 {@link Autowired}
+     * 的构造函数注入真正的 AgentSkillPackageRegistry。</p>
      */
     public SkillManager(SkillConfig skillConfig) {
+        this(skillConfig, null, null);
+    }
+
+    /**
+     * 兼容已经接入 Skill Package、但没有启动完整 WorkflowRouter 的测试。
+     */
+    public SkillManager(SkillConfig skillConfig, AgentSkillPackageRegistry skillPackageRegistry) {
+        this(skillConfig, skillPackageRegistry, null);
+    }
+
+    /**
+     * Spring 生产构造函数：同时获得旧 Prompt 回滚入口、Skill Package 注册表和正式 Router。
+     */
+    @Autowired
+    public SkillManager(SkillConfig skillConfig,
+                        AgentSkillPackageRegistry skillPackageRegistry,
+                        WorkflowRouter workflowRouter) {
         this.skillConfig = skillConfig;
+        this.skillPackageRegistry = skillPackageRegistry;
+        this.workflowRouter = workflowRouter;
     }
 
     /**
@@ -81,6 +116,50 @@ public class SkillManager {
     }
 
     /**
+     * 根据已选 Workflow 找到它绑定的 Agent Skill Package。
+     *
+     * <p>Package 和 Workflow 使用 manifest.workflow 绑定，而不是依赖 Java 类名。
+     * 以后增加新业务时，Router 选出 Workflow 后即可自动找到对应 Prompt 与能力白名单。</p>
+     */
+    public Optional<AgentSkillPackage> findPackageForWorkflow(String workflowId) {
+        if (skillPackageRegistry == null) {
+            return Optional.empty();
+        }
+        return skillPackageRegistry.findByWorkflowId(workflowId);
+    }
+
+    /**
+     * 组装某次 LLM 调用实际使用的 System Prompt。
+     *
+     * <p>新版路径会按需选择 reference；如果配置为 legacy 或测试没有 Registry，
+     * 则返回原来的 prompts/system-prompt.md，保证回滚和已有单元测试不受影响。</p>
+     */
+    public ResolvedSkillPrompt resolveSystemPrompt(AgentSkillPackage skillPackage,
+                                                   String purpose,
+                                                   String searchableText) {
+        if (skillPackage == null) {
+            return new ResolvedSkillPrompt("legacy", "legacy", skillConfig.getSystemPrompt(), List.of());
+        }
+        return skillPackage.resolvePrompt(purpose, searchableText);
+    }
+
+    /**
+     * Skill Package 能力白名单检查。
+     *
+     * <p>null 代表旧模式，为兼容旧链路暂时放行。只要成功选择了新版 Package，
+     * 未在 manifest.allowed_capabilities 中声明的调用就会被拒绝。</p>
+     */
+    public boolean isCapabilityAllowed(AgentSkillPackage skillPackage, String capabilityId) {
+        return skillPackage == null
+                || skillPackage.getDefinition().allowsCapability(CapabilityIds.canonicalize(capabilityId));
+    }
+
+    /** 返回启动时加载的不可变 Package 列表，主要供健康检查和调试界面使用。 */
+    public List<AgentSkillPackage> getLoadedPackages() {
+        return skillPackageRegistry == null ? List.of() : skillPackageRegistry.list();
+    }
+
+    /**
      * 获取所有注册的 Skill 名称
      *
      * @return Skill 名称列表
@@ -108,6 +187,46 @@ public class SkillManager {
         }
 
         return bestSkill != null ? bestSkill : getActiveSkill();
+    }
+
+    /**
+     * 过渡期的 Workflow 选择入口。
+     *
+     * <p>这是保留给旧调用方的便捷方法。生产环境内部已经委托正式 WorkflowRouter，
+     * Router 会读取 ConversationState 恢复未完成任务；没有 Spring Router 的纯 Java 旧测试
+     * 才会回退到 LegacySkillWorkflowAdapter。</p>
+     */
+    public AgentWorkflow selectWorkflow(ChatRequest request, ConversationState state) {
+        return routeWorkflow(request, state).getSelectedWorkflow();
+    }
+
+    /**
+     * 返回包含候选分数和“首次选择/恢复”信息的完整 Workflow 路由结果。
+     *
+     * <p>生产环境委托 WorkflowRouter；旧单元测试没有 Router 时，仍用 Legacy Adapter，
+     * 但也会写入 activeWorkflow 状态，从而让 Runtime 的生命周期代码保持一致。</p>
+     */
+    public WorkflowRouteResult routeWorkflow(ChatRequest request, ConversationState state) {
+        Objects.requireNonNull(request, "request cannot be null");
+        Objects.requireNonNull(state, "state cannot be null");
+        if (workflowRouter != null) {
+            return workflowRouter.route(request, state);
+        }
+
+        AgentWorkflow legacyWorkflow = new LegacySkillWorkflowAdapter(selectSkill(request.getMessage()));
+        boolean resumed = state.hasActiveNonTerminalWorkflow()
+                && legacyWorkflow.descriptor().getId().equals(state.getActiveWorkflowId());
+        state.startOrResumeWorkflow(
+                legacyWorkflow.descriptor().getId(),
+                legacyWorkflow.descriptor().getVersion()
+        );
+        return new WorkflowRouteResult(
+                legacyWorkflow,
+                resumed,
+                1.0,
+                resumed ? "测试/回滚模式恢复 Legacy Workflow" : "测试/回滚模式选择 Legacy Workflow",
+                List.of()
+        );
     }
 
     /**

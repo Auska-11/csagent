@@ -1314,6 +1314,7 @@
                 body: JSON.stringify({
                     message,
                     userId,
+                    token: state.currentUser?.token || null,
                     conversationId: state.conversationIds[userId]
                 })
             });

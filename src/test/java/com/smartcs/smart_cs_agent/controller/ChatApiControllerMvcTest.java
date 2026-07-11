@@ -7,6 +7,9 @@ import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
+import com.smartcs.smart_cs_agent.security.DemoAuthenticationService;
+import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,6 +54,15 @@ class ChatApiControllerMvcTest {
 
     @MockBean
     private UserMemoryStore userMemoryStore;
+
+    @MockBean
+    private DemoAuthenticationService authenticationService;
+
+    @BeforeEach
+    void setUpAuthentication() {
+        when(authenticationService.authenticate(any(), any()))
+                .thenAnswer(invocation -> AuthenticatedPrincipal.unverifiedClaim(invocation.getArgument(0)));
+    }
 
     @Test
     void shouldReturnBadRequestWhenMessageIsBlank() throws Exception {

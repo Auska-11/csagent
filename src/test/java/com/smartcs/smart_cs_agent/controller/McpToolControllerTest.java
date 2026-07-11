@@ -1,10 +1,16 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
+import com.smartcs.smart_cs_agent.capability.core.DefaultCapabilityGateway;
+import com.smartcs.smart_cs_agent.capability.local.ToolRegistryCapabilityProvider;
+import com.smartcs.smart_cs_agent.mcp.server.McpServerAdapter;
+import com.smartcs.smart_cs_agent.mcp.server.McpServerSecurityProperties;
 import com.smartcs.smart_cs_agent.repository.OrderRepository;
 import com.smartcs.smart_cs_agent.repository.ProductRepository;
 import com.smartcs.smart_cs_agent.repository.ReturnRepository;
 import com.smartcs.smart_cs_agent.repository.UserRepository;
 import com.smartcs.smart_cs_agent.tools.*;
+import com.smartcs.smart_cs_agent.security.DemoAuthenticationService;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -22,36 +28,34 @@ class McpToolControllerTest {
 
     @Test
     void shouldListMcpTools() {
-        McpToolController controller = new McpToolController(new ToolManager(createRegistry()));
+        McpToolController controller = new McpToolController(createAdapter());
 
         Map<String, Object> response = controller.listTools();
 
-        assertEquals("mcp-adapter-v1", response.get("protocol"));
+        assertEquals("mcp-adapter-v2", response.get("protocol"));
         assertEquals(9, response.get("count"));
 
         List<?> tools = assertInstanceOf(List.class, response.get("tools"));
-        ToolDefinition orderLookup = tools.stream()
-                .map(ToolDefinition.class::cast)
-                .filter(tool -> "order_lookup".equals(tool.getName()))
+        CapabilityDefinition orderLookup = tools.stream()
+                .map(CapabilityDefinition.class::cast)
+                .filter(tool -> "order.lookup".equals(tool.getId()))
                 .findFirst()
                 .orElseThrow();
 
-        assertEquals("OrderToolData", orderLookup.getOutputType());
         assertTrue(orderLookup.getInputSchema().containsKey("properties"));
         assertTrue(orderLookup.getOutputSchema().containsKey("properties"));
+        assertEquals("1.0.0", orderLookup.getVersion());
     }
 
     @Test
     void shouldCallOrderLookupTool() {
-        McpToolController controller = new McpToolController(new ToolManager(createRegistry()));
+        McpToolController controller = new McpToolController(createAdapter());
 
-        McpToolResponse response = controller.callTool(new McpToolCallRequest(
-                "order_lookup",
-                Map.of("order_id", "ORD-001")
-        ));
+        McpToolCallRequest request = authenticatedRequest("order.lookup", Map.of("order_id", "ORD-001"));
+        McpToolResponse response = controller.callTool(request);
 
         assertTrue(response.isSuccess());
-        assertEquals("order_lookup", response.getToolName());
+        assertEquals("order.lookup", response.getToolName());
         assertNull(response.getErrorCode());
         assertNotNull(response.getData());
         assertTrue(response.getMessage().contains("ORD-001"));
@@ -59,7 +63,7 @@ class McpToolControllerTest {
 
     @Test
     void shouldReturnBadRequestWhenToolNameIsMissing() {
-        McpToolController controller = new McpToolController(new ToolManager(createRegistry()));
+        McpToolController controller = new McpToolController(createAdapter());
 
         McpToolResponse response = controller.callTool(new McpToolCallRequest("", Map.of()));
 
@@ -69,16 +73,48 @@ class McpToolControllerTest {
 
     @Test
     void shouldReturnFailureWhenToolDoesNotExist() {
-        McpToolController controller = new McpToolController(new ToolManager(createRegistry()));
+        McpToolController controller = new McpToolController(createAdapter());
 
-        McpToolResponse response = controller.callTool(new McpToolCallRequest(
-                "not_exist_tool",
-                Map.of()
-        ));
+        McpToolResponse response = controller.callTool(authenticatedRequest("not.exist", Map.of()));
 
         assertFalse(response.isSuccess());
-        assertEquals("not_exist_tool", response.getToolName());
-        assertEquals("TOOL_NOT_FOUND", response.getErrorCode());
+        assertEquals("not.exist", response.getToolName());
+        assertEquals("CAPABILITY_NOT_FOUND", response.getErrorCode());
+    }
+
+    @Test
+    void shouldRejectUnauthenticatedExternalToolCall() {
+        McpToolController controller = new McpToolController(createAdapter());
+
+        McpToolResponse response = controller.callTool(
+                new McpToolCallRequest("order.lookup", Map.of("order_id", "ORD-001"))
+        );
+
+        assertFalse(response.isSuccess());
+        assertEquals("MCP_AUTHENTICATION_REQUIRED", response.getErrorCode());
+    }
+
+    private McpToolCallRequest authenticatedRequest(String name, Map<String, Object> arguments) {
+        McpToolCallRequest request = new McpToolCallRequest(name, arguments);
+        request.setRequestId("mcp-rest-test");
+        request.setAuthToken("token-zhangsan");
+        request.setUserId("USER-001");
+        request.setTenantId("test");
+        request.setConversationId("conv-mcp-test");
+        request.setIdempotencyKey("idem-mcp-test");
+        return request;
+    }
+
+    private McpServerAdapter createAdapter() {
+        ToolRegistry registry = createRegistry();
+        DefaultCapabilityGateway gateway = new DefaultCapabilityGateway(List.of(
+                new ToolRegistryCapabilityProvider(registry, true)
+        ));
+        return new McpServerAdapter(
+                gateway,
+                new DemoAuthenticationService(new UserRepository()),
+                new McpServerSecurityProperties()
+        );
     }
 
     private ToolRegistry createRegistry() {

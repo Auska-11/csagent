@@ -1,10 +1,15 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.capability.core.DefaultCapabilityGateway;
+import com.smartcs.smart_cs_agent.capability.local.ToolRegistryCapabilityProvider;
+import com.smartcs.smart_cs_agent.mcp.server.McpServerAdapter;
+import com.smartcs.smart_cs_agent.mcp.server.McpServerSecurityProperties;
 import com.smartcs.smart_cs_agent.repository.OrderRepository;
 import com.smartcs.smart_cs_agent.repository.ProductRepository;
 import com.smartcs.smart_cs_agent.repository.ReturnRepository;
 import com.smartcs.smart_cs_agent.repository.UserRepository;
 import com.smartcs.smart_cs_agent.tools.*;
+import com.smartcs.smart_cs_agent.security.DemoAuthenticationService;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -16,7 +21,7 @@ class McpJsonRpcControllerTest {
 
     @Test
     void shouldInitializeMcpServer() {
-        McpJsonRpcController controller = new McpJsonRpcController(new ToolManager(createRegistry()));
+        McpJsonRpcController controller = new McpJsonRpcController(createAdapter());
         McpJsonRpcRequest request = request(1, "initialize", Map.of());
 
         McpJsonRpcResponse response = controller.handle(request);
@@ -29,7 +34,7 @@ class McpJsonRpcControllerTest {
 
     @Test
     void shouldListToolsByJsonRpc() {
-        McpJsonRpcController controller = new McpJsonRpcController(new ToolManager(createRegistry()));
+        McpJsonRpcController controller = new McpJsonRpcController(createAdapter());
         McpJsonRpcRequest request = request(2, "tools/list", Map.of());
 
         McpJsonRpcResponse response = controller.handle(request);
@@ -42,10 +47,11 @@ class McpJsonRpcControllerTest {
 
     @Test
     void shouldCallToolByJsonRpc() {
-        McpJsonRpcController controller = new McpJsonRpcController(new ToolManager(createRegistry()));
+        McpJsonRpcController controller = new McpJsonRpcController(createAdapter());
         McpJsonRpcRequest request = request(3, "tools/call", Map.of(
-                "name", "order_lookup",
-                "arguments", Map.of("order_id", "ORD-001")
+                "name", "order.lookup",
+                "arguments", Map.of("order_id", "ORD-001"),
+                "_meta", authenticatedMeta()
         ));
 
         McpJsonRpcResponse response = controller.handle(request);
@@ -58,7 +64,7 @@ class McpJsonRpcControllerTest {
 
     @Test
     void shouldReturnMethodNotFound() {
-        McpJsonRpcController controller = new McpJsonRpcController(new ToolManager(createRegistry()));
+        McpJsonRpcController controller = new McpJsonRpcController(createAdapter());
         McpJsonRpcRequest request = request(4, "unknown/method", Map.of());
 
         McpJsonRpcResponse response = controller.handle(request);
@@ -69,7 +75,7 @@ class McpJsonRpcControllerTest {
 
     @Test
     void shouldReturnToolErrorWhenCallParamsMissing() {
-        McpJsonRpcController controller = new McpJsonRpcController(new ToolManager(createRegistry()));
+        McpJsonRpcController controller = new McpJsonRpcController(createAdapter());
         McpJsonRpcRequest request = request(5, "tools/call", null);
 
         McpJsonRpcResponse response = controller.handle(request);
@@ -77,8 +83,8 @@ class McpJsonRpcControllerTest {
         assertNull(response.getError());
         Map<?, ?> result = assertInstanceOf(Map.class, response.getResult());
         assertEquals(true, result.get("isError"));
-        Map<?, ?> structuredContent = assertInstanceOf(Map.class, result.get("structuredContent"));
-        assertEquals("BAD_REQUEST", structuredContent.get("errorCode"));
+        Map<?, ?> meta = assertInstanceOf(Map.class, result.get("_meta"));
+        assertEquals("BAD_REQUEST", meta.get("errorCode"));
     }
 
     private McpJsonRpcRequest request(Object id, String method, Map<String, Object> params) {
@@ -87,6 +93,28 @@ class McpJsonRpcControllerTest {
         request.setMethod(method);
         request.setParams(params);
         return request;
+    }
+
+    private Map<String, Object> authenticatedMeta() {
+        return Map.of(
+                "requestId", "json-rpc-test",
+                "authToken", "token-zhangsan",
+                "userId", "USER-001",
+                "tenantId", "test",
+                "conversationId", "conv-json-rpc",
+                "idempotencyKey", "idem-json-rpc"
+        );
+    }
+
+    private McpServerAdapter createAdapter() {
+        DefaultCapabilityGateway gateway = new DefaultCapabilityGateway(List.of(
+                new ToolRegistryCapabilityProvider(createRegistry(), true)
+        ));
+        return new McpServerAdapter(
+                gateway,
+                new DemoAuthenticationService(new UserRepository()),
+                new McpServerSecurityProperties()
+        );
     }
 
     private ToolRegistry createRegistry() {

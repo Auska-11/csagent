@@ -6,9 +6,12 @@ import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
 import com.smartcs.smart_cs_agent.agent.context.ConversationMemorySnapshot;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
+import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.memory.UserMemorySnapshot;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
+import com.smartcs.smart_cs_agent.security.DemoAuthenticationService;
+import com.smartcs.smart_cs_agent.repository.UserRepository;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -23,16 +26,19 @@ public class ChatApiController {
     private final MonitorService monitorService;
     private final ConversationStore conversationStore;
     private final UserMemoryStore userMemoryStore;
+    private final DemoAuthenticationService authenticationService;
 
     @Autowired
     public ChatApiController(CustomerServiceAgent agent,
                              MonitorService monitorService,
                              ConversationStore conversationStore,
-                             UserMemoryStore userMemoryStore) {
+                             UserMemoryStore userMemoryStore,
+                             DemoAuthenticationService authenticationService) {
         this.agent = agent;
         this.monitorService = monitorService;
         this.conversationStore = conversationStore;
         this.userMemoryStore = userMemoryStore;
+        this.authenticationService = authenticationService;
     }
 
     /**
@@ -44,7 +50,27 @@ public class ChatApiController {
     public ChatApiController(CustomerServiceAgent agent,
                              MonitorService monitorService,
                              ConversationStore conversationStore) {
-        this(agent, monitorService, conversationStore, new UserMemoryStore());
+        this(
+                agent,
+                monitorService,
+                conversationStore,
+                new UserMemoryStore(),
+                new DemoAuthenticationService(new UserRepository())
+        );
+    }
+
+    /** 兼容需要传入自定义 UserMemoryStore 的旧单元测试。 */
+    public ChatApiController(CustomerServiceAgent agent,
+                             MonitorService monitorService,
+                             ConversationStore conversationStore,
+                             UserMemoryStore userMemoryStore) {
+        this(
+                agent,
+                monitorService,
+                conversationStore,
+                userMemoryStore,
+                new DemoAuthenticationService(new UserRepository())
+        );
     }
 
     @PostMapping("/send")
@@ -62,9 +88,11 @@ public class ChatApiController {
             throw new IllegalArgumentException("Message cannot be empty");
         }
 
-        String actualUserId = userId != null ? userId : "anonymous";
+        String claimedUserId = userId != null ? userId : "anonymous";
+        AuthenticatedPrincipal principal = authenticationService.authenticate(claimedUserId, request.getToken());
+        String actualUserId = principal.isAuthenticated() ? principal.getUserId() : claimedUserId;
         String actualConversationId = normalizeConversationId(conversationId, actualUserId);
-        ChatRequest chatRequest = new ChatRequest(actualConversationId, actualUserId, message);
+        ChatRequest chatRequest = new ChatRequest(actualConversationId, actualUserId, message, principal);
 
         // 返回 ChatResponse，而不是只返回 String。
         // 这样前端除了展示 reply，还可以把 trace 展示到调试控制台。

@@ -6,6 +6,23 @@ spring:
     name: smart-cs-agent
 
 smartcs:
+  capability:
+    # local：直接调用本进程 Provider；mcp-remote：只使用远程 MCP；hybrid：本地为主并额外暴露带命名空间的远程能力。
+    provider-mode: ${SMARTCS_CAPABILITY_PROVIDER_MODE:local}
+  mcp:
+    server:
+      server-id: ${SMARTCS_MCP_SERVER_ID:smart-cs-local}
+      service-token: ${SMARTCS_MCP_SERVER_SERVICE_TOKEN:dev-mcp-service-token}
+    client:
+      # 只有 provider-mode=mcp-remote 或 hybrid 时才会创建远程 MCP Client。
+      base-url: ${SMARTCS_MCP_REMOTE_URL:http://localhost:8081/mcp}
+      server-id: ${SMARTCS_MCP_REMOTE_SERVER_ID:remote-cs}
+      service-token: ${SMARTCS_MCP_REMOTE_TOKEN:dev-mcp-service-token}
+      timeout-ms: ${SMARTCS_MCP_TIMEOUT_MS:10000}
+      max-retries: ${SMARTCS_MCP_MAX_RETRIES:1}
+      circuit-failure-threshold: ${SMARTCS_MCP_CIRCUIT_FAILURE_THRESHOLD:3}
+      circuit-open-ms: ${SMARTCS_MCP_CIRCUIT_OPEN_MS:30000}
+      discovery-cache-ttl-ms: ${SMARTCS_MCP_DISCOVERY_CACHE_TTL_MS:60000}
   rag:
     # local：默认使用 Markdown + 关键词 + 本地轻量向量分，不依赖外部服务。
     # embedding-qdrant：调用真实 embedding API，并使用 Qdrant 向量数据库检索知识库。

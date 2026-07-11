@@ -25,6 +25,14 @@ public class McpToolCallRequest {
     /** 工具参数，例如 {"order_id": "ORD-001"} */
     private Map<String, Object> arguments = Collections.emptyMap();
 
+    /** 以下字段属于 MCP 执行元数据，不会传入业务 arguments。 */
+    private String requestId;
+    private String authToken;
+    private String userId;
+    private String tenantId;
+    private String conversationId;
+    private String idempotencyKey;
+
     public McpToolCallRequest() {
     }
 
@@ -47,5 +55,53 @@ public class McpToolCallRequest {
 
     public void setArguments(Map<String, Object> arguments) {
         this.arguments = arguments == null ? Collections.emptyMap() : arguments;
+    }
+
+    public String getRequestId() {
+        return requestId;
+    }
+
+    public void setRequestId(String requestId) {
+        this.requestId = requestId;
+    }
+
+    public String getAuthToken() {
+        return authToken;
+    }
+
+    public void setAuthToken(String authToken) {
+        this.authToken = authToken;
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public void setUserId(String userId) {
+        this.userId = userId;
+    }
+
+    public String getTenantId() {
+        return tenantId;
+    }
+
+    public void setTenantId(String tenantId) {
+        this.tenantId = tenantId;
+    }
+
+    public String getConversationId() {
+        return conversationId;
+    }
+
+    public void setConversationId(String conversationId) {
+        this.conversationId = conversationId;
+    }
+
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public void setIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
     }
 }

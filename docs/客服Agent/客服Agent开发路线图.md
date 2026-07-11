@@ -1,5 +1,9 @@
 # 客服 Agent 开发路线图
 
+> 当前架构改造主计划：[`客服Agent-34-可扩展架构改造开发计划.md`](客服Agent-34-可扩展架构改造开发计划.md)
+>
+> 改造目标：分离 Agent Skill Package 与 Executable Workflow，引入可插拔 Action Handler 和 Capability Gateway/MCP Provider；以“新增业务 Skill 不修改 AgentRuntime、核心 Router 或 CapabilityGateway，并通过全量测试”为最终成功标准。
+
 > 本文档是 Smart CS Agent 后续开发的主计划。后续新增需求、调整优先级、准备简历和面试讲解，都优先参考这份文档。
 
 ## 1. 项目定位

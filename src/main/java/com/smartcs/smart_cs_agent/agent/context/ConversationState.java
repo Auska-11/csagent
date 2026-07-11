@@ -24,8 +24,9 @@ import java.util.*;
  * - ConversationState：一轮对话，会话结束可能丢弃
  * - Memory：跨会话，持久化存储
  *
- * 【后续扩展】
- * Phase 6 做 Memory 时，可以注入用户画像到 ConversationState。
+ * 【当前扩展】
+ * 短期窗口、摘要记忆和 Workflow 命名空间已经进入本对象；跨会话用户偏好仍由独立
+ * UserMemoryStore 保存，避免把两种生命周期混在一起。
  */
 public class ConversationState {
 
@@ -104,6 +105,34 @@ public class ConversationState {
     private long summaryUpdatedAt;
 
     /**
+     * 当前正在执行或最近结束的 Workflow ID。
+     *
+     * <p>它和 activeIntent 不同：intent 只是“用户想做什么”的分类；Workflow ID 指向真正负责
+     * 多轮状态机的实现。Router 会优先恢复非终态 activeWorkflow。</p>
+     */
+    private String activeWorkflowId;
+
+    /** 启动当前 Workflow 时使用的实现版本，方便恢复时检测部署版本变化。 */
+    private String workflowVersion;
+
+    /** 当前 Workflow 生命周期状态；null 表示尚未进入新版 Workflow 路由。 */
+    private WorkflowStatus workflowStatus;
+
+    /** 当前 Workflow 首次启动时间，毫秒时间戳。 */
+    private long workflowStartedAt;
+
+    /** 当前 Workflow 最近一次状态变化时间，毫秒时间戳。 */
+    private long workflowUpdatedAt;
+
+    /**
+     * 按 Workflow ID 隔离的私有状态。
+     *
+     * <p>外层 key 是 workflowId，内层才是该流程的 orderId、step 等字段。采用命名空间后，
+     * return_apply 的 orderId 不会被另一个 Workflow 当作自己的槽位。</p>
+     */
+    private final Map<String, Map<String, Object>> workflowStates;
+
+    /**
      * 构造函数
      *
      * @param message 用户消息
@@ -128,6 +157,12 @@ public class ConversationState {
         this.totalMessageCount = 0;
         this.summaryVersion = 0;
         this.summaryUpdatedAt = 0;
+        this.activeWorkflowId = null;
+        this.workflowVersion = null;
+        this.workflowStatus = null;
+        this.workflowStartedAt = 0;
+        this.workflowUpdatedAt = 0;
+        this.workflowStates = new LinkedHashMap<>();
 
         // 把用户消息加入历史记录
         addMessage("user", message);
@@ -429,6 +464,150 @@ public class ConversationState {
     }
 
     /**
+     * 启动一个新 Workflow，或把同一个等待中的 Workflow 恢复为 ACTIVE。
+     *
+     * <p>如果 ID 与当前非终态 Workflow 相同，只更新状态，不清空它已经收集的槽位；
+     * 如果进入另一个 Workflow，则为它创建独立命名空间并记录新的开始时间。</p>
+     */
+    public void startOrResumeWorkflow(String workflowId, String version) {
+        if (workflowId == null || workflowId.isBlank()) {
+            throw new IllegalArgumentException("workflowId cannot be empty");
+        }
+        if (version == null || version.isBlank()) {
+            throw new IllegalArgumentException("workflow version cannot be empty");
+        }
+
+        long now = System.currentTimeMillis();
+        boolean sameNonTerminalWorkflow = workflowId.equals(activeWorkflowId)
+                && workflowStatus != null
+                && !workflowStatus.isTerminal();
+
+        if (!sameNonTerminalWorkflow) {
+            this.activeWorkflowId = workflowId;
+            this.workflowVersion = version;
+            this.workflowStartedAt = now;
+            workflowStates.put(workflowId, new LinkedHashMap<>());
+        }
+
+        this.workflowStatus = WorkflowStatus.ACTIVE;
+        this.workflowUpdatedAt = now;
+    }
+
+    /** 当前是否存在应该跨轮恢复的非终态 Workflow。 */
+    public boolean hasActiveNonTerminalWorkflow() {
+        return activeWorkflowId != null
+                && workflowStatus != null
+                && !workflowStatus.isTerminal();
+    }
+
+    public String getActiveWorkflowId() {
+        return activeWorkflowId;
+    }
+
+    public String getWorkflowVersion() {
+        return workflowVersion;
+    }
+
+    public WorkflowStatus getWorkflowStatus() {
+        return workflowStatus;
+    }
+
+    public long getWorkflowStartedAt() {
+        return workflowStartedAt;
+    }
+
+    public long getWorkflowUpdatedAt() {
+        return workflowUpdatedAt;
+    }
+
+    public void markWorkflowWaiting() {
+        updateWorkflowStatus(WorkflowStatus.WAITING_USER);
+    }
+
+    public void markWorkflowCompleted() {
+        // Workflow 自己可能已经把任务标为 CANCELLED；Runtime 返回 FinalAnswer 时不应把它覆盖成 COMPLETED。
+        if (workflowStatus == WorkflowStatus.CANCELLED || workflowStatus == WorkflowStatus.HANDED_OFF) {
+            return;
+        }
+        updateWorkflowStatus(WorkflowStatus.COMPLETED);
+        clearActiveWorkflowState();
+    }
+
+    public void markWorkflowCancelled() {
+        updateWorkflowStatus(WorkflowStatus.CANCELLED);
+        clearActiveWorkflowState();
+    }
+
+    public void markWorkflowHandedOff() {
+        updateWorkflowStatus(WorkflowStatus.HANDED_OFF);
+        clearActiveWorkflowState();
+    }
+
+    public void markWorkflowFailed() {
+        updateWorkflowStatus(WorkflowStatus.FAILED);
+    }
+
+    private void updateWorkflowStatus(WorkflowStatus status) {
+        if (activeWorkflowId == null) {
+            return;
+        }
+        this.workflowStatus = Objects.requireNonNull(status, "workflow status cannot be null");
+        this.workflowUpdatedAt = System.currentTimeMillis();
+    }
+
+    /**
+     * 在指定 Workflow 的命名空间内写状态。
+     * null 表示删除，和 setTaskState 的约定一致。
+     */
+    public void setWorkflowState(String workflowId, String key, Object value) {
+        validateWorkflowStateAddress(workflowId, key);
+        Map<String, Object> namespace = workflowStates.computeIfAbsent(
+                workflowId,
+                ignored -> new LinkedHashMap<>()
+        );
+        if (value == null) {
+            namespace.remove(key);
+        } else {
+            namespace.put(key, value);
+        }
+        workflowUpdatedAt = System.currentTimeMillis();
+    }
+
+    public Object getWorkflowState(String workflowId, String key) {
+        validateWorkflowStateAddress(workflowId, key);
+        Map<String, Object> namespace = workflowStates.get(workflowId);
+        return namespace == null ? null : namespace.get(key);
+    }
+
+    /** 返回只读副本，避免 Workflow 绕过 setter 直接修改内部 Map。 */
+    public Map<String, Object> getWorkflowStateSnapshot(String workflowId) {
+        if (workflowId == null || workflowId.isBlank()) {
+            return Map.of();
+        }
+        Map<String, Object> namespace = workflowStates.get(workflowId);
+        return namespace == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(namespace));
+    }
+
+    public Map<String, Object> getActiveWorkflowStateSnapshot() {
+        return getWorkflowStateSnapshot(activeWorkflowId);
+    }
+
+    private void clearActiveWorkflowState() {
+        if (activeWorkflowId != null) {
+            workflowStates.remove(activeWorkflowId);
+        }
+    }
+
+    private void validateWorkflowStateAddress(String workflowId, String key) {
+        if (workflowId == null || workflowId.isBlank()) {
+            throw new IllegalArgumentException("workflowId cannot be empty");
+        }
+        if (key == null || key.isBlank()) {
+            throw new IllegalArgumentException("workflow state key cannot be empty");
+        }
+    }
+
+    /**
      * 获取用户标识
      */
     public String getUserId() {
@@ -480,6 +659,12 @@ public class ConversationState {
                 userId,
                 activeIntent,
                 getPendingSlot(),
+                activeWorkflowId,
+                workflowVersion,
+                workflowStatus == null ? null : workflowStatus.name(),
+                getActiveWorkflowStateSnapshot(),
+                workflowStartedAt,
+                workflowUpdatedAt,
                 taskMemory,
                 new ArrayList<>(messages),
                 getSummaryMemory(),
@@ -495,6 +680,8 @@ public class ConversationState {
         return "ConversationState{" +
                 "message=" + message +
                 ", activeIntent=" + activeIntent +
+                ", activeWorkflowId=" + activeWorkflowId +
+                ", workflowStatus=" + workflowStatus +
                 ", observations=" + observations.size() +
                 ", userId=" + userId +
                 "}";

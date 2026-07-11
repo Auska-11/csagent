@@ -37,6 +37,10 @@ public class ChatApiRequest {
     @Size(max = 128, message = "ConversationId is too long")
     private String conversationId;
 
+    /** 演示环境登录令牌。生产环境通常放在 Authorization Header，而不是请求体。 */
+    @Size(max = 128, message = "Token is too long")
+    private String token;
+
     public ChatApiRequest() {
     }
 
@@ -68,5 +72,13 @@ public class ChatApiRequest {
 
     public void setConversationId(String conversationId) {
         this.conversationId = conversationId;
+    }
+
+    public String getToken() {
+        return token;
+    }
+
+    public void setToken(String token) {
+        this.token = token;
     }
 }

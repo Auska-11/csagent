@@ -1,5 +1,7 @@
 package com.smartcs.smart_cs_agent.tools;
 
+import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
+
 /**
  * 统一工具返回结果。
  *
@@ -35,20 +37,68 @@ public class ToolResult {
     /** 错误码。成功时为 null，失败时例如 TOOL_NOT_FOUND、MISSING_ARGUMENT */
     private final String errorCode;
 
-    private ToolResult(boolean success, String toolName, String message, Object data, String errorCode) {
+    /** 新 Capability 三态结果；旧 ToolResult.failure 默认视为技术失败。 */
+    private final CapabilityOutcome outcome;
+
+    /** 结果来自哪个 Provider；旧工具直调时为空。 */
+    private final String providerId;
+
+    /** 是否由幂等记录回放，true 时 Provider 本次没有再次执行。 */
+    private final boolean replayed;
+
+    private ToolResult(boolean success,
+                       String toolName,
+                       String message,
+                       Object data,
+                       String errorCode,
+                       CapabilityOutcome outcome,
+                       String providerId,
+                       boolean replayed) {
         this.success = success;
         this.toolName = toolName;
         this.message = message;
         this.data = data;
         this.errorCode = errorCode;
+        this.outcome = outcome;
+        this.providerId = providerId;
+        this.replayed = replayed;
     }
 
     public static ToolResult success(String toolName, String message, Object data) {
-        return new ToolResult(true, toolName, message, data, null);
+        return new ToolResult(true, toolName, message, data, null, CapabilityOutcome.SUCCESS, null, false);
     }
 
     public static ToolResult failure(String toolName, String errorCode, String message) {
-        return new ToolResult(false, toolName, message, null, errorCode);
+        return new ToolResult(
+                false,
+                toolName,
+                message,
+                null,
+                errorCode,
+                CapabilityOutcome.TECHNICAL_FAILURE,
+                null,
+                false
+        );
+    }
+
+    public static ToolResult fromCapability(boolean success,
+                                            String toolName,
+                                            String message,
+                                            Object data,
+                                            String errorCode,
+                                            CapabilityOutcome outcome,
+                                            String providerId,
+                                            boolean replayed) {
+        return new ToolResult(
+                success,
+                toolName,
+                message,
+                data,
+                errorCode,
+                outcome,
+                providerId,
+                replayed
+        );
     }
 
     public boolean isSuccess() {
@@ -71,6 +121,22 @@ public class ToolResult {
         return errorCode;
     }
 
+    public CapabilityOutcome getOutcome() {
+        return outcome;
+    }
+
+    public boolean isBusinessRejected() {
+        return outcome == CapabilityOutcome.BUSINESS_REJECTED;
+    }
+
+    public String getProviderId() {
+        return providerId;
+    }
+
+    public boolean isReplayed() {
+        return replayed;
+    }
+
     /**
      * 给 LLM Prompt 或调试输出使用的文本。
      *
@@ -86,6 +152,7 @@ public class ToolResult {
 
         return "Tool: " + toolName + "\n" +
                 "Success: false\n" +
+                "Outcome: " + outcome + "\n" +
                 "Error Code: " + errorCode + "\n" +
                 "Message:\n" + message;
     }

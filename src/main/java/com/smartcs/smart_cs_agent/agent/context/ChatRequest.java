@@ -27,10 +27,27 @@ public class ChatRequest {
     /** 当前这一轮用户输入的消息 */
     private final String message;
 
+    /**
+     * Controller/认证适配器确认的调用者身份。
+     * 旧构造函数只会创建 unverified claim，副作用 Capability 不能把它当成已认证用户。
+     */
+    private final AuthenticatedPrincipal principal;
+
     public ChatRequest(String conversationId, String userId, String message) {
+        this(conversationId, userId, message, AuthenticatedPrincipal.unverifiedClaim(userId));
+    }
+
+    public ChatRequest(String conversationId,
+                       String userId,
+                       String message,
+                       AuthenticatedPrincipal principal) {
         this.conversationId = conversationId;
         this.userId = userId;
         this.message = message;
+        this.principal = principal == null ? AuthenticatedPrincipal.anonymous() : principal;
+        if (this.principal.isAuthenticated() && !this.principal.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("Authenticated principal does not match request userId");
+        }
     }
 
     public String getConversationId() {
@@ -43,5 +60,9 @@ public class ChatRequest {
 
     public String getMessage() {
         return message;
+    }
+
+    public AuthenticatedPrincipal getPrincipal() {
+        return principal;
     }
 }

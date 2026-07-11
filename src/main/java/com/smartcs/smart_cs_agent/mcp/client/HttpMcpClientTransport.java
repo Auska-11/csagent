@@ -1,0 +1,265 @@
+package com.smartcs.smart_cs_agent.mcp.client;
+
+import com.smartcs.smart_cs_agent.agent.context.ExecutionContext;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityCall;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityRiskLevel;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
+
+/**
+ * 基于 HTTP JSON-RPC 的 MCP Client Transport。
+ *
+ * <p>重试次数有限；副作用调用携带原 idempotencyKey，因此网络层重试不会重复写入。连续失败达到
+ * 阈值后短暂打开熔断器，避免每个用户请求都阻塞等待一个已知不可用的远程服务。</p>
+ */
+@Component
+@ConditionalOnExpression("'${smartcs.capability.provider-mode:local}' != 'local'")
+public class HttpMcpClientTransport implements McpClientTransport {
+
+    private final McpClientProperties properties;
+    private final RestClient restClient;
+    private final AtomicInteger consecutiveFailures = new AtomicInteger();
+    private volatile long circuitOpenUntil;
+    private volatile String lastError = "";
+
+    public HttpMcpClientTransport(McpClientProperties properties) {
+        this(properties, buildClient(properties));
+    }
+
+    HttpMcpClientTransport(McpClientProperties properties, RestClient restClient) {
+        this.properties = properties;
+        this.restClient = restClient;
+    }
+
+    @Override
+    public McpRemoteServerInfo initialize() {
+        Map<String, Object> response = rpc("initialize", Map.of(), "init-" + UUID.randomUUID());
+        Map<String, Object> result = map(response.get("result"));
+        Map<String, Object> serverInfo = map(result.get("serverInfo"));
+        return new McpRemoteServerInfo(
+                text(result.get("protocolVersion")),
+                text(serverInfo.get("name")),
+                text(serverInfo.get("version"))
+        );
+    }
+
+    @Override
+    public Collection<CapabilityDefinition> listCapabilities() {
+        Map<String, Object> response = rpc("tools/list", Map.of(), "list-" + UUID.randomUUID());
+        Map<String, Object> result = map(response.get("result"));
+        Object rawTools = result.get("tools");
+        if (!(rawTools instanceof Collection<?> tools)) {
+            throw new McpTransportException("MCP tools/list response does not contain a tools array");
+        }
+
+        List<CapabilityDefinition> definitions = new ArrayList<>();
+        for (Object rawTool : tools) {
+            Map<String, Object> tool = map(rawTool);
+            Map<String, Object> meta = map(tool.get("_meta"));
+            boolean sideEffect = bool(meta.get("sideEffect"), false);
+            boolean idempotent = bool(meta.get("idempotent"), false);
+            definitions.add(new CapabilityDefinition(
+                    text(tool.get("name")),
+                    defaultText(text(meta.get("version")), "1.0.0"),
+                    text(tool.get("description")),
+                    map(tool.get("inputSchema")),
+                    map(tool.get("outputSchema")),
+                    bool(meta.get("requiresIdentity"), false),
+                    bool(meta.get("requiresAuthentication"), false),
+                    sideEffect,
+                    idempotent,
+                    number(meta.get("defaultTimeoutMs"), 10_000),
+                    risk(meta.get("riskLevel"), sideEffect)
+            ));
+        }
+        return List.copyOf(definitions);
+    }
+
+    @Override
+    public CapabilityResult<?> invoke(CapabilityCall call, ExecutionContext context) {
+        // serviceToken 代表“本服务被远程 MCP 信任”，但它不能替用户完成身份认证。
+        // 如果这里把 unverified userId 连同服务令牌发过去，远端会误以为用户已认证，形成权限提升。
+        if (!context.getPrincipal().isAuthenticated()) {
+            throw new McpTransportException(
+                    "Remote MCP invocation requires an authenticated principal"
+            );
+        }
+        if (properties.getServiceToken() == null || properties.getServiceToken().isBlank()) {
+            throw new McpTransportException("Remote MCP service token is not configured");
+        }
+
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("requestId", context.getTraceId());
+        metadata.put("authToken", properties.getServiceToken());
+        metadata.put("userId", context.getPrincipal().getUserId());
+        metadata.put("tenantId", context.getTenantId());
+        metadata.put("conversationId", context.getConversationId());
+        metadata.put("idempotencyKey", context.getIdempotencyKey());
+
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("name", call.getCapabilityId());
+        params.put("arguments", call.getArguments());
+        params.put("_meta", metadata);
+
+        Map<String, Object> response = rpc(
+                "tools/call",
+                params,
+                defaultText(context.getTraceId(), "call-" + UUID.randomUUID())
+        );
+        Map<String, Object> result = map(response.get("result"));
+        Map<String, Object> meta = map(result.get("_meta"));
+        String providerId = defaultText(text(meta.get("providerId")), "mcp:" + properties.getServerId());
+        String message = contentText(result.get("content"));
+        Object data = result.get("structuredContent");
+        boolean isError = bool(result.get("isError"), false);
+
+        CapabilityResult<?> mapped;
+        if (!isError) {
+            mapped = CapabilityResult.success(call.getCapabilityId(), providerId, message, data);
+        } else {
+            String errorCode = defaultText(text(meta.get("errorCode")), "MCP_REMOTE_ERROR");
+            CapabilityOutcome outcome = outcome(meta.get("outcome"));
+            if (outcome == CapabilityOutcome.BUSINESS_REJECTED) {
+                mapped = CapabilityResult.businessRejected(
+                        call.getCapabilityId(), providerId, errorCode, message, data
+                );
+            } else {
+                mapped = CapabilityResult.technicalFailure(
+                        call.getCapabilityId(), providerId, errorCode, message
+                );
+            }
+        }
+        return bool(meta.get("replayed"), false) ? mapped.asReplayed() : mapped;
+    }
+
+    @Override
+    public McpTransportHealth health() {
+        return new McpTransportHealth(
+                System.currentTimeMillis() >= circuitOpenUntil,
+                consecutiveFailures.get(),
+                circuitOpenUntil,
+                lastError
+        );
+    }
+
+    private Map<String, Object> rpc(String method, Map<String, Object> params, Object id) {
+        return executeWithRetry(() -> {
+            Map<String, Object> request = new LinkedHashMap<>();
+            request.put("jsonrpc", "2.0");
+            request.put("id", id);
+            request.put("method", method);
+            request.put("params", params);
+
+            Map<?, ?> response = restClient.post()
+                    .uri(properties.getBaseUrl())
+                    .body(request)
+                    .retrieve()
+                    .body(Map.class);
+            Map<String, Object> mapped = map(response);
+            if (mapped.containsKey("error") && mapped.get("error") != null) {
+                throw new McpTransportException("Remote MCP returned JSON-RPC error");
+            }
+            return mapped;
+        });
+    }
+
+    private <T> T executeWithRetry(Supplier<T> operation) {
+        if (System.currentTimeMillis() < circuitOpenUntil) {
+            throw new McpTransportException("MCP circuit is open");
+        }
+
+        RuntimeException last = null;
+        int attempts = Math.max(1, properties.getMaxRetries() + 1);
+        for (int attempt = 1; attempt <= attempts; attempt++) {
+            try {
+                T result = operation.get();
+                consecutiveFailures.set(0);
+                circuitOpenUntil = 0;
+                lastError = "";
+                return result;
+            } catch (RestClientException | McpTransportException e) {
+                last = e;
+                lastError = e.getClass().getSimpleName();
+            }
+        }
+
+        int failures = consecutiveFailures.incrementAndGet();
+        if (failures >= Math.max(1, properties.getCircuitFailureThreshold())) {
+            circuitOpenUntil = System.currentTimeMillis() + Math.max(1, properties.getCircuitOpenMs());
+        }
+        throw new McpTransportException("Remote MCP request failed after " + attempts + " attempt(s)", last);
+    }
+
+    private static RestClient buildClient(McpClientProperties properties) {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        Duration timeout = Duration.ofMillis(Math.max(1, properties.getTimeoutMs()));
+        requestFactory.setConnectTimeout(timeout);
+        requestFactory.setReadTimeout(timeout);
+        return RestClient.builder().requestFactory(requestFactory).build();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> map(Object value) {
+        if (!(value instanceof Map<?, ?> raw)) {
+            return Map.of();
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        raw.forEach((key, item) -> result.put(String.valueOf(key), item));
+        return result;
+    }
+
+    private String contentText(Object value) {
+        if (value instanceof List<?> content && !content.isEmpty()) {
+            return text(map(content.get(0)).get("text"));
+        }
+        return "";
+    }
+
+    private boolean bool(Object value, boolean fallback) {
+        return value instanceof Boolean bool ? bool : fallback;
+    }
+
+    private long number(Object value, long fallback) {
+        return value instanceof Number number ? number.longValue() : fallback;
+    }
+
+    private CapabilityRiskLevel risk(Object value, boolean sideEffect) {
+        try {
+            return CapabilityRiskLevel.valueOf(text(value));
+        } catch (IllegalArgumentException e) {
+            return sideEffect ? CapabilityRiskLevel.HIGH : CapabilityRiskLevel.READ_ONLY;
+        }
+    }
+
+    private CapabilityOutcome outcome(Object value) {
+        try {
+            return CapabilityOutcome.valueOf(text(value));
+        } catch (IllegalArgumentException e) {
+            return CapabilityOutcome.TECHNICAL_FAILURE;
+        }
+    }
+
+    private String text(Object value) {
+        return value == null ? "" : value.toString();
+    }
+
+    private String defaultText(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+}

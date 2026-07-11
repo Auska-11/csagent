@@ -92,6 +92,17 @@
             <optional>true</optional>
         </dependency>
 
+        <!--
+            Agent Skill 的 manifest 使用 YAML 编写。
+            Spring Boot 本身可能通过其他依赖间接带入 SnakeYAML，但这里显式声明，
+            是为了告诉维护者“Skill Loader 直接依赖它”，避免以后删掉某个 starter 时
+            YAML 解析能力也被意外一起删掉。
+        -->
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+        </dependency>
+
         <!-- 测试 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -109,6 +120,23 @@
     </dependencies>
 
     <build>
+        <resources>
+            <!-- 保留 Spring Boot 默认的 src/main/resources。 -->
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+
+            <!--
+                根目录 skills/ 是 Skill Package 的唯一源码位置。
+                targetPath=skills 表示打包后它仍位于 classpath:/skills/ 下。
+                这样开发者只维护一份文件，不需要在两个目录之间手工复制。
+            -->
+            <resource>
+                <directory>${project.basedir}/skills</directory>
+                <targetPath>skills</targetPath>
+            </resource>
+        </resources>
+
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

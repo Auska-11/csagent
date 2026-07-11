@@ -1,9 +1,66 @@
-# Skill 元数据
-name: customer-service
+# Agent Skill Package 元数据
+#
+# 注意：这里的 Skill 是“指令与能力声明包”，不是 Java 中负责状态机决策的 Workflow。
+# id 使用短横线，workflow 使用 Java Workflow 的稳定 ID；二者故意分开，避免概念混淆。
+id: customer-service
+name: customer-service       # 兼容旧文档和早期脚本，Loader 以 id 为准
 version: 1.0.0
 description: 智能客服 Skill，处理订单、产品、退换货等业务
+workflow: customer_service
+priority: 100
 
-# 能力声明
+# Router 后续可以使用这些示例做粗召回；真正的多轮流程仍由 workflow 决定。
+triggers:
+  - 查询订单和物流
+  - 查询商品价格或库存
+  - 申请或查询退换货
+  - 咨询售后政策
+  - 请求人工客服
+
+# Workflow 只能调用这里明确授权的 Capability。
+# 即使某个 Provider 注册了更多能力，也不会自动授予本 Skill。
+allowed_capabilities:
+  - order.lookup
+  - order.list-by-user
+  - product.search
+  - product.lookup
+  - return.apply
+  - return.lookup
+  - user.lookup
+  - knowledge.search
+  - handoff.request
+
+# mixed 表示既有只读查询，也有退货申请、创建人工工单等有副作用的操作。
+risk_level: mixed
+confirmation_policy: legacy-workflow
+prompt: SKILL.md
+
+# Reference 使用规则由 Loader 解析成强类型对象。
+# purposes 与 LLMAction.purpose 对应；triggers 则匹配当前用户消息和本次 prompt。
+# 这样每次只加载真正需要的资料，而不是把四个文件全部塞给模型。
+references:
+  - path: references/persona.md
+    purposes:
+      - response_generation
+  - path: references/intent.md
+    purposes:
+      - intent_recognition
+  - path: references/policy.md
+    triggers:
+      - 退货
+      - 退款
+      - 换货
+      - 保修
+      - 发票
+      - 配送
+      - 人工
+      - 投诉
+  - path: references/templates.md
+    purposes:
+      - response_generation
+
+# 下面保留原来的业务能力分组，主要给人阅读；运行时授权以上面的
+# allowed_capabilities 为唯一依据，避免把 Java 方法名当成稳定协议。
 capabilities:
   - name: order_query
     description: 查询订单状态和物流信息

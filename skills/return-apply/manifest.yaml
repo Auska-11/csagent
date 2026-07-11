@@ -1,0 +1,21 @@
+# 独立退货申请 Agent Skill Package。
+# 这里保存指令和权限边界；真正的多轮状态机是 ReturnApplyWorkflow。
+id: return-apply
+version: 2.0.0
+description: 收集退货信息、校验订单归属、确认后提交退货申请
+workflow: return_apply
+priority: 200
+triggers:
+  - 我要退货
+  - 申请退款
+  - 我要换货
+allowed_capabilities:
+  - order.lookup
+  - return.apply
+  - handoff.request
+risk_level: side_effect
+confirmation_policy: explicit-user-confirmation
+prompt: SKILL.md
+references:
+  - path: references/confirmation.md
+    always: true

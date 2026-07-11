@@ -4,6 +4,8 @@ import org.springframework.stereotype.Component;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Function;
 
 /**
  * 会话状态存储
@@ -42,6 +44,14 @@ public class ConversationStore {
     private final Map<String, ConversationState> conversations = new ConcurrentHashMap<>();
 
     /**
+     * 每个 conversationId 一把独立锁。
+     *
+     * <p>不能只依赖 ConcurrentHashMap：它只能保证 Map 自身操作安全，不能保证
+     * “读取状态 -> 执行多步 Workflow -> 保存状态”这一整段业务事务不被另一个请求插入。</p>
+     */
+    private final Map<String, ReentrantLock> conversationLocks = new ConcurrentHashMap<>();
+
+    /**
      * 根据请求获取会话状态。
      *
      * 如果 conversationId 已存在，说明这是同一个会话的下一轮消息，
@@ -54,6 +64,14 @@ public class ConversationStore {
         return conversations.compute(request.getConversationId(), (conversationId, existingState) -> {
             if (existingState == null) {
                 return new ConversationState(request.getMessage(), request.getUserId());
+            }
+
+            // conversationId 是状态访问凭证之一，但不能让另一个 userId 猜中 ID 后继续原任务。
+            // 这里在追加新消息之前拒绝，避免越权请求污染已有会话历史。
+            if (!existingState.getUserId().equals(request.getUserId())) {
+                throw new IllegalArgumentException(
+                        "Conversation " + request.getConversationId() + " belongs to another user"
+                );
             }
 
             // 过渡阶段：当前 Skill 仍然从 ConversationState.getMessage() 读取当前消息。
@@ -72,6 +90,35 @@ public class ConversationStore {
      */
     public void save(String conversationId, ConversationState state) {
         conversations.put(conversationId, state);
+    }
+
+    /**
+     * 在会话级串行锁内执行完整的一轮处理。
+     *
+     * <p>不同 conversationId 使用不同锁，仍然可以并行；只有同一会话的请求会排队。
+     * operation 成功后统一保存，调用方不需要忘记 save。</p>
+     */
+    public <T> T executeSerially(ChatRequest request, Function<ConversationState, T> operation) {
+        if (request == null) {
+            throw new IllegalArgumentException("request cannot be null");
+        }
+        if (operation == null) {
+            throw new IllegalArgumentException("conversation operation cannot be null");
+        }
+
+        ReentrantLock lock = conversationLocks.computeIfAbsent(
+                request.getConversationId(),
+                ignored -> new ReentrantLock()
+        );
+        lock.lock();
+        try {
+            ConversationState state = getOrCreate(request);
+            T result = operation.apply(state);
+            save(request.getConversationId(), state);
+            return result;
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -98,6 +145,8 @@ public class ConversationStore {
         if (conversationId == null || conversationId.isBlank()) {
             return false;
         }
+        // 不在这里立即移除 lock：可能已有请求正持有或等待同一把锁。
+        // 少量轻量 ReentrantLock 留在内存中比制造两把并发锁更安全。
         return conversations.remove(conversationId) != null;
     }
 }

@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.tools.ToolResult;
 
 /**
@@ -25,12 +26,26 @@ public class McpToolResponse {
     /** 失败时的错误码，成功时为 null */
     private final String errorCode;
 
-    private McpToolResponse(boolean success, String toolName, String message, Object data, String errorCode) {
+    private final String outcome;
+    private final String providerId;
+    private final boolean replayed;
+
+    private McpToolResponse(boolean success,
+                            String toolName,
+                            String message,
+                            Object data,
+                            String errorCode,
+                            String outcome,
+                            String providerId,
+                            boolean replayed) {
         this.success = success;
         this.toolName = toolName;
         this.message = message;
         this.data = data;
         this.errorCode = errorCode;
+        this.outcome = outcome;
+        this.providerId = providerId;
+        this.replayed = replayed;
     }
 
     public static McpToolResponse from(ToolResult result) {
@@ -39,12 +54,28 @@ public class McpToolResponse {
                 result.getToolName(),
                 result.getMessage(),
                 result.getData(),
-                result.getErrorCode()
+                result.getErrorCode(),
+                result.getOutcome().name(),
+                result.getProviderId(),
+                result.isReplayed()
+        );
+    }
+
+    public static McpToolResponse from(CapabilityResult<?> result) {
+        return new McpToolResponse(
+                result.isSuccess(),
+                result.getCapabilityId(),
+                result.getMessage(),
+                result.getData(),
+                result.getErrorCode(),
+                result.getOutcome().name(),
+                result.getProviderId(),
+                result.isReplayed()
         );
     }
 
     public static McpToolResponse failure(String toolName, String errorCode, String message) {
-        return new McpToolResponse(false, toolName, message, null, errorCode);
+        return new McpToolResponse(false, toolName, message, null, errorCode, "TECHNICAL_FAILURE", null, false);
     }
 
     public boolean isSuccess() {
@@ -65,5 +96,17 @@ public class McpToolResponse {
 
     public String getErrorCode() {
         return errorCode;
+    }
+
+    public String getOutcome() {
+        return outcome;
+    }
+
+    public String getProviderId() {
+        return providerId;
+    }
+
+    public boolean isReplayed() {
+        return replayed;
     }
 }

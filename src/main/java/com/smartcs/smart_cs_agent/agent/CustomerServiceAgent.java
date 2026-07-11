@@ -137,25 +137,20 @@ public class CustomerServiceAgent {
      * @return 包含回复和 Trace 的完整响应
      */
     public ChatResponse chatWithTrace(ChatRequest request) {
-        // 1. 根据 conversationId 读取已有会话；如果没有则创建新会话。
-        ConversationState state = conversationStore.getOrCreate(request);
+        // 一整轮都放在 conversationId 对应的串行锁中。
+        // 这不仅保护 Map 读取，还保护 Workflow 状态转换和有副作用 Capability 的调用。
+        return conversationStore.executeSerially(request, state -> {
+            // ChatRequest 负责当前输入，ConversationState 负责跨轮状态，
+            // TurnContext 负责本轮观察结果和最终回复。
+            TurnContext context = new TurnContext(request, state);
 
-        // 2. 创建本轮执行上下文。
-        // ChatRequest 负责当前输入，ConversationState 负责跨轮状态，
-        // TurnContext 负责本轮观察结果和最终回复。
-        TurnContext context = new TurnContext(request, state);
-
-        // 3. 调用执行引擎处理当前这一轮。
-        String reply = runtime.runTurn(context);
-
-        // 4. 保存状态，为下一轮对话继续使用。
-        conversationStore.save(request.getConversationId(), state);
-
-        return new ChatResponse(
-                request.getConversationId(),
-                request.getUserId(),
-                reply,
-                context.getTraceEvents()
-        );
+            String reply = runtime.runTurn(context);
+            return new ChatResponse(
+                    request.getConversationId(),
+                    request.getUserId(),
+                    reply,
+                    context.getTraceEvents()
+            );
+        });
     }
 }

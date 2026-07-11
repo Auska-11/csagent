@@ -20,15 +20,11 @@ import java.util.Map;
  * - arguments：参数，传给工具的参数
  *
  * 【执行流程】
- * 1. Skill 返回 CapabilityAction
- * 2. AgentRuntime 根据 capability 找到对应的工具
- * 3. 调用工具，传入 arguments
- * 4. 把结果存入 ConversationState
- * 5. Skill 根据结果决定下一步
- *
- * 【与项目 1 的区别】
- * 项目 1 用 MCP Tools，我们用 Java 方法调用。
- * 但 Action 的设计是一样的。
+ * 1. Workflow 返回 CapabilityAction
+ * 2. AgentRuntime 通过 ActionHandlerRegistry 找到 CapabilityActionHandler
+ * 3. Handler 校验 Skill allowlist，并调用 CapabilityGateway
+ * 4. Gateway 可选择本地 Provider 或远程 MCP Provider
+ * 5. Handler 写入 CapabilityObservation，Workflow 根据结果决定下一步
  */
 public class CapabilityAction implements AgentAction {
 

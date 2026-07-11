@@ -1,0 +1,20 @@
+# 保修政策 Agent Skill Package。
+#
+# Package 只声明“说明书、权限和绑定关系”；可执行流程位于 WarrantyQueryWorkflow。
+# 新增本 Skill 不需要向 Runtime 或 Router 注册任何业务分支。
+id: warranty-query
+version: 1.0.0
+description: 查询商品保修期限、保修范围和售后申请方式
+workflow: warranty_query
+priority: 180
+triggers:
+  - 商品保修多久
+  - 是否支持质保
+  - 商品坏了能维修吗
+allowed_capabilities:
+  - knowledge.search
+risk_level: read_only
+prompt: SKILL.md
+references:
+  - path: references/answer-guidance.md
+    always: true
