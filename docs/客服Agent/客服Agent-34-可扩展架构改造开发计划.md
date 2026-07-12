@@ -4,7 +4,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成统一 Turn 结果分类等九批收口，故障与恢复测试仍在继续 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成失败生命周期与故障恢复等十批收口，外部依赖与真实数据库验收仍在继续 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
@@ -830,7 +830,12 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 - [x] Monitor 区分成功、业务拒绝、技术失败、Guardrail 拒绝和用户取消。
 - [x] Agent 在生成 ChatResponse 前抛异常时也记录 Turn 失败指标。
 - [x] 健康检查区分 liveness 和 readiness；JDBC 核心表不可读时 readiness 返回 503。
-- [ ] 增加并发、重启恢复、超时、熔断和故障注入测试。
+- [ ] 完成并发、重启恢复、超时、熔断和故障注入测试：
+  - [x] 进程内会话串行、跨 Store CAS、幂等并发合并和租约恢复测试。
+  - [x] ConversationStore/CapabilityIdempotencyStore 重建恢复与 Session 保存失败回放测试。
+  - [x] Agent 步数预算、MCP 真实读取超时、有限重试、协议失败、熔断打开和冷却恢复测试。
+  - [ ] Capability 执行中 deadline、LLM 重试上限及售后/Embedding/Qdrant HTTP 黑洞测试。
+  - [ ] 真实 MySQL 并发、重启、查询超时、readiness 掉线与恢复测试。
 
 ### Phase 8 第一批进度（2026-07-12）
 
@@ -960,6 +965,28 @@ Session 冲突和其他运行时异常会先记录稳定 `errorCode`，再原样
 本批仍保留三个明确边界：Monitor 累计值是单进程内存指标，尚未接 Micrometer/Prometheus；Spring
 Security Filter 和 Bean Validation 在进入 Agent 前拒绝的请求不计作 Agent Turn；跨实例聚合、指标持久化
 和数据库/网络故障注入仍属于后续批次。提交前默认测试套件共 `355` 项，全部通过。
+
+### Phase 8 第十批进度（2026-07-12）
+
+已把 Action Handler 未知异常从伪 `COMPLETED` 修正为结构化 `ActionFlow.FAILED`，Runtime 会写入
+`WorkflowStatus.FAILED` 和终态 Trace，失败 Workflow 下一轮不再恢复。Agent 最大 Action 步数从硬编码
+改为 `smartcs.agent.max-iterations`，默认 10 且不能关闭；超限时同时产生 `turn_timeout`、FAILED
+Workflow 终态和 Monitor `TURN_STEP_BUDGET_EXCEEDED` 技术失败。
+
+`JdbcSessionStore` 现在在 JSON 编码和 INSERT/UPDATE 前验证 snapshot owner，防止“调用方收到异常，但
+错误 owner 数据已经入库”。真实 Agent 故障注入测试还覆盖了更危险的窗口：退货 Provider 已成功、
+随后 Session save 失败；重试会使用相同 idempotencyKey 回放第一次结果，只补写 Session，不会再次调用
+副作用 Provider。
+
+HTTP MCP Client 新增 JSON-RPC envelope 和 initialize/tools/list/tools/call 结果结构校验，HTTP 200 的空结果
+不再伪装成 Capability SUCCESS。401 等确定性客户端错误不重试；网络/读取失败和 5xx 仍按有限次数重试。
+熔断器通过可注入时钟验证打开、冷却后探测成功、失败计数清零；本地慢 HTTP Server 验证 read timeout
+确实限制等待时间。详细说明见 `客服Agent-51-失败生命周期与可靠性故障注入说明.md`。
+
+本批完成后默认测试套件共 `364` 项，全部通过。但通用 Capability deadline 目前仍只在 Provider 调用前
+fail-fast，不能安全强制中止已经开始的副作用；LLM 最坏重试时间、售后/Embedding/Qdrant HTTP 超时、
+pending 人工工单持久化、真实 MySQL/Testcontainers、Session 删除 ABA 和领域数据库唯一约束仍未完成，
+因此上面的 Phase 8 故障测试总项继续保持未勾选。
 
 ### 验收标准
 
@@ -1149,7 +1176,7 @@ smartcs:
 ### Workflow
 
 - [x] 订单、商品、退货申请、退货查询、政策问答已从大 Skill 拆出。
-- [ ] 活跃 Workflow 支持恢复、取消、完成和失败。
+- [x] 活跃 Workflow 支持恢复、取消、完成和失败。
 - [x] WorkflowState 隔离、可持久化并具备 schemaVersion 与注册式迁移链。
 - [ ] 副作用 Workflow 在执行前确认。
 
@@ -1171,7 +1198,7 @@ smartcs:
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 355 个测试）。
+- [x] 旧测试全部保留并通过（当前默认套件共 364 个测试）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。

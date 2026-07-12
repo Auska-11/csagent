@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.mcp.client;
 
+import com.sun.net.httpserver.HttpServer;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.agent.context.ExecutionContext;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityCall;
@@ -7,17 +8,25 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.client.RestClient;
 import org.springframework.test.web.client.ExpectedCount;
 import org.springframework.test.web.client.MockRestServiceServer;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTimeout;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
@@ -25,6 +34,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 import static org.springframework.http.HttpMethod.POST;
 
@@ -157,7 +167,107 @@ class HttpMcpClientTransportTest {
         fixture.server.verify();
     }
 
+    @Test
+    void shouldNotRetryDeterministicAuthenticationFailure() {
+        Fixture fixture = fixture();
+        fixture.properties.setMaxRetries(3);
+        fixture.server.expect(ExpectedCount.once(), requestTo(fixture.properties.getBaseUrl()))
+                .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+
+        McpTransportException error = assertThrows(
+                McpTransportException.class,
+                fixture.transport::initialize
+        );
+
+        assertTrue(error.getMessage().contains("after 1 attempt"));
+        assertEquals(1, fixture.transport.health().consecutiveFailures());
+        fixture.server.verify();
+    }
+
+    @Test
+    void shouldRejectMalformedSuccessEnvelopeAndCountItAsCircuitFailure() {
+        Fixture fixture = fixture();
+        fixture.properties.setCircuitFailureThreshold(1);
+        fixture.properties.setCircuitOpenMs(60_000);
+        fixture.server.expect(requestTo(fixture.properties.getBaseUrl()))
+                // HTTP 200 但没有完整 initialize result，不能被当作远端服务可用。
+                .andRespond(withSuccess("{\"jsonrpc\":\"2.0\",\"result\":{}}", MediaType.APPLICATION_JSON));
+
+        McpTransportException error = assertThrows(
+                McpTransportException.class,
+                fixture.transport::initialize
+        );
+
+        assertTrue(error.getMessage().contains("after 1 attempt"));
+        assertFalse(fixture.transport.health().available());
+        fixture.server.verify();
+    }
+
+    @Test
+    void shouldAllowOneNewRequestAfterCircuitCooldownAndResetFailureStateOnSuccess() {
+        AtomicLong now = new AtomicLong(1_000);
+        Fixture fixture = fixture(now::get);
+        fixture.properties.setCircuitFailureThreshold(1);
+        fixture.properties.setCircuitOpenMs(500);
+        fixture.server.expect(requestTo(fixture.properties.getBaseUrl()))
+                .andRespond(withServerError());
+        fixture.server.expect(requestTo(fixture.properties.getBaseUrl()))
+                .andRespond(withSuccess(initializeResponse(), MediaType.APPLICATION_JSON));
+
+        assertThrows(McpTransportException.class, fixture.transport::initialize);
+        assertFalse(fixture.transport.health().available());
+        assertEquals(1, fixture.transport.health().consecutiveFailures());
+
+        // 推进测试时钟跨过冷却窗口，不使用真实 sleep，测试稳定且执行很快。
+        now.addAndGet(500);
+        McpRemoteServerInfo recovered = fixture.transport.initialize();
+
+        assertEquals("remote-cs", recovered.name());
+        assertTrue(fixture.transport.health().available());
+        assertEquals(0, fixture.transport.health().consecutiveFailures());
+        assertEquals("", fixture.transport.health().lastError());
+        fixture.server.verify();
+    }
+
+    @Test
+    void shouldBoundRealHttpReadWhenRemoteServerStopsResponding() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/mcp", exchange -> {
+            try {
+                Thread.sleep(250);
+                byte[] body = initializeResponse().getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+
+        try {
+            McpClientProperties properties = new McpClientProperties();
+            properties.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/mcp");
+            properties.setServiceToken("service-secret");
+            properties.setTimeoutMs(50);
+            properties.setMaxRetries(0);
+            HttpMcpClientTransport transport = new HttpMcpClientTransport(properties);
+
+            assertTimeout(Duration.ofSeconds(2), () ->
+                    assertThrows(McpTransportException.class, transport::initialize)
+            );
+        } finally {
+            server.stop(0);
+        }
+    }
+
     private Fixture fixture() {
+        return fixture(System::currentTimeMillis);
+    }
+
+    private Fixture fixture(LongSupplier clock) {
         McpClientProperties properties = new McpClientProperties();
         properties.setBaseUrl("http://remote.test/mcp");
         properties.setServerId("remote-cs");
@@ -166,8 +276,21 @@ class HttpMcpClientTransportTest {
 
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        HttpMcpClientTransport transport = new HttpMcpClientTransport(properties, builder.build());
+        HttpMcpClientTransport transport = new HttpMcpClientTransport(properties, builder.build(), clock);
         return new Fixture(properties, server, transport);
+    }
+
+    private String initializeResponse() {
+        return """
+                {
+                  "jsonrpc":"2.0",
+                  "id":"init-recovery",
+                  "result":{
+                    "protocolVersion":"2024-11-05",
+                    "serverInfo":{"name":"remote-cs","version":"2.0.0"}
+                  }
+                }
+                """;
     }
 
     private ExecutionContext authenticatedContext() {

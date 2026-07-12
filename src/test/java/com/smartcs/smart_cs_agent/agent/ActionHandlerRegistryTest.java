@@ -4,6 +4,7 @@ import com.smartcs.smart_cs_agent.agent.action.AgentAction;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
+import com.smartcs.smart_cs_agent.agent.context.WorkflowStatus;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionExecutionResult;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandler;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandlingContext;
@@ -88,6 +89,11 @@ class ActionHandlerRegistryTest {
                 .anyMatch(event -> "action_handler_failed".equals(event.getEventType())));
         assertTrue(context.getObservations().stream()
                 .anyMatch(observation -> "action_failure".equals(observation.getType())));
+        assertEquals(WorkflowStatus.FAILED, context.getState().getWorkflowStatus());
+        assertTrue(context.getTraceEvents().stream().anyMatch(event ->
+                "workflow_completed".equals(event.getEventType())
+                        && "FAILED".equals(event.getData().get("status"))
+        ));
         assertTrue(!answer.contains("database password"), "内部异常文本不能进入用户回复");
         assertTrue(context.getTraceEvents().stream()
                 .filter(event -> "action_handler_failed".equals(event.getEventType()))

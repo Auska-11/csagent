@@ -35,6 +35,10 @@ public final class ActionExecutionResult {
         return new ActionExecutionResult(ActionFlow.CANCELLED, answer);
     }
 
+    public static ActionExecutionResult failed(String answer) {
+        return new ActionExecutionResult(ActionFlow.FAILED, answer);
+    }
+
     public static ActionExecutionResult handedOff(String answer) {
         return new ActionExecutionResult(ActionFlow.HANDED_OFF, answer);
     }

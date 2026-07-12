@@ -7,11 +7,13 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityRiskLevel;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.HttpClientErrorException;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -21,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -35,17 +38,26 @@ public class HttpMcpClientTransport implements McpClientTransport {
 
     private final McpClientProperties properties;
     private final RestClient restClient;
+    private final LongSupplier clock;
     private final AtomicInteger consecutiveFailures = new AtomicInteger();
     private volatile long circuitOpenUntil;
     private volatile String lastError = "";
 
     public HttpMcpClientTransport(McpClientProperties properties) {
-        this(properties, buildClient(properties));
+        this(properties, buildClient(properties), System::currentTimeMillis);
     }
 
     HttpMcpClientTransport(McpClientProperties properties, RestClient restClient) {
+        this(properties, restClient, System::currentTimeMillis);
+    }
+
+    /** 测试可注入时钟，验证熔断冷却恢复时不需要真实 sleep。 */
+    HttpMcpClientTransport(McpClientProperties properties,
+                           RestClient restClient,
+                           LongSupplier clock) {
         this.properties = properties;
         this.restClient = restClient;
+        this.clock = clock;
     }
 
     @Override
@@ -148,7 +160,7 @@ public class HttpMcpClientTransport implements McpClientTransport {
     @Override
     public McpTransportHealth health() {
         return new McpTransportHealth(
-                System.currentTimeMillis() >= circuitOpenUntil,
+                clock.getAsLong() >= circuitOpenUntil,
                 consecutiveFailures.get(),
                 circuitOpenUntil,
                 lastError
@@ -173,21 +185,25 @@ public class HttpMcpClientTransport implements McpClientTransport {
                     .retrieve()
                     .body(Map.class);
             Map<String, Object> mapped = map(response);
+            validateJsonRpcEnvelope(mapped);
             if (mapped.containsKey("error") && mapped.get("error") != null) {
                 throw new McpTransportException("Remote MCP returned JSON-RPC error");
             }
+            validateResultEnvelope(method, mapped);
             return mapped;
         });
     }
 
     private <T> T executeWithRetry(Supplier<T> operation) {
-        if (System.currentTimeMillis() < circuitOpenUntil) {
+        if (clock.getAsLong() < circuitOpenUntil) {
             throw new McpTransportException("MCP circuit is open");
         }
 
         RuntimeException last = null;
         int attempts = Math.max(1, properties.getMaxRetries() + 1);
+        int attempted = 0;
         for (int attempt = 1; attempt <= attempts; attempt++) {
+            attempted = attempt;
             try {
                 T result = operation.get();
                 consecutiveFailures.set(0);
@@ -197,14 +213,77 @@ public class HttpMcpClientTransport implements McpClientTransport {
             } catch (RestClientException | McpTransportException e) {
                 last = e;
                 lastError = e.getClass().getSimpleName();
+                if (!isRetryable(e)) {
+                    break;
+                }
             }
         }
 
         int failures = consecutiveFailures.incrementAndGet();
         if (failures >= Math.max(1, properties.getCircuitFailureThreshold())) {
-            circuitOpenUntil = System.currentTimeMillis() + Math.max(1, properties.getCircuitOpenMs());
+            circuitOpenUntil = clock.getAsLong() + Math.max(1, properties.getCircuitOpenMs());
         }
-        throw new McpTransportException("Remote MCP request failed after " + attempts + " attempt(s)", last);
+        throw new McpTransportException("Remote MCP request failed after " + attempted + " attempt(s)", last);
+    }
+
+    private boolean isRetryable(RuntimeException failure) {
+        // JSON-RPC error和协议结构错误通常是确定性的，立即重试只会重复同一个错误。
+        if (failure instanceof McpTransportException) {
+            return false;
+        }
+        if (failure instanceof HttpClientErrorException clientError) {
+            HttpStatus status = HttpStatus.resolve(clientError.getStatusCode().value());
+            return status == HttpStatus.REQUEST_TIMEOUT || status == HttpStatus.TOO_MANY_REQUESTS;
+        }
+        // 网络连接/读取错误和 5xx 都由 RestClientException 表示，可以在有限次数内重试。
+        return failure instanceof RestClientException;
+    }
+
+    private void validateJsonRpcEnvelope(Map<String, Object> response) {
+        if (!"2.0".equals(text(response.get("jsonrpc"))) || !response.containsKey("id")) {
+            throw new McpTransportException("Remote MCP returned an invalid JSON-RPC envelope");
+        }
+        boolean hasResult = response.containsKey("result") && response.get("result") != null;
+        boolean hasError = response.containsKey("error") && response.get("error") != null;
+        if (hasResult == hasError) {
+            throw new McpTransportException("Remote MCP response must contain exactly one of result or error");
+        }
+    }
+
+    /**
+     * HTTP 200 只表示传输成功，不代表 JSON-RPC 结果可用。
+     *
+     * <p>如果缺少 result、tools 或 isError，继续映射会把空对象伪装成 Capability SUCCESS。
+     * 校验放在重试闭包内，这类协议故障也会进入失败计数和熔断器。</p>
+     */
+    private void validateResultEnvelope(String method, Map<String, Object> response) {
+        if (!response.containsKey("result") || !(response.get("result") instanceof Map<?, ?>)) {
+            throw new McpTransportException("Remote MCP response does not contain a result object");
+        }
+        Map<String, Object> result = map(response.get("result"));
+        switch (method) {
+            case "initialize" -> {
+                if (text(result.get("protocolVersion")).isBlank()
+                        || !(result.get("serverInfo") instanceof Map<?, ?>)) {
+                    throw new McpTransportException("Remote MCP initialize result is incomplete");
+                }
+            }
+            case "tools/list" -> {
+                if (!(result.get("tools") instanceof Collection<?>)) {
+                    throw new McpTransportException("Remote MCP tools/list result is incomplete");
+                }
+            }
+            case "tools/call" -> {
+                Object isError = result.get("isError");
+                if (!(result.get("content") instanceof Collection<?>)
+                        || (isError != null && !(isError instanceof Boolean))) {
+                    throw new McpTransportException("Remote MCP tools/call result is incomplete");
+                }
+            }
+            default -> {
+                // 当前 Transport 只调用上面三个方法；保留 default 让未来协议方法仍先通过通用 result 校验。
+            }
+        }
     }
 
     private static RestClient buildClient(McpClientProperties properties) {

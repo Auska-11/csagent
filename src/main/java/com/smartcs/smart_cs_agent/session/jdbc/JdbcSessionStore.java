@@ -11,6 +11,7 @@ import com.smartcs.smart_cs_agent.session.core.ConversationStateCodec;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.util.Objects;
 import java.util.Optional;
 
 /** MySQL 会话持久化适配器。 */
@@ -76,6 +77,14 @@ public class JdbcSessionStore implements SessionStore {
             ConversationStateSnapshot snapshot) {
         if (expectedVersion < 0) {
             throw new IllegalArgumentException("expectedVersion cannot be negative");
+        }
+
+        // SessionStore 是公开 SPI，不能假设每个调用方都先经过 ConversationStore。
+        // 所有权必须在 JSON 编码和任何 INSERT/UPDATE 之前校验；否则虽然返回异常，错误数据却已经入库。
+        Objects.requireNonNull(key, "key cannot be null");
+        Objects.requireNonNull(snapshot, "snapshot cannot be null");
+        if (!key.userId().equals(snapshot.userId())) {
+            throw new IllegalArgumentException("session snapshot owner does not match key");
         }
 
         String stateJson = codec.encode(snapshot);

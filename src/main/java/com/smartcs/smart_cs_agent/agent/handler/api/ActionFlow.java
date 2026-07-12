@@ -14,6 +14,9 @@ public enum ActionFlow {
     /** 用户主动取消当前 Workflow；这是正常终态，但不能计入成功完成。 */
     CANCELLED,
 
+    /** Action Handler 或 Runtime 边界发生不可恢复的技术失败。 */
+    FAILED,
+
     /** 已成功转交人工，当前 Workflow 结束。 */
     HANDED_OFF
 }

@@ -109,6 +109,43 @@ class DefaultCapabilityGatewayTest {
         assertEquals(null, receivedContext.get());
     }
 
+    @Test
+    void shouldConvertProviderExceptionWithoutLeakingItsMessage() {
+        CapabilityProvider provider = new CapabilityProvider() {
+            @Override
+            public String providerId() {
+                return "failing-provider";
+            }
+
+            @Override
+            public Collection<CapabilityDefinition> definitions() {
+                return List.of(new CapabilityDefinition(
+                        "test.failure",
+                        "故障注入能力",
+                        Map.of("type", "object"),
+                        Map.of("type", "object")
+                ));
+            }
+
+            @Override
+            public CapabilityResult<?> invoke(CapabilityCall call, ExecutionContext context) {
+                throw new IllegalStateException("jdbc:mysql://secret-host password=do-not-leak");
+            }
+        };
+        DefaultCapabilityGateway gateway = new DefaultCapabilityGateway(List.of(provider));
+
+        CapabilityResult<?> result = gateway.invoke(
+                new CapabilityCall("test.failure", Map.of()),
+                ExecutionContext.legacy()
+        );
+
+        assertEquals(CapabilityOutcome.TECHNICAL_FAILURE, result.getOutcome());
+        assertEquals("CAPABILITY_PROVIDER_ERROR", result.getErrorCode());
+        assertTrue(result.getMessage().contains("IllegalStateException"));
+        assertTrue(!result.getMessage().contains("secret-host"));
+        assertTrue(!result.getMessage().contains("do-not-leak"));
+    }
+
     private CapabilityProvider provider(String providerId,
                                         String capabilityId,
                                         AtomicReference<ExecutionContext> receivedContext) {

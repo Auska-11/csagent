@@ -21,6 +21,7 @@ import com.smartcs.smart_cs_agent.workflow.core.WorkflowCandidate;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRouteResult;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -50,20 +51,41 @@ import java.util.Objects;
 @Component
 public class AgentRuntime {
 
+    private static final int DEFAULT_MAX_ITERATIONS = 10;
+
     /** 负责 Workflow 路由以及 Workflow -> Skill Package 绑定。 */
     private final SkillManager skillManager;
 
     /** 负责 Action Class -> ActionHandler 的插件分发。 */
     private final ActionHandlerRegistry actionHandlerRegistry;
 
-    /** Spring 生产构造函数。 */
-    @Autowired
+    /**
+     * 单轮最多执行多少个 Action。
+     *
+     * <p>它限制的是 Agent 循环步骤，不是 HTTP 秒数。即使某个扩展 Workflow 错误地一直返回 CONTINUE，
+     * Runtime 也会在固定步数后安全终止，避免一个请求无限占用线程。</p>
+     */
+    private final int maxIterations;
+
+    /** 兼容纯 Java 测试的默认构造方式。 */
     public AgentRuntime(SkillManager skillManager, ActionHandlerRegistry actionHandlerRegistry) {
+        this(skillManager, actionHandlerRegistry, DEFAULT_MAX_ITERATIONS);
+    }
+
+    /** Spring 生产构造函数；步数预算可通过环境变量调整，但不能关闭。 */
+    @Autowired
+    public AgentRuntime(SkillManager skillManager,
+                        ActionHandlerRegistry actionHandlerRegistry,
+                        @Value("${smartcs.agent.max-iterations:10}") int maxIterations) {
         this.skillManager = Objects.requireNonNull(skillManager, "skillManager cannot be null");
         this.actionHandlerRegistry = Objects.requireNonNull(
                 actionHandlerRegistry,
                 "actionHandlerRegistry cannot be null"
         );
+        if (maxIterations <= 0) {
+            throw new IllegalArgumentException("smartcs.agent.max-iterations must be positive");
+        }
+        this.maxIterations = maxIterations;
     }
 
     /**
@@ -119,7 +141,6 @@ public class AgentRuntime {
                 .orElse(null);
         recordSelectedSkillPackage(context, workflow, skillPackage);
 
-        int maxIterations = 10;
         for (int i = 0; i < maxIterations; i++) {
             context.increaseStepCount();
 
@@ -149,7 +170,7 @@ public class AgentRuntime {
             return finishTurn(context, workflow, result);
         }
 
-        return finishTimedOutTurn(context, maxIterations);
+        return finishTimedOutTurn(context, workflow, maxIterations);
     }
 
     /**
@@ -209,7 +230,7 @@ public class AgentRuntime {
                     handlerId,
                     "Action handler execution failed"
             ));
-            return ActionExecutionResult.completed(
+            return ActionExecutionResult.failed(
                     "当前处理步骤暂时失败，为避免重复操作已经停止。请稍后重试，或请求人工客服。"
             );
         }
@@ -247,6 +268,11 @@ public class AgentRuntime {
             state.clearTaskProgress();
             state.markWorkflowCancelled();
             recordWorkflowTerminal(context, workflow, state);
+        } else if (result.getFlow() == ActionFlow.FAILED) {
+            // 未知插件异常不能伪装成正常完成。保留 Workflow 私有状态便于恢复快照和故障分析，
+            // 但全局状态设为终态 FAILED，下一轮 Router 不会继续执行这条损坏流程。
+            state.markWorkflowFailed();
+            recordWorkflowTerminal(context, workflow, state);
         } else if (result.getFlow() == ActionFlow.HANDED_OFF) {
             state.clearTaskProgress();
             state.markWorkflowHandedOff();
@@ -263,7 +289,9 @@ public class AgentRuntime {
         return answer;
     }
 
-    private String finishTimedOutTurn(TurnContext context, int maxIterations) {
+    private String finishTimedOutTurn(TurnContext context,
+                                      AgentWorkflow workflow,
+                                      int maxIterations) {
         String answer = "当前处理步骤过多，已暂停。请换个说法再试一次。";
         ConversationState state = context.getState();
         context.addTrace("turn_timeout", "本轮执行超过最大步数", Map.of("maxIterations", maxIterations));
@@ -272,6 +300,7 @@ public class AgentRuntime {
         state.addAssistantMessage(answer);
         recordMemoryCompressionIfNeeded(context, summaryVersionBefore, state);
         state.markWorkflowFailed();
+        recordWorkflowTerminal(context, workflow, state);
         context.markDone(answer);
         return answer;
     }

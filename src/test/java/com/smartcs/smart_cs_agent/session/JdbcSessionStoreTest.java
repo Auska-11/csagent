@@ -73,6 +73,26 @@ class JdbcSessionStoreTest {
         assertFalse(restartedStore.load(key).isPresent());
     }
 
+    @Test
+    void shouldRejectOwnerMismatchBeforeAnySessionRowIsWritten() {
+        RecordingJdbcDatabaseClient database = new RecordingJdbcDatabaseClient();
+        JdbcSessionStore store = new JdbcSessionStore(
+                database,
+                new ConversationStateCodec(new ObjectMapper())
+        );
+        ConversationKey key = ConversationKey.defaultTenant("USER-001", "jdbc-owner-mismatch");
+        ConversationState anotherUsersState = new ConversationState("private", "USER-002");
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> store.save(key, 0, anotherUsersState.toPersistenceSnapshot())
+        );
+
+        assertTrue(error.getMessage().contains("owner does not match"));
+        assertTrue(database.rows.isEmpty(), "所有权校验失败时不能先写入再抛异常");
+        assertEquals("", database.lastUpdateSql);
+    }
+
     private static final class RecordingJdbcDatabaseClient extends JdbcDatabaseClient {
 
         private final Map<ConversationKey, Row> rows = new ConcurrentHashMap<>();

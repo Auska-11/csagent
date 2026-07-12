@@ -26,6 +26,9 @@ spring:
     name: smart-cs-agent
 
 smartcs:
+  agent:
+    # 防止错误 Workflow/Handler 无限返回 CONTINUE；这是步骤预算，不替代 HTTP/JDBC 超时。
+    max-iterations: ${SMARTCS_AGENT_MAX_ITERATIONS:10}
   security:
     # 本地工作台通过 demo issuer 获取短期 JWT；生产环境必须设为 false，并由真实身份系统签发。
     demo-issuer-enabled: ${SMARTCS_SECURITY_DEMO_ISSUER_ENABLED:true}
