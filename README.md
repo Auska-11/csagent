@@ -21,11 +21,11 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - MCP-style 工具层：工具具备统一 `ToolDefinition`、`ToolCall`、`ToolResult`、`inputSchema`、`outputSchema` 和只读工具列表接口，订单、商品、退货、用户和人工转接等业务工具已升级为明确 DTO 输出。
 - MCP Adapter：新增 `GET /api/mcp/tools` 和 `POST /api/mcp/tools/call`，把内部工具注册表暴露成更接近 MCP `tools/list`、`tools/call` 的协议边界。
 - 独立 MCP Server 第一版：新增 `POST /mcp` JSON-RPC 风格入口，支持 `initialize`、`tools/list` 和 `tools/call`。
-- 数据库持久化：支持 `memory` / `jdbc` 双模式，默认内存模式保证本地测试和 CI 稳定，开启 `SMARTCS_PERSISTENCE_MODE=jdbc` 后，用户、商品、订单和退货记录可从 MySQL 读写。
+- 数据库持久化：支持 `memory` / `jdbc` 双模式，默认内存模式保证本地测试和 CI 稳定；JDBC 模式除业务数据外，还持久化会话状态和 Capability 幂等记录，并为连接、网络读取和 SQL 执行设置明确超时。
 - 后端联调：`HandoffTools` 支持 `memory` / `after-sales-http` 双模式，可调用桌面 `demo/after-sales-sla-platform` 的 `POST /api/tickets` 创建真实售后工单。
 - Monitor 指标与反馈闭环：支持 `GET /api/monitor/summary`、`POST /api/monitor/feedback`、`GET /api/monitor/feedback/candidates`、候选样本审核接口、Eval case 草稿导出接口和半自动合并正式评测集接口，基于 Trace 聚合整体/按工具成功率、LLM 失败率、转人工次数、平均耗时、用户反馈有用率、候选样本审核状态数量和负反馈问题类型分布，并能把无用反馈沉淀成 Eval 待审核候选样本；候选样本会持久化到本地 JSON 文件，服务重启后仍可继续审核；Monitor Summary 会进一步生成结构化风险告警，前端 Monitor 面板可以直接看到工具失败率、LLM 失败率、低有用反馈率、不安全承诺和内部实现泄露等风险。
 - 接口工程化：聊天接口使用明确 DTO、Spring Validation 和统一 `ApiErrorResponse`。
-- 部署工程化：支持 Docker 多阶段构建、`docker compose` 一键启动、环境变量注入模型配置，并提供 `/api/health` 健康检查接口。
+- 部署工程化：支持 Docker 多阶段构建、`docker compose` 一键启动、环境变量注入，并提供独立 liveness/readiness 健康探针。
 - 离线评测：覆盖路由、知识库召回、回复质量规则、Agent 链路回复、LLM-as-Judge 五类评测，并输出 JSON 总览、历史快照和趋势指标。
 
 ## 架构概览
@@ -258,7 +258,9 @@ GET /api/eval/reports
 查看服务健康状态：
 
 ```http
-GET /api/health
+GET /api/health                       # 旧版兼容 liveness
+GET /actuator/health/liveness         # 进程是否存活
+GET /actuator/health/readiness        # 当前实例是否可接收新流量
 ```
 
 ## 本地运行
@@ -296,9 +298,12 @@ $env:SMARTCS_PERSISTENCE_MODE="jdbc"
 $env:SMARTCS_JDBC_URL="jdbc:mysql://localhost:3306/smart_cs_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"
 $env:SMARTCS_JDBC_USERNAME="root"
 $env:SMARTCS_JDBC_PASSWORD="your-password"
+$env:SMARTCS_JDBC_CONNECT_TIMEOUT_MS="3000"
+$env:SMARTCS_JDBC_SOCKET_TIMEOUT_MS="10000"
+$env:SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS="5"
 ```
 
-启动后，项目会自动创建 `cs_user`、`cs_product`、`cs_order`、`cs_return_record` 四张表，并写入演示种子数据。设计说明见 [客服Agent-28-数据库持久化设计.md](docs/客服Agent/客服Agent-28-数据库持久化设计.md)。
+启动后，项目会自动创建四张业务表，以及 `cs_agent_session`、`cs_capability_idempotency` 两张 Agent 基础设施表，并写入演示种子数据。默认连接超时为 3 秒、Socket 读取超时为 10 秒、单条 SQL 超时为 5 秒，避免数据库故障时业务请求和 readiness 长期阻塞。业务表、会话与幂等存储分别见 [数据库持久化设计](docs/客服Agent/客服Agent-28-数据库持久化设计.md)、[SessionStore 持久化与恢复说明](docs/客服Agent/客服Agent-43-SessionStore持久化与恢复说明.md) 和 [Capability 幂等持久化与租约说明](docs/客服Agent/客服Agent-44-Capability幂等持久化与租约说明.md)。
 
 默认 RAG 使用本地检索，不依赖外部向量库。如果要演示真 embedding + Qdrant，可以先启动 Qdrant：
 
@@ -413,11 +418,16 @@ SMARTCS_EMBEDDING_API_KEY=your-api-key
 SMARTCS_QDRANT_BASE_URL=http://qdrant:6333
 ```
 
+Compose 也会透传 `SMARTCS_JDBC_CONNECT_TIMEOUT_MS`、`SMARTCS_JDBC_SOCKET_TIMEOUT_MS` 和
+`SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS`。开启 JDBC 模式时可以在 `.env` 中覆盖默认值。
+
 访问页面和健康检查：
 
 ```text
 http://localhost:8080
 http://localhost:8080/api/health
+http://localhost:8080/actuator/health/liveness
+http://localhost:8080/actuator/health/readiness
 ```
 
 停止容器：
@@ -449,7 +459,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 115 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 306 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -487,6 +497,9 @@ docker compose down
 - [Multi-Agent 路由设计](docs/客服Agent/客服Agent-31-Multi-Agent路由设计.md)
 - [售后工单平台联调设计](docs/客服Agent/客服Agent-32-售后工单平台联调设计.md)
 - [Embedding 向量数据库 RAG 设计](docs/客服Agent/客服Agent-33-Embedding向量数据库RAG设计.md)
+- [可扩展架构改造开发计划](docs/客服Agent/客服Agent-34-可扩展架构改造开发计划.md)
+- [Capability 幂等持久化与租约说明](docs/客服Agent/客服Agent-44-Capability幂等持久化与租约说明.md)
+- [Liveness 与 Readiness 健康探针说明](docs/客服Agent/客服Agent-45-Liveness与Readiness健康探针说明.md)
 
 ## 简历表达参考
 

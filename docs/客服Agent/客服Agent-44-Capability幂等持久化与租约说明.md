@@ -287,6 +287,19 @@ SMARTCS_IDEMPOTENCY_POLL_INTERVAL_MS
 
 生产配置应保证 `lease-ms` 大于最长同步 Provider deadline，并为网络抖动留出余量。
 
+JDBC 客户端还统一设置了三层数据库超时：
+
+```text
+SMARTCS_JDBC_CONNECT_TIMEOUT_MS=3000
+SMARTCS_JDBC_SOCKET_TIMEOUT_MS=10000
+SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS=5
+```
+
+一次 JDBC 调用的近似上界是 `connectTimeout + max(socketTimeout, queryTimeout)`，还要额外考虑线程
+调度、GC 和数据库端取消延迟。租约时间必须显著大于这个上界，否则数据库暂时变慢时，owner 可能
+还在等待续租 SQL，另一实例却已经认为租约过期。超时只能给阻塞设置上限，不能让 Provider 副作用
+和幂等记录自动变成同一个事务。
+
 ## 11. Gateway 对外错误码
 
 | 错误码 | 含义 | 是否调用 Provider |
@@ -320,7 +333,7 @@ SMARTCS_IDEMPOTENCY_POLL_INTERVAL_MS
 | DTO 恢复 | ReturnApplyWorkflow 可以消费回放后的 Map |
 | Store 不可用 | Gateway 失败关闭且 Provider 调用次数为 0 |
 
-验证结果：
+第三批完成时的验证结果：
 
 ```text
 mvn test
@@ -330,26 +343,27 @@ Tests run: 297, Failures: 0, Errors: 0, Skipped: 0
 ## 13. 当前限制
 
 1. CI 仍未使用真实 MySQL/Testcontainers，本批通过带原子条件的 JDBC 测试替身验证 SQL 契约。
-2. `JdbcDatabaseClient` 每次查询都通过 DriverManager 新建连接，没有连接池、事务或连接超时治理。
+2. `JdbcDatabaseClient` 每次查询都通过 DriverManager 新建连接，没有连接池或事务；第四批已补充连接、
+   Socket 和 SQL 执行超时，详见第 45 篇。
 3. 表结构仍由代码执行 `CREATE TABLE IF NOT EXISTS`，没有 Flyway/Liquibase。
 4. 完成记录还没有 TTL 清理任务，长期运行后表会持续增长。
 5. canonical JSON 只面向 Capability 的 JSON 兼容参数；自定义二进制对象或不可序列化对象会失败关闭。
-6. 续租使用应用节点时钟和后台线程；长时间 GC、数据库阻塞或严重时钟漂移仍可能造成租约不确定。
+6. 续租使用应用节点时钟和后台线程；显式数据库超时能限制阻塞时长，但长时间 GC、数据库阻塞或
+   严重时钟漂移仍可能造成租约不确定。
 7. Provider 副作用与幂等完成记录不是同一个数据库事务，崩溃窗口仍可能导致再次调用。
 8. `ReturnApplicationService` 的订单锁仍是进程内锁，退货表也应增加 `order_id` 唯一约束。
 9. memory 模式只适合单实例 Demo，不能因为实现了同一 SPI 就把它当作分布式方案。
-10. readiness 尚未检查幂等表和会话表是否可读。
+10. readiness 检查已在下一批完成，详见 `客服Agent-45-Liveness与Readiness健康探针说明.md`。
 
 ## 14. 下一批建议
 
 后续按风险优先级继续：
 
-1. 增加 JDBC readiness，区分 liveness 与 readiness。
-2. 使用 Testcontainers MySQL 验证真实唯一键、方言和并发行为。
-3. 为退货业务增加数据库唯一约束，并评估与幂等记录共事务。
-4. 为外部 MCP/HTTP Provider 统一透传 idempotencyKey。
-5. 实现 WorkflowStateMigrator 注册链。
-6. 增加幂等完成记录 TTL 与安全清理任务。
+1. 使用 Testcontainers MySQL 验证真实唯一键、方言和并发行为。
+2. 为退货业务增加数据库唯一约束，并评估与幂等记录共事务。
+3. 为外部 MCP/HTTP Provider 统一透传 idempotencyKey。
+4. 实现 WorkflowStateMigrator 注册链。
+5. 增加幂等完成记录 TTL 与安全清理任务。
 
 本批之后，多实例已经拥有明确的“先抢占、再执行、后回放”边界。下一阶段要继续把学习型 JDBC
 实现补成可观测、可迁移、可用真实数据库验证的生产基础设施。

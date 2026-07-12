@@ -19,9 +19,10 @@
 - 订单表：`cs_order`
 - 退货记录表：`cs_return_record`
 
-暂时不迁移：
+第一版当时暂时不迁移：
 
-- `ConversationStore` 会话状态：仍然保留内存模式，后续更适合放 Redis 或 MySQL。
+- `ConversationStore` 会话状态：第一版仍保留内存模式；Phase 8 第二批已经补充
+  `SessionStore` SPI 和 `JdbcSessionStore`，详见 `客服Agent-43-SessionStore持久化与恢复说明.md`。
 - `UserMemoryStore` 长期偏好记忆：仍然保留内存模式，后续可以单独设计用户画像表。
 - `FeedbackEvalCandidateStore`：当前已经支持本地 JSON 文件持久化，后续可以再迁移到数据库。
 
@@ -47,6 +48,9 @@ smartcs:
       url: ${SMARTCS_JDBC_URL:jdbc:mysql://localhost:3306/smart_cs_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
       username: ${SMARTCS_JDBC_USERNAME:root}
       password: ${SMARTCS_JDBC_PASSWORD:}
+      connect-timeout-ms: ${SMARTCS_JDBC_CONNECT_TIMEOUT_MS:3000}
+      socket-timeout-ms: ${SMARTCS_JDBC_SOCKET_TIMEOUT_MS:10000}
+      query-timeout-seconds: ${SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS:5}
 ```
 
 默认仍然是 `memory`，所以：
@@ -71,6 +75,7 @@ src/main/java/com/smartcs/smart_cs_agent/persistence/JdbcDatabaseClient.java
 - 加载数据库驱动。
 - 打开数据库连接。
 - 执行查询和更新。
+- 为连接、网络读取和每条 SQL 设置超时上限。
 - 把 `ResultSet` 映射成业务对象。
 
 这里没有一开始就使用 JPA，是为了让第一版更容易理解。JDBC 能直接看到 SQL 和数据表结构，更适合学习 Repository 如何从内存切到数据库。
@@ -162,7 +167,13 @@ $env:SMARTCS_PERSISTENCE_MODE="jdbc"
 $env:SMARTCS_JDBC_URL="jdbc:mysql://localhost:3306/smart_cs_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"
 $env:SMARTCS_JDBC_USERNAME="root"
 $env:SMARTCS_JDBC_PASSWORD="your-password"
+$env:SMARTCS_JDBC_CONNECT_TIMEOUT_MS="3000"
+$env:SMARTCS_JDBC_SOCKET_TIMEOUT_MS="10000"
+$env:SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS="5"
 ```
+
+这三个超时分别限制“建立连接”“等待数据库网络响应”和“执行单条 SQL”。它们可以避免数据库网络
+黑洞时线程无限等待，但不能代替连接池、事务和真实数据库故障测试。
 
 启动项目：
 
@@ -207,7 +218,7 @@ SELECT * FROM cs_return_record;
 
 继续补充设计取舍：
 
-> 我没有一开始就把所有存储都迁移到数据库，而是先持久化客服场景中最核心的业务数据。会话状态后续更适合放 Redis，用户长期偏好和反馈候选样本可以单独设计表。这样能保持每一步改动可控。
+> 我没有一开始就把所有存储都迁移到数据库，而是先持久化客服场景中最核心的业务数据；后续再通过独立 `SessionStore` SPI 把会话接入 MySQL。用户长期偏好和反馈候选样本仍可以单独设计存储，这样能保持每一步改动可控。
 
 ## 9. 后续扩展
 
@@ -215,10 +226,9 @@ SELECT * FROM cs_return_record;
 
 - 引入 Flyway 或 Liquibase 管理数据库迁移脚本。
 - 为 `user_id`、`product_id`、`order_id` 增加索引和外键。
-- 将 `ConversationStore` 迁移到 Redis 或 MySQL。
+- 为已经实现的 `JdbcSessionStore` 增加真实 MySQL/Testcontainers 与迁移脚本测试。
 - 将 `UserMemoryStore` 迁移为用户画像表。
 - 将 `FeedbackEvalCandidateStore` 从 JSON 文件迁移到数据库。
 - 用连接池替换当前简单 `DriverManager` 连接方式。
 
 当前第一版先解决“业务数据可以从数据库读取和写入”的问题。
-

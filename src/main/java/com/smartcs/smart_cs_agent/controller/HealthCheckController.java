@@ -5,10 +5,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 服务健康检查接口。
+ * 旧版兼容健康检查接口。
  *
- * 注意：这里不是业务聊天能力，只是告诉外部“服务进程已经启动并能响应 HTTP”。
- * Docker 部署、面试演示、前端调试时，都可以先访问这个接口确认后端是否可用。
+ * <p>它只告诉外部“服务进程已经启动并能响应 HTTP”，语义等同于 liveness，不检查数据库。
+ * 部署探针应优先使用 /actuator/health/liveness 和 /actuator/health/readiness；保留本接口是为了
+ * 不破坏旧 Demo、前端调试页面和已有文档。</p>
  */
 @RestController
 @RequestMapping("/api/health")
@@ -17,8 +18,7 @@ public class HealthCheckController {
     /**
      * 返回最小可用的健康状态。
      *
-     * 第一版先不检查数据库、Redis、模型服务等外部依赖，
-     * 因为当前项目核心数据还是内存和本地 Markdown 知识库。
+     * 数据库依赖由 Actuator readiness 单独检查，不能把依赖故障混成“JVM 已死亡”。
      */
     @GetMapping
     public HealthCheckResponse health() {

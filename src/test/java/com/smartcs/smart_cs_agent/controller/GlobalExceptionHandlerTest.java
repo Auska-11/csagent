@@ -6,12 +6,14 @@ import com.smartcs.smart_cs_agent.session.api.SessionVersionConflictException;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.HttpInputMessage;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.lang.reflect.Method;
 
@@ -67,6 +69,19 @@ class GlobalExceptionHandlerTest {
         assertNotNull(body);
         assertEquals("NOT_FOUND", body.getErrorCode());
         assertEquals("Conversation not found", body.getMessage());
+    }
+
+    @Test
+    void shouldHandleUnmappedPathAsNotFoundInsteadOfInternalError() {
+        ResponseEntity<ApiErrorResponse> response = handler.handleNoResource(
+                new NoResourceFoundException(HttpMethod.GET, "/actuator/env")
+        );
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+        ApiErrorResponse body = response.getBody();
+        assertNotNull(body);
+        assertEquals("NOT_FOUND", body.getErrorCode());
+        assertEquals("Resource not found", body.getMessage());
     }
 
     @Test

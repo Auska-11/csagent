@@ -28,6 +28,15 @@ services:
       SMARTCS_EMBEDDING_DIMENSIONS: ${SMARTCS_EMBEDDING_DIMENSIONS:-1536}
       SMARTCS_QDRANT_BASE_URL: ${SMARTCS_QDRANT_BASE_URL:-http://qdrant:6333}
       SMARTCS_QDRANT_COLLECTION: ${SMARTCS_QDRANT_COLLECTION:-smart_cs_knowledge}
+      # 默认仍是 memory；使用外部 MySQL 时可在 .env 中覆盖以下配置。
+      SMARTCS_PERSISTENCE_MODE: ${SMARTCS_PERSISTENCE_MODE:-memory}
+      SMARTCS_JDBC_DRIVER: ${SMARTCS_JDBC_DRIVER:-com.mysql.cj.jdbc.Driver}
+      SMARTCS_JDBC_URL: "${SMARTCS_JDBC_URL:-jdbc:mysql://host.docker.internal:3306/smart_cs_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}"
+      SMARTCS_JDBC_USERNAME: ${SMARTCS_JDBC_USERNAME:-root}
+      SMARTCS_JDBC_PASSWORD: ${SMARTCS_JDBC_PASSWORD:-}
+      SMARTCS_JDBC_CONNECT_TIMEOUT_MS: ${SMARTCS_JDBC_CONNECT_TIMEOUT_MS:-3000}
+      SMARTCS_JDBC_SOCKET_TIMEOUT_MS: ${SMARTCS_JDBC_SOCKET_TIMEOUT_MS:-10000}
+      SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS: ${SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS:-5}
     depends_on:
       - qdrant
     restart: unless-stopped

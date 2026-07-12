@@ -36,6 +36,15 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+        <!--
+            Actuator 只暴露 health 端点，用于区分“进程存活”和“数据库依赖已就绪”。
+            env、configprops 等可能包含敏感配置的管理端点不会对外开放。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
         <!-- LangChain4j 核心 -->
         <dependency>
             <groupId>dev.langchain4j</groupId>

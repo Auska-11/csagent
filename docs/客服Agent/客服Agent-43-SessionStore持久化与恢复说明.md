@@ -24,7 +24,8 @@ SessionStore
 - 版本冲突返回 HTTP 409，而不是静默覆盖。
 
 这仍然是学习型持久化实现。CAS 解决的是“状态丢失更新”，不能单独保证多实例下副作用只执行一次。
-真实 MySQL 集成测试、连接池、数据库迁移工具和持久化幂等仍需继续实现。
+第二批完成时，真实 MySQL 集成测试、连接池、数据库迁移工具和持久化幂等仍待实现；其中持久化
+幂等和 readiness 已在第三、第四批补充，详见第 44、45 篇。
 
 ## 2. 为什么要拆 SessionStore
 
@@ -339,7 +340,7 @@ message = Conversation changed concurrently, please retry
 | JDBC Adapter 重建 | JSON 可重新加载，UPDATE/DELETE 包含 version 条件 |
 | HTTP 冲突 | SessionVersionConflict 返回 409 |
 
-最终验证：
+第二批完成时的最终验证：
 
 ```text
 mvn test
@@ -352,7 +353,8 @@ BUILD SUCCESS
 ## 13. 当前限制
 
 1. CI 没有真实 MySQL 或 Testcontainers；JdbcSessionStore 当前通过 SQL/RowMapper 测试替身验证。
-2. `JdbcDatabaseClient` 每次操作使用 DriverManager 新连接，没有 HikariCP 和事务 API。
+2. `JdbcDatabaseClient` 每次操作仍使用 DriverManager 新连接，没有 HikariCP 和事务 API；第四批已增加
+   连接、Socket 和 SQL 执行超时，避免数据库异常时无限阻塞。
 3. 表结构仍由代码执行 `CREATE TABLE IF NOT EXISTS`，没有 Flyway/Liquibase 迁移历史。
 4. schemaVersion 已建立，但注册式 Conversation/Workflow Migrator 尚未实现。
 5. CAS 本身只防止丢失更新；Capability 的跨实例重复执行已由下一批 JDBC 幂等 Store 缓解，
@@ -361,7 +363,7 @@ BUILD SUCCESS
 7. 物理删除后 revision 会从 1 重新开始，极端情况下仍有 ABA 风险；生产方案应增加 generation 或软删除。
 8. state_json 包含用户消息和业务槽位，尚未实现字段加密、TTL、容量限制和脱敏。
 9. 本地 ReentrantLock 表尚未做安全淘汰，长时间创建大量会话会积累轻量锁对象。
-10. readiness 尚未检查数据库连接和会话表可用性。
+10. readiness 检查已在后续批次完成，详见 `客服Agent-45-Liveness与Readiness健康探针说明.md`。
 
 ## 14. 下一批建议
 
@@ -369,7 +371,7 @@ BUILD SUCCESS
 
 1. 为退货申请增加数据库唯一业务约束。
 2. 实现 WorkflowStateMigrator 注册表，不在 Codec/Router 中写业务 switch。
-3. 增加 Testcontainers MySQL 契约测试和数据库 readiness。
+3. 增加 Testcontainers MySQL 契约测试，覆盖已实现的数据库 readiness 与真实超时行为。
 4. 评估 Session lease、事务锁、outbox 或队列串行化。
 5. 为幂等记录增加 TTL 清理和真实数据库故障注入测试。
 

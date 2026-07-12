@@ -829,7 +829,7 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 - [ ] Trace 默认不返回原始 Prompt、完整手机号、用户消息全文和工具敏感参数。
 - [ ] Monitor 区分业务拒绝、技术失败、Guardrail 拒绝和用户取消。
 - [ ] 异常路径也记录 Turn 失败指标。
-- [ ] 健康检查区分 liveness 和 readiness。
+- [x] 健康检查区分 liveness 和 readiness；JDBC 核心表不可读时 readiness 返回 503。
 - [ ] 增加并发、重启恢复、超时、熔断和故障注入测试。
 
 ### Phase 8 第一批进度（2026-07-12）
@@ -861,6 +861,17 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 正常运行的多个实例同时收到同一副作用请求时，现在只有一个实例进入 Provider。仍需注意：Provider
 完成副作用后、幂等结果落库前若进程崩溃，租约过期后仍可能再次调用，因此领域唯一约束、外部系统
 idempotencyKey 和事务/outbox 仍是后续生产硬化内容。
+
+### Phase 8 第四批进度（2026-07-12）
+
+已引入 Spring Boot Actuator，新增常驻 `PersistenceHealthIndicator`，并把 liveness 与 readiness
+拆成独立健康组。memory 模式 readiness 不访问数据库；jdbc 模式使用一条只读 SQL 检查
+`cs_agent_session` 和 `cs_capability_idempotency`。详细说明见
+`客服Agent-45-Liveness与Readiness健康探针说明.md`。
+
+数据库运行期掉线时 readiness 返回 503，而 liveness 保持 200；Actuator 只暴露 health 且隐藏
+详情。公共 JDBC 客户端同时增加连接、Socket 和 SQL 执行三层超时，避免网络黑洞时 readiness
+长期占用请求线程。启动期数据库不可达、真实 MySQL/Testcontainers 和连接池仍属于后续工作。
 
 ### 验收标准
 
