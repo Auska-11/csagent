@@ -9,6 +9,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
 import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
+import com.smartcs.smart_cs_agent.capability.local.LocalReturnLookupCapabilityProvider;
 import com.smartcs.smart_cs_agent.capability.local.ToolRegistryCapabilityProvider;
 import com.smartcs.smart_cs_agent.model.Order;
 import com.smartcs.smart_cs_agent.model.Product;
@@ -38,6 +39,25 @@ import static org.mockito.Mockito.when;
  * 验证旧 ToolRegistry 能在不改变业务行为的前提下接入新 CapabilityProvider 协议。
  */
 class ToolRegistryCapabilityProviderTest {
+
+    @Test
+    void springStyleConstructorShouldHideMigratedLegacyReturnLookup() {
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
+        when(toolRegistry.listTools()).thenReturn(List.of(
+                new ToolDefinition("return_query", "查询退货", Map.of("return_id", "退货单号"), List.of("return_id")),
+                new ToolDefinition("product_search", "搜索商品", Map.of("keyword", "关键词"), List.of())
+        ));
+
+        ToolRegistryCapabilityProvider provider = new ToolRegistryCapabilityProvider(
+                toolRegistry,
+                mock(LocalReturnLookupCapabilityProvider.class)
+        );
+
+        List<String> exposedIds = provider.definitions().stream()
+                .map(CapabilityDefinition::getId)
+                .toList();
+        assertEquals(List.of("product.search"), exposedIds);
+    }
 
     @Test
     void shouldExposeToolDefinitionAndDelegateExecution() {

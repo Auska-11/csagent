@@ -1,0 +1,19 @@
+# 退货进度查询 Skill Package。
+id: return-query
+version: 1.0.0
+description: 查询当前登录用户自己的退货申请进度
+workflow: return_query
+priority: 175
+triggers:
+  - 查询退货进度
+  - 查询退款状态
+  - 查看退货单 RET-001
+allowed_capabilities:
+  - return.lookup
+  - handoff.request
+risk_level: mixed
+confirmation_policy: user-requested-handoff
+prompt: SKILL.md
+references:
+  - path: references/status-guidance.md
+    always: true

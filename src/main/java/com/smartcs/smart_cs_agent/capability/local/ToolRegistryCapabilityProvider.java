@@ -47,10 +47,17 @@ public class ToolRegistryCapabilityProvider implements CapabilityProvider {
 
     private final ToolRegistry toolRegistry;
     private final boolean includeLegacyReturnApply;
+    private final boolean includeLegacyReturnLookup;
 
     @Autowired
+    public ToolRegistryCapabilityProvider(ToolRegistry toolRegistry,
+                                          LocalReturnLookupCapabilityProvider ignoredMigratedProvider) {
+        this(toolRegistry, false, false);
+    }
+
+    /** 手动装配兼容入口：没有独立 Provider 时继续暴露旧 return.lookup。 */
     public ToolRegistryCapabilityProvider(ToolRegistry toolRegistry) {
-        this(toolRegistry, false);
+        this(toolRegistry, false, true);
     }
 
     /**
@@ -58,8 +65,15 @@ public class ToolRegistryCapabilityProvider implements CapabilityProvider {
      * 生产环境固定为 false，由 LocalReturnApplyCapabilityProvider 接管安全写入。
      */
     public ToolRegistryCapabilityProvider(ToolRegistry toolRegistry, boolean includeLegacyReturnApply) {
+        this(toolRegistry, includeLegacyReturnApply, true);
+    }
+
+    private ToolRegistryCapabilityProvider(ToolRegistry toolRegistry,
+                                           boolean includeLegacyReturnApply,
+                                           boolean includeLegacyReturnLookup) {
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry cannot be null");
         this.includeLegacyReturnApply = includeLegacyReturnApply;
+        this.includeLegacyReturnLookup = includeLegacyReturnLookup;
     }
 
     @Override
@@ -72,6 +86,8 @@ public class ToolRegistryCapabilityProvider implements CapabilityProvider {
         return toolRegistry.listTools().stream()
                 // return.apply 已迁移为独立 LocalReturnApplyCapabilityProvider，不能重复注册。
                 .filter(definition -> includeLegacyReturnApply || !"return_apply".equals(definition.getName()))
+                // Spring 生产链路由 LocalReturnLookupCapabilityProvider 接管安全只读查询。
+                .filter(definition -> includeLegacyReturnLookup || !"return_query".equals(definition.getName()))
                 .map(this::toCapabilityDefinition)
                 .toList();
     }

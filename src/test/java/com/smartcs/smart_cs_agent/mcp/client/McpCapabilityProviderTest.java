@@ -9,6 +9,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
+import com.smartcs.smart_cs_agent.capability.api.contracts.ReturnStatusSummary;
 import com.smartcs.smart_cs_agent.capability.core.CapabilityProviderProperties;
 import org.junit.jupiter.api.Test;
 
@@ -145,6 +146,30 @@ class McpCapabilityProviderTest {
         assertEquals("ORD-001", ((OrderSummary) single.getData()).getOrderId());
         assertTrue(list.getData() instanceof OrderListResult);
         assertEquals(2, ((OrderListResult) list.getData()).getCount());
+    }
+
+    @Test
+    void shouldRestoreReturnContractFromRemoteJsonMap() {
+        FakeTransport transport = new FakeTransport(List.of(readOnlyDefinition("return.lookup")));
+        transport.invokeData = Map.of(
+                "return_id", "RET-001",
+                "order_id", "ORD-004",
+                "product_name", "Type-C 数据线",
+                "reason", "数据线接口松动，充电不稳定",
+                "status", "审核通过"
+        );
+
+        CapabilityResult<?> result = provider("mcp-remote", transport).invoke(
+                new CapabilityCall("return.lookup", Map.of("return_id", "RET-001")),
+                authenticatedContext()
+        );
+
+        ReturnStatusSummary summary = (ReturnStatusSummary) result.getData();
+        assertTrue(result.isSuccess());
+        assertEquals("RET-001", summary.getReturnId());
+        assertEquals("ORD-004", summary.getOrderId());
+        assertEquals("Type-C 数据线", summary.getProductName());
+        assertEquals("审核通过", summary.getStatus());
     }
 
     @Test

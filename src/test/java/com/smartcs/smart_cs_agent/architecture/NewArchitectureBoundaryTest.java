@@ -100,6 +100,10 @@ class NewArchitectureBoundaryTest {
                     () -> sourceFile + " must not import ReturnApplyWorkflow"
             );
             assertFalse(
+                    source.contains("import com.smartcs.smart_cs_agent.workflow.returnquery"),
+                    () -> sourceFile + " must not import ReturnQueryWorkflow"
+            );
+            assertFalse(
                     source.contains("import com.smartcs.smart_cs_agent.workflow.warranty"),
                     () -> sourceFile + " must not import WarrantyQueryWorkflow"
             );
