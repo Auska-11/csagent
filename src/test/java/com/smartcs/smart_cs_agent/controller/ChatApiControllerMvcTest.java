@@ -6,6 +6,7 @@ import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
 import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
+import com.smartcs.smart_cs_agent.agent.context.TraceEvent;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
@@ -22,12 +23,16 @@ import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -112,6 +117,44 @@ class ChatApiControllerMvcTest {
         assertEquals("conv-1", captor.getValue().getConversationId());
         assertEquals("USER-001", captor.getValue().getUserId());
         assertEquals("帮我查订单 ORD-001", captor.getValue().getMessage());
+    }
+
+    @Test
+    void shouldSerializeOnlySanitizedTraceDataInHttpResponse() throws Exception {
+        TraceEvent traceEvent = new TraceEvent(
+                "tool_called",
+                1,
+                "调用测试工具，联系电话 13800138000",
+                Map.of(
+                        "promptPreview", "TRACE-HTTP-PROMPT",
+                        "arguments", Map.of(
+                                "order_id", "ORD-001",
+                                "apiKey", "http-secret-token"
+                        )
+                )
+        );
+        when(agent.chatWithTrace(any(ChatRequest.class)))
+                .thenReturn(new ChatResponse("conv-http-trace", "USER-001", "ok", List.of(traceEvent)));
+
+        MvcResult result = mockMvc.perform(post("/api/chat/send")
+                        .with(customer("USER-001"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "message": "测试 Trace HTTP 隐私边界",
+                                  "userId": "USER-001",
+                                  "conversationId": "conv-http-trace"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.trace[0].data.arguments.order_id").value("ORD-001"))
+                .andReturn();
+
+        String responseJson = result.getResponse().getContentAsString();
+        assertFalse(responseJson.contains("13800138000"));
+        assertFalse(responseJson.contains("TRACE-HTTP-PROMPT"));
+        assertFalse(responseJson.contains("http-secret-token"));
+        assertTrue(responseJson.contains("ORD-001"));
     }
 
     @Test

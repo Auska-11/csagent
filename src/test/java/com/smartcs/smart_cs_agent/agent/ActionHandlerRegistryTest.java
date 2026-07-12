@@ -89,6 +89,11 @@ class ActionHandlerRegistryTest {
         assertTrue(context.getObservations().stream()
                 .anyMatch(observation -> "action_failure".equals(observation.getType())));
         assertTrue(!answer.contains("database password"), "内部异常文本不能进入用户回复");
+        assertTrue(context.getTraceEvents().stream()
+                .filter(event -> "action_handler_failed".equals(event.getEventType()))
+                .map(event -> String.valueOf(event.getData().get("internalMessage")))
+                .noneMatch(message -> message.contains("should-never-reach-user")),
+                "内部异常原文也不能进入 Trace");
     }
 
     private static final class CustomAction implements AgentAction {

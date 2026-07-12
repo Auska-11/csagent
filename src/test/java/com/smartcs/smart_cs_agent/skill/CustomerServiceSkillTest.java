@@ -146,7 +146,7 @@ class CustomerServiceSkillTest {
     }
 
     @Test
-    void legacySkillShouldRejectSensitiveOnlyPreference() {
+    void legacySkillShouldNotEchoOrTraceRejectedPreference() {
         UserMemoryStore rejectingStore = mock(UserMemoryStore.class);
         when(rejectingStore.rememberProductPreferenceSafely(anyString(), anyString()))
                 .thenReturn(UserMemoryWriteResult.rejected());
@@ -160,9 +160,8 @@ class CustomerServiceSkillTest {
         );
 
         assertTrue(answer.getAnswer().contains("保护隐私"));
-        assertFalse(answer.getAnswer().contains("13800138000"));
-        assertTrue(context.getTraceEvents().stream()
-                .noneMatch(event -> event.toString().contains("13800138000")));
+        assertFalse(answer.getAnswer().contains("蓝牙耳机"));
+        assertTrue(context.getTraceEvents().isEmpty(), "拒绝保存时不应创建包含原始偏好的 Trace");
     }
 
     /**

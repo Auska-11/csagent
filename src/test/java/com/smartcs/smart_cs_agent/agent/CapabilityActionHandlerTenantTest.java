@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.agent;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartcs.smart_cs_agent.agent.action.CapabilityAction;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
@@ -26,6 +27,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -36,7 +38,7 @@ import static org.mockito.Mockito.when;
 class CapabilityActionHandlerTenantTest {
 
     @Test
-    void shouldPropagateTenantAndOwnerScopeToExecutionContext() {
+    void shouldPropagateTenantAndOwnerScopeToExecutionContext() throws Exception {
         ToolManager toolManager = mock(ToolManager.class);
         SkillManager skillManager = mock(SkillManager.class);
         AgentSkillPackage skillPackage = packageAllowing("knowledge.search");
@@ -45,7 +47,7 @@ class CapabilityActionHandlerTenantTest {
                 ToolResult.fromCapability(
                         true,
                         "knowledge.search",
-                        "ok",
+                        "provider-result-canary private@example.com",
                         List.of(),
                         null,
                         CapabilityOutcome.SUCCESS,
@@ -64,17 +66,23 @@ class CapabilityActionHandlerTenantTest {
         ConversationState state = new ConversationState(request.getMessage(), request.getUserId());
         EscalationWorkflow workflow = new EscalationWorkflow(new GlobalInterruptPolicy());
         state.startOrResumeWorkflow(workflow.descriptor().getId(), workflow.descriptor().getVersion());
+        TurnContext turnContext = new TurnContext(request, state);
         ActionHandlingContext handlingContext = new ActionHandlingContext(
-                new TurnContext(request, state),
+                turnContext,
                 workflow,
                 skillPackage
         );
 
         CapabilityActionHandler handler = new CapabilityActionHandler(toolManager, skillManager);
-        handler.handle(new CapabilityAction("knowledge.search", Map.of("query", "退货")), handlingContext);
+        Map<String, Object> rawArguments = Map.of(
+                "query", "TRACE-QUERY-CANARY token=provider-secret",
+                "order_id", "ORD-001"
+        );
+        handler.handle(new CapabilityAction("knowledge.search", rawArguments), handlingContext);
 
+        ArgumentCaptor<ToolCall> callCaptor = ArgumentCaptor.forClass(ToolCall.class);
         ArgumentCaptor<ExecutionContext> contextCaptor = ArgumentCaptor.forClass(ExecutionContext.class);
-        verify(toolManager).execute(any(ToolCall.class), contextCaptor.capture());
+        verify(toolManager).execute(callCaptor.capture(), contextCaptor.capture());
         ExecutionContext executionContext = contextCaptor.getValue();
         assertEquals("tenant-a", executionContext.getTenantId());
         assertEquals("USER-001", executionContext.getPrincipal().getUserId());
@@ -82,6 +90,15 @@ class CapabilityActionHandlerTenantTest {
         assertTrue(executionContext.getIdempotencyKey().startsWith(
                 "8:tenant-a8:USER-00111:shared-conv:"
         ));
+
+        // Provider 仍收到原始参数；只有 Trace 中的副本会被统一清洗。
+        assertEquals(rawArguments, callCaptor.getValue().getArguments());
+        String traceJson = new ObjectMapper().writeValueAsString(turnContext.getTraceEvents());
+        assertFalse(traceJson.contains("TRACE-QUERY-CANARY"));
+        assertFalse(traceJson.contains("provider-secret"));
+        assertFalse(traceJson.contains("provider-result-canary"));
+        assertFalse(traceJson.contains("private@example.com"));
+        assertTrue(traceJson.contains("ORD-001"));
     }
 
     private AgentSkillPackage packageAllowing(String capability) {

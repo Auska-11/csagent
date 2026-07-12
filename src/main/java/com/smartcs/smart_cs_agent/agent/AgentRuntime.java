@@ -387,7 +387,7 @@ public class AgentRuntime {
         data.put("summaryVersion", state.getSummaryVersion());
         data.put("summaryUpdatedAt", state.getSummaryUpdatedAt());
         data.put("shortTermMessageCount", state.getMessages().size());
-        data.put("summaryPreview", preview(state.getSummaryMemory(), 180));
+        data.put("summaryPreview", HandlerTraceSupport.preview(state.getSummaryMemory(), 180));
         context.addTrace("memory_compressed", "长会话已压缩为摘要记忆", data);
     }
 
@@ -395,11 +395,4 @@ public class AgentRuntime {
         return state.getWorkflowStatus() == null ? "NONE" : state.getWorkflowStatus().name();
     }
 
-    private String preview(Object value, int maxLength) {
-        if (value == null) {
-            return null;
-        }
-        String text = value.toString();
-        return text.length() <= maxLength ? text : text.substring(0, maxLength) + "...";
-    }
 }

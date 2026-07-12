@@ -4,11 +4,11 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成 JWT/RBAC 等七批收口，观测与故障测试仍在继续 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成统一 Trace 脱敏等八批收口，指标与故障测试仍在继续 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 332 个默认离线测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
+| 当前验证规模 | 340 个默认离线测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -21,8 +21,8 @@
 身份、确认、并发和幂等保护，并新增 `WarrantyQuery` 作为零核心业务特判的扩展证明。
 
 这里的“核心目标完成”不等于整份长期路线图全部结束。Phase 7 的生产路由迁移已经完成，但旧
-`CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的统一脱敏、失败指标和故障注入测试，
-以及 Phase 9 的 Legacy 删除仍是后续演进项，不能把它们误写成已完成。
+`CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的日志/MCP 审计脱敏、失败指标和故障
+注入测试，以及 Phase 9 的 Legacy 删除仍是后续演进项，不能把它们误写成已完成。
 
 ## 2. 为什么需要这次改造（改造前问题）
 
@@ -45,7 +45,7 @@
 5. 每轮只按最新消息选 Skill，不足以支持可靠的多轮 Workflow 粘性状态。
 6. `AgentRuntime` 使用 Action 类型分支执行动作，新增 Action 仍需修改 Runtime。
 7. Tool 契约、Tool 执行、MCP 协议适配之间仍有耦合，未来本地和远程实现容易出现重复定义。
-8. 当前会话身份、订单归属、幂等、确认、并发和 Trace 脱敏还不能满足生产级能力边界。
+8. 当前日志/MCP 审计、失败分类、故障注入和部分生产数据库边界仍未完全收口。
 
 因此，本次改造的目标不是增加更多目录，而是建立稳定的扩展协议和单向依赖关系。
 
@@ -826,7 +826,7 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 - [x] 长期记忆增加 TTL、容量上限、摘要上限和脱敏。
 - [x] Spring Security Resource Server 为 Chat、Memory、Monitor 和 MCP 接口提供统一 JWT Principal。
 - [x] 管理类接口已增加 ADMIN / CUSTOMER / MCP_CLIENT 角色权限矩阵。
-- [ ] Trace 默认不返回原始 Prompt、完整手机号、用户消息全文和工具敏感参数。
+- [x] Trace 默认不返回原始 Prompt、完整手机号、用户消息全文和工具敏感参数。
 - [ ] Monitor 区分业务拒绝、技术失败、Guardrail 拒绝和用户取消。
 - [ ] 异常路径也记录 Turn 失败指标。
 - [x] 健康检查区分 liveness 和 readiness；JDBC 核心表不可读时 readiness 返回 503。
@@ -896,7 +896,8 @@ idempotencyKey 和事务/outbox 仍是后续生产硬化内容。
 Workflow 状态或用户回复。详细说明和测试记录见 `客服Agent-47-长期记忆TTL容量与脱敏说明.md`。
 
 本批仍不是完整隐私治理：长期偏好仍是进程内数据，TTL 采用读写时惰性清理；姓名、地址等上下文型
-字段尚未自动识别，Trace、Prompt、最近消息和 MCP 审计的统一脱敏仍属于后续任务。
+字段尚未自动识别。公开 Trace 已在第八批统一治理，但实际发送给 LLM 的 Prompt、最近消息持久化和
+MCP 审计仍需要独立的数据最小化与脱敏策略。
 
 ### Phase 8 第七批进度（2026-07-12）
 
@@ -915,8 +916,27 @@ MCP_CLIENT JWT 只表示“哪个服务正在调用”，不能把 `_meta.userId
 不再把 token 和用户身份放入 JSON-RPC body。详细说明和测试矩阵见
 `客服Agent-48-JWT统一认证与角色权限说明.md`。
 
-第七批完成的是统一 Web 认证与 RBAC 基线，不代表 Phase 8 整体完成。非对称密钥/独立 IdP、签名用户
-委托、令牌撤销、统一 Trace/Prompt 脱敏、失败指标和数据库故障注入仍需后续批次处理。
+第七批完成的是统一 Web 认证与 RBAC 基线，不代表 Phase 8 整体完成。公开 Trace 脱敏已在第八批完成；
+非对称密钥/独立 IdP、签名用户委托、令牌撤销、Prompt 数据最小化、失败指标和数据库故障注入仍需
+后续批次处理。
+
+### Phase 8 第八批进度（2026-07-12）
+
+已新增统一 `TraceDataSanitizer`，并把 `TraceEvent` 构造函数设为所有 Runtime、内置 Handler 和扩展
+Handler 的安全写入边界。Trace 数据会递归处理 Map、集合和数组，对凭据/联系方式等敏感键直接遮蔽，
+对 message、Prompt、query、summary、answer、error 等自由文本字段默认省略，并限制字符串长度、
+Map 条目数、集合元素数和递归深度。生成结果是不可变深拷贝，调用方后续修改原参数不会改写历史 Trace。
+
+`HandlerTraceSupport.preview()` 已改为先完整脱敏、再按 Unicode code point 截断，避免邮箱或手机号先被
+切成正则无法识别的半段。该策略只清洗可观测副本：Capability Provider 和 LLM 仍收到原始业务输入，
+最终用户回复也不会被 Trace 策略篡改。Runtime、Router、Gateway 没有新增订单、退货等业务名称特判。
+
+测试覆盖递归结构、敏感键、循环引用、深度/容量、不可变性、模型原始输入、Provider 原始参数、异常
+原文、人工转接摘要和真实 HTTP ChatResponse JSON。详细规则、扩展方法与测试矩阵见
+`客服Agent-49-Trace统一脱敏与隐私边界说明.md`。
+
+本批完成的是公开 Trace 的统一安全边界，不等于完整 DLP。应用日志、MCP 服务端审计、历史数据库中的
+旧 Trace、最近消息持久化，以及真正发送给第三方 LLM/Provider 的数据最小化仍需后续单独治理。
 
 ### 验收标准
 
@@ -924,7 +944,8 @@ MCP_CLIENT JWT 只表示“哪个服务正在调用”，不能把 `_meta.userId
 - 并发调用不会重复执行副作用 Capability。
 - 服务重启后可以恢复等待用户或等待确认的 Workflow。
 - Monitor 指标能区分业务失败和技术失败。
-- Trace、日志和 MCP 审计通过敏感字段检查。
+- 公开 Trace 通过敏感字段与容量边界检查。
+- 日志和 MCP 审计通过敏感字段检查。
 
 ## Phase 9：清理兼容层与多 Module 评估
 
@@ -1121,11 +1142,12 @@ smartcs:
 - [x] HTTP 用户身份由已验证 JWT Principal 注入，不信任模型、请求体或 MCP `_meta` 身份字段。
 - [ ] 会话、订单、退货、工单和 Monitor 管理操作有所有权/角色校验。
 - [ ] 同一会话并发安全。
-- [ ] Trace 和日志完成敏感信息脱敏。
+- [x] 公开 Trace 完成统一敏感信息脱敏与容量限制。
+- [ ] 应用日志和 MCP 审计完成敏感信息脱敏。
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 332 个测试）。
+- [x] 旧测试全部保留并通过（当前默认套件共 340 个测试）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。
@@ -1289,6 +1311,7 @@ ChatApiController
 | 身份、三态结果和幂等 | `CapabilitySecurityAndIdempotencyTest`、`LocalReturnApplyCapabilityProviderTest` |
 | MCP Server/Client 协议 | `McpJsonRpcControllerTest`、`McpToolControllerTest`、`HttpMcpClientTransportTest` |
 | JWT 与 HTTP 角色边界 | `HttpSecurityIntegrationTest`、`DemoIssuerDisabledIntegrationTest`、`JwtPrincipalConverterTest` |
+| Trace 隐私与容量边界 | `TraceDataSanitizerTest`、`AgentRuntimeTraceTest`、`ChatApiControllerMvcTest` |
 | Local/MCP 输出契约一致 | `ToolRegistryCapabilityProviderTest`、`McpCapabilityProviderTest` |
 | 新 Skill 零核心业务特判 | `WarrantySkillExtensionProofTest` |
 | 人工升级独立路由与工单边界 | `EscalationWorkflowTest`、`EscalationWorkflowIntegrationTest`、`HandoffActionHandlerTest` |
@@ -1309,8 +1332,8 @@ Phase 7 的最终验收结论、核心文件 diff 证据和 Legacy 清理条件�
    关闭 Demo 入口，并迁移到独立 IdP 的 RS256/ES256 或等价非对称验证、密钥轮换和撤销策略。
 5. 远程 MCP 工具发现当前主要用于启动期不可变 Catalog。TTL 缓存可刷新 Provider 自身快照，
    但运行中动态增删 Capability 还不能原子替换 Gateway Catalog。
-6. Monitor、Eval、Tool 和 MCP HTTP 接口已经接入 RBAC；但远程 MCP 的签名用户委托尚未实现，
-   Trace、Prompt、最近消息和审计日志仍需做系统性脱敏。
+6. Monitor、Eval、Tool 和 MCP HTTP 接口已经接入 RBAC，公开 Trace 也已统一脱敏；但远程 MCP 的签名
+   用户委托尚未实现，实际 Prompt/Provider 数据最小化、最近消息、应用日志和 MCP 审计仍需系统治理。
 7. 项目仍是单 Maven Module。这是当前有意选择；只有包边界稳定且确有独立发布需求时才拆多 Module。
 
 这些不足不影响本轮“可插拔核心接缝 + 扩展证明”的验收，但会影响多实例、动态更新和正式生产安全，

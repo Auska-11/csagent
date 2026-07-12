@@ -1,17 +1,15 @@
 package com.smartcs.smart_cs_agent.agent.handler.core;
 
-/** Handler 共用的无状态 Trace 小工具。 */
+import com.smartcs.smart_cs_agent.observability.trace.TraceDataSanitizer;
+
+/** Handler 共用的无状态 Trace 小工具；文本预览统一先脱敏、再截断。 */
 public final class HandlerTraceSupport {
 
     private HandlerTraceSupport() {
     }
 
     public static String preview(Object value, int maxLength) {
-        if (value == null) {
-            return null;
-        }
-        String text = value.toString();
-        return text.length() <= maxLength ? text : text.substring(0, maxLength) + "...";
+        return TraceDataSanitizer.safePreview(value, maxLength);
     }
 
     public static long elapsedMillis(long startedAtNanos) {

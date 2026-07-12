@@ -89,6 +89,10 @@ public class TurnContext {
      * 简单说：
      * Observation 给 Skill 做下一步判断；
      * TraceEvent 给开发者、前端调试面板和面试演示看。
+     *
+     * 【隐私边界】
+     * 调用方可以继续把真实业务 Map 传进来，不能为了 Trace 脱敏去修改 Provider 或 LLM 的原始输入。
+     * TraceEvent 构造函数会统一创建脱敏、限长、不可变的安全副本，因此扩展 Handler 也不会绕过规则。
      */
     public void addTrace(String eventType, String message, Map<String, Object> data) {
         traceEvents.add(new TraceEvent(eventType, stepCount, message, data));

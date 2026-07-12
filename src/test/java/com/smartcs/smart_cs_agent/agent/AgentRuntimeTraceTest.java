@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.agent;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.TraceEvent;
@@ -29,6 +30,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -141,6 +143,33 @@ class AgentRuntimeTraceTest {
         assertTrue(eventTypes.contains("final_answer"));
     }
 
+    @Test
+    void shouldKeepRawLlmDataForExecutionButOnlyExposeSanitizedTrace() throws Exception {
+        String rawMessage = "你好，TRACE-USER-CANARY，手机号 13800138000，token=runtime-secret";
+        String rawReply = "TRACE-LLM-REPLY，请联系 private@example.com";
+        CapturingChatLanguageModel chatModel = new CapturingChatLanguageModel(rawReply);
+        AgentRuntime runtime = createRuntime(chatModel);
+
+        ChatRequest request = new ChatRequest("conv-trace-privacy", "USER-001", rawMessage);
+        ConversationState state = new ConversationState(request.getMessage(), request.getUserId());
+        TurnContext context = new TurnContext(request, state);
+
+        String reply = runtime.runTurn(context);
+
+        // 脱敏只作用于可观测副本，不能改变真正交给模型的上下文或最终业务回复。
+        assertEquals(rawReply, reply);
+        assertTrue(chatModel.getLastMessages().stream()
+                .map(ChatMessage::text)
+                .anyMatch(text -> text.contains(rawMessage)));
+
+        String traceJson = new ObjectMapper().writeValueAsString(context.getTraceEvents());
+        assertFalse(traceJson.contains("TRACE-USER-CANARY"));
+        assertFalse(traceJson.contains("13800138000"));
+        assertFalse(traceJson.contains("runtime-secret"));
+        assertFalse(traceJson.contains("TRACE-LLM-REPLY"));
+        assertFalse(traceJson.contains("private@example.com"));
+    }
+
     private AgentRuntime createRuntime(String fakeLlmReply) {
         return createRuntime(new FakeChatLanguageModel(fakeLlmReply));
     }
@@ -225,6 +254,26 @@ class AgentRuntimeTraceTest {
         @Override
         public Response<AiMessage> generate(List<ChatMessage> messages) {
             return Response.from(AiMessage.from(reply));
+        }
+    }
+
+    /** 记录模型实际收到的消息，用来证明 Trace 脱敏没有污染业务输入。 */
+    private static class CapturingChatLanguageModel implements ChatLanguageModel {
+        private final String reply;
+        private List<ChatMessage> lastMessages = List.of();
+
+        private CapturingChatLanguageModel(String reply) {
+            this.reply = reply;
+        }
+
+        @Override
+        public Response<AiMessage> generate(List<ChatMessage> messages) {
+            this.lastMessages = List.copyOf(messages);
+            return Response.from(AiMessage.from(reply));
+        }
+
+        private List<ChatMessage> getLastMessages() {
+            return lastMessages;
         }
     }
 
