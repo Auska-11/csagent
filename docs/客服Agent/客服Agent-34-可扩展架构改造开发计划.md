@@ -4,24 +4,25 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 核心架构目标已实现并通过最终回归；Legacy 清理与生产硬化继续按后续 Phase 渐进推进 |
+| 状态 | Phase 7 生产路由迁移已完成；Legacy 清理与生产硬化继续按后续 Phase 渐进推进 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 177 个默认离线测试全部通过；Spring Boot JAR 打包通过，3 个 Skill Package 均已入包 |
+| 当前验证规模 | 256 个默认离线测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
 本文档是客服 Agent 后续架构改造的主执行计划。`docs/开发计划` 中的 v1-v4 保留为项目早期演进记录，不再作为本次架构改造的主要依据。
 
-### 1.1 当前实施结论（2026-07-11）
+### 1.1 当前实施结论（2026-07-12）
 
 本轮设定的“核心可扩展架构目标”已经落地：Skill Package 与 Workflow 已分离，Runtime 的 Action
 执行已插件化，CapabilityGateway 可以接本地或 MCP Provider，多轮退货 Workflow 具备粘性状态、
 身份、确认、并发和幂等保护，并新增 `WarrantyQuery` 作为零核心业务特判的扩展证明。
 
-这里的“核心目标完成”不等于整份长期路线图全部结束。Phase 7 中其余旧客服分支的逐个拆分、
-Phase 8 的分布式持久化/生产认证、Phase 9 的 Legacy 删除仍是后续演进项，不能把它们误写成已完成。
+这里的“核心目标完成”不等于整份长期路线图全部结束。Phase 7 的生产路由迁移已经完成，但旧
+`CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的分布式持久化/生产认证、Phase 9
+的 Legacy 删除仍是后续演进项，不能把它们误写成已完成。
 
 ## 2. 为什么需要这次改造（改造前问题）
 
@@ -748,8 +749,8 @@ CapabilityGateway 第一版内部仍可委托旧 ToolRegistry，逐个能力迁�
 3. [x] `ProductAdvisoryWorkflow`（2026-07-12 已完成 Package、商品契约、长期偏好读取与集成测试）
 4. [x] `PolicyQaWorkflow`（2026-07-12 已完成 Package、知识归属边界、跨轮主题与集成测试）
 5. [x] `UserProfileWorkflow`（2026-07-12 已完成认证 Principal、脱敏契约、偏好读写与集成测试）
-6. [ ] `ComplaintWorkflow`
-7. [ ] `EscalationWorkflow` 或全局升级策略
+6. [x] `ComplaintWorkflow`（2026-07-12 明确合并进 `EscalationWorkflow`，避免复制同一工单流程）
+7. [x] `EscalationWorkflow`（2026-07-12 已完成 Package、共享升级分类、稳定工单契约与集成测试）
 
 本轮另外完成了 `[x] WarrantyQueryWorkflow`，作为“新增 Package + Workflow 时核心内核零业务修改”
 的验收样例。它不代表上述 Legacy 分支已经全部迁移。
@@ -769,13 +770,20 @@ CapabilityGateway 第一版内部仍可委托旧 ToolRegistry，逐个能力迁�
 用户资料的 Principal 防伪、手机号脱敏和偏好所有权说明见
 [`客服Agent-39-用户资料Workflow迁移说明.md`](客服Agent-39-用户资料Workflow迁移说明.md)。
 
+人工升级的投诉合并、政策问题负向边界、服务端身份注入和工单契约说明见
+[`客服Agent-40-人工升级Workflow迁移说明.md`](客服Agent-40-人工升级Workflow迁移说明.md)。
+
+Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应分支暂时只承担回滚职责，必须等
+稳定期、Eval 对比和生产观测均通过后，才在 Phase 9 删除，不能为了目录整洁提前失去回滚能力。
+
 ### 共用能力下沉
 
-- [ ] 通用意图分类进入 Router/Classifier，不复制到每个 Workflow。
+- [ ] 通用意图分类进入 Router/Classifier，不复制到每个 Workflow（人工升级子域已由 `GlobalInterruptPolicy` 统一）。
 - [ ] 槽位提取使用可组合 SlotExtractor。
 - [ ] Prompt 组装使用 Skill Package + PromptAssembler。
 - [ ] 回复生成使用通用 LLM Action Handler。
-- [ ] 取消、人工、超时、安全中断使用 GlobalInterruptPolicy。
+- [x] 取消和人工升级中断使用 `GlobalInterruptPolicy`，并传递稳定人工原因码。
+- [ ] 超时和安全冲突继续纳入 `GlobalInterruptPolicy`。
 - [ ] 用户记忆读写通过 Memory Port，不在 Workflow 中直接操作文件或 Map。
 
 ### Multi-Agent 边界
@@ -790,7 +798,8 @@ CapabilityGateway 第一版内部仍可委托旧 ToolRegistry，逐个能力迁�
 
 ### 验收标准
 
-- `CustomerServiceSkill` 不再包含具体订单、商品、退货和知识问答路由。
+- 生产首次路由不再由 `CustomerServiceSkill` 承担订单、商品、退货、资料、政策和人工升级任务。
+- `CustomerServiceSkill` 中旧分支只作为 Phase 9 前的显式回滚路径，不再新增业务能力。
 - 每个 Workflow 可以独立单元测试。
 - Router 测试覆盖歧义、低置信度、活跃任务恢复和全局中断。
 - 新增 Workflow 不修改 Runtime 和 Gateway。
@@ -1192,11 +1201,16 @@ ChatApiController
 | MCP Server/Client 协议 | `McpJsonRpcControllerTest`、`McpToolControllerTest`、`HttpMcpClientTransportTest` |
 | Local/MCP 输出契约一致 | `ToolRegistryCapabilityProviderTest`、`McpCapabilityProviderTest` |
 | 新 Skill 零核心业务特判 | `WarrantySkillExtensionProofTest` |
+| 人工升级独立路由与工单边界 | `EscalationWorkflowTest`、`EscalationWorkflowIntegrationTest`、`HandoffActionHandlerTest` |
+
+Phase 7 的最终验收结论、核心文件 diff 证据和 Legacy 清理条件见
+[`客服Agent-41-Phase7架构验收报告.md`](客服Agent-41-Phase7架构验收报告.md)。
 
 ## 20. 仍然存在的不足（后续路线图）
 
-1. `CustomerServiceSkill` 仍保留订单、退货查询、商品咨询、政策问答、用户资料的回滚分支，以及
-   尚未迁移的人工升级 Legacy 分支；应按 Phase 7 逐个迁移，而不是继续往这个大类添加新业务。
+1. Phase 7 的订单、退货查询、商品咨询、政策问答、用户资料和人工升级已经由独立 Workflow 接管
+   生产路由；`CustomerServiceSkill` 仍保留同名 Legacy 分支作为稳定期回滚路径。只有 Eval 指标、
+   生产 Trace 和回滚演练均通过后，才能在 Phase 9 一次性删除，期间不得继续向旧类添加新业务。
 2. `ToolManager`、`ToolRegistry` 和 `LegacySkillWorkflowAdapter` 仍是兼容层；新代码应优先使用
    Workflow/Capability 契约，待回归稳定后再删除旧入口。
 3. Conversation、幂等记录和 Repository 默认都是单进程内存实现；多实例生产部署需要持久化、

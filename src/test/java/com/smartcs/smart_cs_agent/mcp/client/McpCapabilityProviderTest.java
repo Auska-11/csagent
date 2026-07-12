@@ -6,6 +6,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityCall;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
+import com.smartcs.smart_cs_agent.capability.api.contracts.HandoffTicketSummary;
 import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
@@ -222,6 +223,33 @@ class McpCapabilityProviderTest {
         assertEquals("USER-001", profile.getUserId());
         assertEquals("张三", profile.getName());
         assertEquals("138****1234", profile.getPhoneMasked());
+    }
+
+    @Test
+    void shouldRestoreHandoffTicketContractFromRemoteJsonMap() {
+        FakeTransport transport = new FakeTransport(List.of(readOnlyDefinition("handoff.request")));
+        transport.invokeData = Map.of(
+                "ticket_id", "HD-REMOTE-001",
+                "reason", "COMPLAINT",
+                "status", "WAITING_HUMAN_AGENT",
+                "created_at", "2026-07-12T12:00:00Z",
+                "user_id", "USER-001",
+                "conversation_id", "conv-remote"
+        );
+
+        CapabilityResult<?> result = provider("mcp-remote", transport).invoke(
+                new CapabilityCall("handoff.request", Map.of(
+                        "reason", "COMPLAINT",
+                        "summary", "用户投诉"
+                )),
+                authenticatedContext()
+        );
+
+        HandoffTicketSummary ticket = (HandoffTicketSummary) result.getData();
+        assertTrue(result.isSuccess());
+        assertEquals("HD-REMOTE-001", ticket.getTicketId());
+        assertEquals("COMPLAINT", ticket.getReason());
+        assertEquals("WAITING_HUMAN_AGENT", ticket.getStatus());
     }
 
     @Test

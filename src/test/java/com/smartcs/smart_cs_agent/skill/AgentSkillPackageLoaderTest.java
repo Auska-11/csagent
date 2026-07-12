@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -40,7 +41,7 @@ class AgentSkillPackageLoaderTest {
                 new AgentSkillManifestParser()
         ).load();
 
-        assertEquals(8, packages.size());
+        assertEquals(9, packages.size());
         AgentSkillPackage skillPackage = packages.stream()
                 .filter(candidate -> "customer-service".equals(candidate.getDefinition().getId()))
                 .findFirst()
@@ -52,6 +53,13 @@ class AgentSkillPackageLoaderTest {
         assertTrue(skillPackage.getDefinition().allowsCapability("handoff.request"));
         assertEquals(4, skillPackage.getReferenceContents().size());
         assertTrue(skillPackage.getSystemPrompt().contains("客服 Skill 主策略"));
+
+        AgentSkillPackage escalation = packages.stream()
+                .filter(candidate -> "escalation".equals(candidate.getDefinition().getId()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("escalation", escalation.getDefinition().getWorkflowId());
+        assertEquals(Set.of("handoff.request"), escalation.getDefinition().getAllowedCapabilities());
     }
 
     @Test

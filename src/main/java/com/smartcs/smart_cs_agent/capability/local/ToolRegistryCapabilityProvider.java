@@ -6,6 +6,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityProvider;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
+import com.smartcs.smart_cs_agent.capability.api.contracts.HandoffTicketSummary;
 import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
@@ -24,6 +25,7 @@ import com.smartcs.smart_cs_agent.tools.ReturnToolData;
 import com.smartcs.smart_cs_agent.tools.UserToolData;
 import com.smartcs.smart_cs_agent.tools.UserOrdersToolData;
 import com.smartcs.smart_cs_agent.tools.KnowledgeSearchResult;
+import com.smartcs.smart_cs_agent.tools.HandoffTicketData;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -243,28 +245,49 @@ public class ToolRegistryCapabilityProvider implements CapabilityProvider {
                     new UserProfileSummary(user.getUserId(), user.getName(), user.getPhone())
             );
         }
+        if (data instanceof HandoffTicketData ticket) {
+            return CapabilityResult.success(
+                    capabilityId,
+                    PROVIDER_ID,
+                    result.getMessage(),
+                    new HandoffTicketSummary(
+                            ticket.getTicketId(),
+                            ticket.getReason(),
+                            ticket.getStatus(),
+                            ticket.getCreatedAt()
+                    )
+            );
+        }
         return CapabilityResult.success(capabilityId, PROVIDER_ID, result.getMessage(), data);
     }
 
     /**
      * 对涉及身份的旧工具参数做服务端覆盖。
      *
-     * <p>order.list-by-user 的 user_id 不能由 LLM 或外部 MCP 参数决定。Gateway 已验证 Principal
-     * 至少包含身份；这里把可信 userId 写入旧 ToolRegistry 需要的兼容参数。</p>
+     * <p>order.list-by-user 的 user_id 不能由 LLM 或外部 MCP 参数决定；handoff.request 的 user_id
+     * 和 conversation_id 也必须来自 ExecutionContext。这里仅为旧 ToolRegistry 补齐兼容参数，
+     * 新 Workflow 仍然只传真正的业务参数。</p>
      */
     private CapabilityCall injectTrustedArguments(String capabilityId,
                                                   CapabilityCall call,
                                                   ExecutionContext context) {
-        if (!CapabilityIds.ORDER_LIST_BY_USER.equals(capabilityId)) {
-            return call;
+        if (CapabilityIds.ORDER_LIST_BY_USER.equals(capabilityId)) {
+            String principalUserId = context.getPrincipal().getUserId();
+            if (principalUserId.isBlank()) {
+                return call;
+            }
+            Map<String, Object> arguments = new LinkedHashMap<>(call.getArguments());
+            arguments.put("user_id", principalUserId);
+            return new CapabilityCall(capabilityId, arguments);
         }
-        String principalUserId = context.getPrincipal().getUserId();
-        if (principalUserId.isBlank()) {
-            return call;
+
+        if (CapabilityIds.HANDOFF_REQUEST.equals(capabilityId)) {
+            Map<String, Object> arguments = new LinkedHashMap<>(call.getArguments());
+            arguments.put("user_id", context.getPrincipal().getUserId());
+            arguments.put("conversation_id", context.getConversationId());
+            return new CapabilityCall(capabilityId, arguments);
         }
-        Map<String, Object> arguments = new LinkedHashMap<>(call.getArguments());
-        arguments.put("user_id", principalUserId);
-        return new CapabilityCall(capabilityId, arguments);
+        return call;
     }
 
     private OrderSummary toOrderSummary(OrderToolData order) {

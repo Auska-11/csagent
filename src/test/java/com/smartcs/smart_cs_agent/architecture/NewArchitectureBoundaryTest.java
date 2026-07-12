@@ -116,6 +116,10 @@ class NewArchitectureBoundaryTest {
                     () -> sourceFile + " must not import UserProfileWorkflow"
             );
             assertFalse(
+                    source.contains("import com.smartcs.smart_cs_agent.workflow.escalation"),
+                    () -> sourceFile + " must not import EscalationWorkflow"
+            );
+            assertFalse(
                     source.contains("import com.smartcs.smart_cs_agent.workflow.warranty"),
                     () -> sourceFile + " must not import WarrantyQueryWorkflow"
             );

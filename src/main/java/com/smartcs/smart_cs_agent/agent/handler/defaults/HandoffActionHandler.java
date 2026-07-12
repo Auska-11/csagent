@@ -8,9 +8,9 @@ import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandler;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandlingContext;
 import com.smartcs.smart_cs_agent.agent.handler.core.HandlerTraceSupport;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
+import com.smartcs.smart_cs_agent.capability.api.contracts.HandoffTicketSummary;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.skill.api.AgentSkillPackage;
-import com.smartcs.smart_cs_agent.tools.HandoffTicketData;
 import com.smartcs.smart_cs_agent.tools.ToolCall;
 import com.smartcs.smart_cs_agent.tools.ToolManager;
 import com.smartcs.smart_cs_agent.tools.ToolResult;
@@ -68,8 +68,8 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
         }
 
         Map<String, Object> arguments = new LinkedHashMap<>();
-        arguments.put("user_id", context.getRequest().getUserId());
-        arguments.put("conversation_id", context.getRequest().getConversationId());
+        // userId 和 conversationId 属于服务端安全上下文，不能作为模型可控制的普通参数传递。
+        // Local/MCP Provider 都会从 executionContext(...) 中读取可信身份与会话。
         arguments.put("reason", action.getReason());
         arguments.put("summary", action.getSummary());
 
@@ -148,7 +148,7 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
     }
 
     private String extractTicketId(Object data) {
-        if (data instanceof HandoffTicketData ticket) {
+        if (data instanceof HandoffTicketSummary ticket) {
             return ticket.getTicketId();
         }
         if (data instanceof Map<?, ?> ticket) {

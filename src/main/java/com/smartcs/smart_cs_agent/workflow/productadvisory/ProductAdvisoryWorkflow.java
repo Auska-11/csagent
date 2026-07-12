@@ -22,6 +22,7 @@ import com.smartcs.smart_cs_agent.workflow.api.WorkflowMatchResult;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptDecision;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptType;
+import com.smartcs.smart_cs_agent.workflow.core.HandoffSummarySupport;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -274,8 +275,8 @@ public class ProductAdvisoryWorkflow implements AgentWorkflow {
             state.transitionTo(ProductAdvisoryStep.CANCELLED);
             return WorkflowDecision.next(
                     new HandoffAction(
-                            "USER_REQUESTED_HUMAN",
-                            "用户在商品咨询过程中要求人工客服",
+                            interrupt.getHandoffReasonCode(),
+                            HandoffSummarySupport.build("商品咨询", context, interrupt, handoffContext),
                             handoffContext
                     ),
                     interrupt.getReason()

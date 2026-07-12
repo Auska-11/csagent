@@ -142,6 +142,8 @@ class OrderQueryWorkflowTest {
                 workflow.nextAction(turn(state, "我要人工客服", "USER-001")).getAction()
         );
         assertEquals("USER_REQUESTED_HUMAN", action.getReason());
+        assertTrue(action.getSummary().contains("用户当前消息：我要人工客服"));
+        assertTrue(action.getSummary().contains("step=WAITING_ORDER_ID"));
     }
 
     private ConversationState startedState(String message, String userId) {

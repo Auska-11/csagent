@@ -6,6 +6,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityCall;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
+import com.smartcs.smart_cs_agent.capability.api.contracts.HandoffTicketSummary;
 import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
@@ -18,6 +19,7 @@ import com.smartcs.smart_cs_agent.model.Order;
 import com.smartcs.smart_cs_agent.model.Product;
 import com.smartcs.smart_cs_agent.model.User;
 import com.smartcs.smart_cs_agent.tools.OrderToolData;
+import com.smartcs.smart_cs_agent.tools.HandoffTicketData;
 import com.smartcs.smart_cs_agent.tools.KnowledgeSearchResult;
 import com.smartcs.smart_cs_agent.tools.ProductItemData;
 import com.smartcs.smart_cs_agent.tools.ProductSearchToolData;
@@ -75,15 +77,17 @@ class ToolRegistryCapabilityProviderTest {
                 new ToolDefinition("product_search", "搜索商品", Map.of(), List.of()),
                 new ToolDefinition("product_info", "商品详情", Map.of(), List.of()),
                 new ToolDefinition("user_lookup", "查询用户", Map.of(), List.of()),
+                new ToolDefinition("handoff_create", "创建人工工单", Map.of(), List.of()),
                 new ToolDefinition("knowledge_search", "查询知识", Map.of(), List.of())
         ));
         LegacyCapabilityOverride returns = () -> Set.of("return.apply", "return.lookup");
         LegacyCapabilityOverride products = () -> Set.of("product.search", "product.lookup");
         LegacyCapabilityOverride users = () -> Set.of("user.lookup");
+        LegacyCapabilityOverride handoff = () -> Set.of("handoff.request");
 
         ToolRegistryCapabilityProvider provider = new ToolRegistryCapabilityProvider(
                 toolRegistry,
-                List.of(returns, products, users)
+                List.of(returns, products, users, handoff)
         );
 
         assertEquals(
@@ -232,6 +236,47 @@ class ToolRegistryCapabilityProviderTest {
         assertTrue(result.isSuccess());
         assertEquals("USER-001", profile.getUserId());
         assertEquals("138****1234", profile.getPhoneMasked());
+    }
+
+    @Test
+    void shouldMapLegacyHandoffDataToStableContract() {
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
+        when(toolRegistry.execute(any(ToolCall.class))).thenReturn(
+                ToolResult.success(
+                        "handoff_create",
+                        "created",
+                        new HandoffTicketData(
+                                "HD-LEGACY-001",
+                                "USER-001",
+                                "conv-legacy",
+                                "COMPLAINT",
+                                "用户投诉",
+                                "WAITING_HUMAN_AGENT",
+                                "2026-07-12T12:00:00"
+                        )
+                )
+        );
+        ToolRegistryCapabilityProvider provider = new ToolRegistryCapabilityProvider(toolRegistry, true);
+
+        CapabilityResult<?> result = provider.invoke(
+                new CapabilityCall("handoff.request", Map.of(
+                        "user_id", "USER-999",
+                        "conversation_id", "conv-forged",
+                        "reason", "COMPLAINT",
+                        "summary", "用户投诉"
+                )),
+                authenticated("USER-001")
+        );
+
+        HandoffTicketSummary ticket = (HandoffTicketSummary) result.getData();
+        assertTrue(result.isSuccess());
+        assertEquals("HD-LEGACY-001", ticket.getTicketId());
+        assertEquals("COMPLAINT", ticket.getReason());
+
+        ArgumentCaptor<ToolCall> captor = ArgumentCaptor.forClass(ToolCall.class);
+        verify(toolRegistry).execute(captor.capture());
+        assertEquals("USER-001", captor.getValue().getArguments().get("user_id"));
+        assertEquals("conv-order-contract", captor.getValue().getArguments().get("conversation_id"));
     }
 
     @Test

@@ -1,0 +1,21 @@
+# 人工升级 Agent Skill Package。
+#
+# 本 Package 只声明触发说明、Workflow 绑定和最小权限；真正的升级判断与摘要位于
+# EscalationWorkflow，工单创建由 handoff.request Capability 执行。
+id: escalation
+version: 1.0.0
+description: 处理明确人工请求、投诉和赔偿维权纠纷
+workflow: escalation
+priority: 250
+triggers:
+  - 我要找人工客服
+  - 我要投诉你们
+  - 我要赔偿并维权
+allowed_capabilities:
+  - handoff.request
+risk_level: side_effect
+confirmation_policy: explicit-escalation-intent
+prompt: SKILL.md
+references:
+  - path: references/handoff-boundary.md
+    always: true

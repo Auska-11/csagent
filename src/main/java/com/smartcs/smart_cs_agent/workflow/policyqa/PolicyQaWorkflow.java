@@ -19,6 +19,7 @@ import com.smartcs.smart_cs_agent.workflow.api.WorkflowMatchResult;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptDecision;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptType;
+import com.smartcs.smart_cs_agent.workflow.core.HandoffSummarySupport;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -211,8 +212,8 @@ public class PolicyQaWorkflow implements AgentWorkflow {
             state.transitionTo(PolicyQaStep.CANCELLED);
             return WorkflowDecision.next(
                     new HandoffAction(
-                            "USER_REQUESTED_HUMAN",
-                            "用户在政策咨询过程中要求人工客服",
+                            interrupt.getHandoffReasonCode(),
+                            HandoffSummarySupport.build("政策咨询", context, interrupt, handoffContext),
                             handoffContext
                     ),
                     interrupt.getReason()
@@ -263,11 +264,7 @@ public class PolicyQaWorkflow implements AgentWorkflow {
     }
 
     private boolean isHandoffPolicyQuestion(String message) {
-        return containsAny(
-                message,
-                "转人工规则", "人工转接规则", "什么情况转人工", "什么时候转人工", "哪些情况需要人工",
-                "人工客服政策"
-        );
+        return interruptPolicy.isHandoffPolicyQuestion(message);
     }
 
     private boolean isInvoiceQuestion(String message) {

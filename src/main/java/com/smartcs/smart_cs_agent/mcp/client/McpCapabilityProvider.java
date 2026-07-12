@@ -7,6 +7,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityProvider;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
+import com.smartcs.smart_cs_agent.capability.api.contracts.HandoffTicketSummary;
 import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
@@ -194,6 +195,9 @@ public class McpCapabilityProvider implements CapabilityProvider {
         }
         if (CapabilityIds.USER_LOOKUP.equals(capabilityId)) {
             return data instanceof UserProfileSummary profile ? profile : UserProfileSummary.fromMap(data);
+        }
+        if (CapabilityIds.HANDOFF_REQUEST.equals(capabilityId)) {
+            return data instanceof HandoffTicketSummary ticket ? ticket : HandoffTicketSummary.fromMap(data);
         }
         if (CapabilityIds.KNOWLEDGE_SEARCH.equals(capabilityId) && data instanceof List<?> rows) {
             return rows.stream()
