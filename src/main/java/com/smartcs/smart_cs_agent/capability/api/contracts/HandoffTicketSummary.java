@@ -30,6 +30,9 @@ public final class HandoffTicketSummary {
 
     /** 同时兼容 MCP JSON 常见的 snake_case 和 Java 默认的 camelCase。 */
     public static HandoffTicketSummary fromMap(Object value) {
+        if (value instanceof HandoffTicketSummary ticket) {
+            return ticket;
+        }
         if (!(value instanceof Map<?, ?> map)) {
             return null;
         }

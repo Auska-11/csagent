@@ -1,5 +1,8 @@
 package com.smartcs.smart_cs_agent.capability.core;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.smartcs.smart_cs_agent.agent.context.ExecutionContext;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityCall;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityCatalog;
@@ -8,6 +11,10 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityGateway;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityProvider;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
+import com.smartcs.smart_cs_agent.capability.idempotency.api.CapabilityIdempotencyStore;
+import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyExecutionInProgressException;
+import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyKeyConflictException;
+import com.smartcs.smart_cs_agent.capability.idempotency.memory.InMemoryCapabilityIdempotencyStore;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -17,7 +24,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.TreeMap;
 
 /**
  * 默认 CapabilityGateway：根据 Capability ID 将调用分发给注册的 Provider。
@@ -31,13 +37,17 @@ import java.util.TreeMap;
 public class DefaultCapabilityGateway implements CapabilityGateway {
 
     private static final String GATEWAY_PROVIDER_ID = "capability-gateway";
+    private static final ObjectMapper FINGERPRINT_MAPPER = new ObjectMapper()
+            .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
 
     private final Map<String, CapabilityProvider> providerByCapability;
     private final CapabilityCatalog catalog;
     private final CapabilityIdempotencyStore idempotencyStore;
 
     public DefaultCapabilityGateway(List<CapabilityProvider> providers) {
-        this(providers, new CapabilityIdempotencyStore());
+        // 手动 new Gateway 的单元测试默认使用内存实现；Spring 运行时会走下面的注入构造函数，
+        // 根据 smartcs.persistence.mode 选择内存或 JDBC Store。
+        this(providers, new InMemoryCapabilityIdempotencyStore());
     }
 
     @Autowired
@@ -107,12 +117,7 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
         }
 
         if (definition.isIdempotent()) {
-            String storageKey = String.join(
-                    ":",
-                    context.getTenantId(),
-                    canonicalId,
-                    context.getIdempotencyKey()
-            );
+            String storageKey = idempotencyStorageKey(context, canonicalId);
             try {
                 return idempotencyStore.execute(
                         storageKey,
@@ -125,6 +130,22 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
                         provider.providerId(),
                         "IDEMPOTENCY_KEY_CONFLICT",
                         "The idempotency key was already used for different arguments"
+                );
+            } catch (IdempotencyExecutionInProgressException e) {
+                return CapabilityResult.technicalFailure(
+                        canonicalId,
+                        provider.providerId(),
+                        "IDEMPOTENCY_EXECUTION_IN_PROGRESS",
+                        "The same side-effect operation is still running"
+                );
+            } catch (RuntimeException e) {
+                // 幂等数据库本身也是副作用安全边界。它不可用时不能绕过 Store 直接调用 Provider，
+                // 否则一次基础设施故障就可能造成重复写入。
+                return CapabilityResult.technicalFailure(
+                        canonicalId,
+                        provider.providerId(),
+                        "IDEMPOTENCY_STORE_ERROR",
+                        "The idempotency store is temporarily unavailable"
                 );
             }
         }
@@ -193,11 +214,34 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
         }
     }
 
-    /**
-     * 第一版使用排序后的参数 Map 生成稳定指纹。
-     * 当前能力参数只包含字符串等简单值；若以后出现深层 JSON，可替换为标准 canonical JSON 哈希。
-     */
+    /** 使用 JSON Map 全层排序生成稳定指纹，嵌套参数的插入顺序不会影响幂等判断。 */
     private String fingerprint(CapabilityCall call) {
-        return call.getCapabilityId() + ":" + new TreeMap<>(call.getArguments());
+        try {
+            return FINGERPRINT_MAPPER.writeValueAsString(Map.of(
+                    "capabilityId", call.getCapabilityId(),
+                    "arguments", call.getArguments()
+            ));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Capability arguments cannot be fingerprinted", e);
+        }
+    }
+
+    /**
+     * 幂等回放必须隔离到可信的租户、用户和会话。
+     *
+     * <p>不能只依赖客户端给出的 idempotencyKey，否则同租户的另一个用户可以复用 key，在 Provider
+     * 所有权校验之前拿到前一个用户的回放结果。长度前缀避免 ID 自带冒号时产生拼接歧义。</p>
+     */
+    private String idempotencyStorageKey(ExecutionContext context, String capabilityId) {
+        return segment(context.getTenantId())
+                + segment(context.getPrincipal().getUserId())
+                + segment(context.getConversationId())
+                + segment(capabilityId)
+                + segment(context.getIdempotencyKey());
+    }
+
+    private String segment(String value) {
+        String safe = value == null ? "" : value;
+        return safe.length() + ":" + safe;
     }
 }

@@ -12,7 +12,6 @@ import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandlingContext;
 import com.smartcs.smart_cs_agent.agent.handler.defaults.HandoffActionHandler;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
-import com.smartcs.smart_cs_agent.capability.api.contracts.HandoffTicketSummary;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.skill.api.AgentSkillDefinition;
 import com.smartcs.smart_cs_agent.skill.api.AgentSkillPackage;
@@ -67,16 +66,17 @@ class HandoffActionHandlerTest {
                         true,
                         CapabilityIds.HANDOFF_REQUEST,
                         "created",
-                        new HandoffTicketSummary(
-                                "HD-3001",
-                                "COMPLAINT",
-                                "WAITING_HUMAN_AGENT",
-                                "2026-07-12T12:00:00"
+                        // 持久化回放后的 JSON 对象使用 Java getter 生成的 camelCase key。
+                        Map.of(
+                                "ticketId", "HD-3001",
+                                "reason", "COMPLAINT",
+                                "status", "WAITING_HUMAN_AGENT",
+                                "createdAt", "2026-07-12T12:00:00"
                         ),
                         null,
                         CapabilityOutcome.SUCCESS,
                         "local-handoff",
-                        false
+                        true
                 )
         );
         HandoffActionHandler handler = new HandoffActionHandler(toolManager, skillManager);

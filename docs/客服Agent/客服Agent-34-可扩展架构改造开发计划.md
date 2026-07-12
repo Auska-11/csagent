@@ -592,9 +592,10 @@ START
 - [x] 同一会话由会话锁串行执行；Gateway 合并相同幂等键，领域服务也阻止不同 key 的并发重复退货。
 - [x] Workflow 完成后下一条商品咨询会重新路由。
 
-当前实现说明（2026-07-11）：订单归属通过 `order.lookup` 的服务端结构化结果校验；同会话请求
+当前实现说明（更新于 2026-07-12）：订单归属通过 `order.lookup` 的服务端结构化结果校验；同会话请求
 已经串行化，Gateway 使用稳定 idempotencyKey 合并并发并回放结果，领域服务按订单加锁并拒绝重复申请。
-当前幂等存储仍是单进程内存实现，多实例部署前必须替换为数据库唯一键或 Redis 原子记录。
+Phase 8 第三批已经增加 JDBC 幂等 Store，使用数据库唯一键、租约和结果回放协调多个实例；领域表
+唯一约束和 Provider 副作用与幂等记录的事务一致性仍需继续加强。
 
 ### 验收标准
 
@@ -675,7 +676,7 @@ START
 - [x] Workflow 只能调用 Skill Package allowlist 中的 Capability。
 - [x] 身份、tenantId、traceId、conversationId 和 idempotencyKey 从 ExecutionContext 注入。
 - [x] 将工具结果改为 `SUCCESS / BUSINESS_REJECTED / TECHNICAL_FAILURE`。
-- [x] 对副作用 Capability 增加幂等记录和重复调用检测（当前为单进程实现）。
+- [x] 对副作用 Capability 增加幂等记录和重复调用检测，并提供内存/JDBC 可替换实现。
 - [x] Domain Service 内强制校验订单归属和状态迁移。
 
 ### 验收标准
@@ -820,6 +821,7 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 - [x] 读取、继续和清除会话时验证所有权。
 - [x] 增加持久化 SessionStore 实现，内存实现只用于测试和 Demo。
 - [x] 同一进程使用 ConversationKey 锁；SessionStore 使用 revision CAS 防止多实例丢失更新。
+- [x] Capability 幂等存储拆为 SPI；JDBC 使用唯一键、租约和结果回放阻止正常并发重复执行。
 - [ ] WorkflowState 已建立 stateSchemaVersion=1 和未来版本失败关闭；注册式迁移链仍待实现。
 - [ ] 长期记忆增加 TTL、容量上限、摘要上限和脱敏。
 - [ ] 认证系统为 Chat、Memory、Monitor 和 MCP 管理接口提供真实 Principal。
@@ -847,7 +849,18 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 
 当前可以在 `smartcs.persistence.mode=jdbc` 时把会话写入 MySQL，并在重建 ConversationStore 后
 恢复等待用户或等待确认的 Workflow。CAS 已能阻止旧版本覆盖新状态，但不能单独阻止两个实例在
-保存前重复执行副作用；持久化幂等、租约/事务锁、真实 MySQL Testcontainers 和迁移器仍属于后续工作。
+保存前重复执行副作用。第二批结束时持久化幂等仍未完成；数据库幂等和租约已在第三批补上，
+事务锁、真实 MySQL Testcontainers 和迁移器仍属于后续工作。
+
+### Phase 8 第三批进度（2026-07-12）
+
+已完成 `CapabilityIdempotencyStore` SPI、内存/JDBC 双实现、数据库唯一键抢占、执行租约与心跳续租、
+三态结果持久化、跨 Store 重建回放、用户级作用域和 canonical JSON 参数指纹保护，详细说明见
+`客服Agent-44-Capability幂等持久化与租约说明.md`。
+
+正常运行的多个实例同时收到同一副作用请求时，现在只有一个实例进入 Provider。仍需注意：Provider
+完成副作用后、幂等结果落库前若进程崩溃，租约过期后仍可能再次调用，因此领域唯一约束、外部系统
+idempotencyKey 和事务/outbox 仍是后续生产硬化内容。
 
 ### 验收标准
 
@@ -1232,8 +1245,8 @@ Phase 7 的最终验收结论、核心文件 diff 证据和 Legacy 清理条件�
    生产 Trace 和回滚演练均通过后，才能在 Phase 9 一次性删除，期间不得继续向旧类添加新业务。
 2. `ToolManager`、`ToolRegistry` 和 `LegacySkillWorkflowAdapter` 仍是兼容层；新代码应优先使用
    Workflow/Capability 契约，待回归稳定后再删除旧入口。
-3. Conversation、幂等记录和 Repository 默认都是单进程内存实现；多实例生产部署需要持久化、
-   分布式锁或数据库唯一约束。
+3. Conversation 和 Capability 幂等记录已经提供 JDBC 实现，但默认 memory 模式仍只适合单实例；
+   Repository 领域锁、业务唯一约束、事务/outbox 和真实数据库并发验证仍需继续补齐。
 4. `DemoAuthenticationService` 适合学习和演示，不等于生产认证；真实系统应接 JWT、Session 或网关身份。
 5. 远程 MCP 工具发现当前主要用于启动期不可变 Catalog。TTL 缓存可刷新 Provider 自身快照，
    但运行中动态增删 Capability 还不能原子替换 Gateway Catalog。

@@ -9,12 +9,14 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityProvider;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityRiskLevel;
-import com.smartcs.smart_cs_agent.capability.core.CapabilityIdempotencyStore;
 import com.smartcs.smart_cs_agent.capability.core.DefaultCapabilityGateway;
+import com.smartcs.smart_cs_agent.capability.idempotency.api.CapabilityIdempotencyStore;
+import com.smartcs.smart_cs_agent.capability.idempotency.memory.InMemoryCapabilityIdempotencyStore;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -110,8 +112,97 @@ class CapabilitySecurityAndIdempotencyTest {
         }
     }
 
+    @Test
+    void shouldFailClosedWhenIdempotencyStoreIsUnavailable() {
+        CountingSideEffectProvider provider = new CountingSideEffectProvider();
+        CapabilityIdempotencyStore unavailableStore = (key, fingerprint, operation) -> {
+            throw new IllegalStateException("database credentials must not reach the response");
+        };
+        DefaultCapabilityGateway gateway = new DefaultCapabilityGateway(
+                List.of(provider),
+                unavailableStore
+        );
+
+        CapabilityResult<?> result = gateway.invoke(
+                call("质量问题"),
+                context(
+                        AuthenticatedPrincipal.authenticated("USER-002", Set.of("CUSTOMER")),
+                        "idem-store-down"
+                )
+        );
+
+        assertEquals(CapabilityOutcome.TECHNICAL_FAILURE, result.getOutcome());
+        assertEquals("IDEMPOTENCY_STORE_ERROR", result.getErrorCode());
+        assertFalse(result.getMessage().contains("credentials"));
+        assertEquals(0, provider.invocations.get());
+    }
+
+    @Test
+    void shouldIsolateSameClientKeyAcrossAuthenticatedUsers() {
+        CountingSideEffectProvider provider = new CountingSideEffectProvider();
+        DefaultCapabilityGateway gateway = gateway(provider);
+
+        CapabilityResult<?> firstUser = gateway.invoke(
+                call("质量问题"),
+                context(
+                        AuthenticatedPrincipal.authenticated("USER-001", Set.of("CUSTOMER")),
+                        "shared-client-key"
+                )
+        );
+        CapabilityResult<?> secondUser = gateway.invoke(
+                call("质量问题"),
+                context(
+                        AuthenticatedPrincipal.authenticated("USER-002", Set.of("CUSTOMER")),
+                        "shared-client-key"
+                )
+        );
+
+        assertTrue(firstUser.isSuccess());
+        assertTrue(secondUser.isSuccess());
+        assertFalse(firstUser.isReplayed());
+        assertFalse(secondUser.isReplayed());
+        assertEquals(2, provider.invocations.get());
+    }
+
+    @Test
+    void shouldUseCanonicalFingerprintForNestedJsonArguments() {
+        CountingSideEffectProvider provider = new CountingSideEffectProvider();
+        DefaultCapabilityGateway gateway = gateway(provider);
+        ExecutionContext context = context(
+                AuthenticatedPrincipal.authenticated("USER-002", Set.of("CUSTOMER")),
+                "nested-json-key"
+        );
+        Map<String, Object> firstMetadata = new LinkedHashMap<>();
+        firstMetadata.put("b", "second");
+        firstMetadata.put("a", "first");
+        Map<String, Object> secondMetadata = new LinkedHashMap<>();
+        secondMetadata.put("a", "first");
+        secondMetadata.put("b", "second");
+
+        CapabilityResult<?> first = gateway.invoke(
+                new CapabilityCall(CapabilityIds.RETURN_APPLY, Map.of(
+                        "order_id", "ORD-003",
+                        "reason", "质量问题",
+                        "metadata", firstMetadata
+                )),
+                context
+        );
+        CapabilityResult<?> replay = gateway.invoke(
+                new CapabilityCall(CapabilityIds.RETURN_APPLY, Map.of(
+                        "order_id", "ORD-003",
+                        "reason", "质量问题",
+                        "metadata", secondMetadata
+                )),
+                context
+        );
+
+        assertTrue(first.isSuccess());
+        assertTrue(replay.isReplayed());
+        assertEquals(1, provider.invocations.get());
+    }
+
     private DefaultCapabilityGateway gateway(CapabilityProvider provider) {
-        return new DefaultCapabilityGateway(List.of(provider), new CapabilityIdempotencyStore());
+        return new DefaultCapabilityGateway(List.of(provider), new InMemoryCapabilityIdempotencyStore());
     }
 
     private CapabilityCall call(String reason) {

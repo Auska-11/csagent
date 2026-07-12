@@ -9,6 +9,12 @@ smartcs:
   capability:
     # local：直接调用本进程 Provider；mcp-remote：只使用远程 MCP；hybrid：本地为主并额外暴露带命名空间的远程能力。
     provider-mode: ${SMARTCS_CAPABILITY_PROVIDER_MODE:local}
+    idempotency:
+      # jdbc 模式下，执行者先占有一段租约；实例崩溃后，其他实例只能等租约过期再接管。
+      lease-ms: ${SMARTCS_IDEMPOTENCY_LEASE_MS:60000}
+      # 同 key 的并发请求等待第一个执行者完成，超时后返回“仍在执行”，绝不绕过幂等层。
+      wait-timeout-ms: ${SMARTCS_IDEMPOTENCY_WAIT_TIMEOUT_MS:30000}
+      poll-interval-ms: ${SMARTCS_IDEMPOTENCY_POLL_INTERVAL_MS:50}
   mcp:
     server:
       server-id: ${SMARTCS_MCP_SERVER_ID:smart-cs-local}

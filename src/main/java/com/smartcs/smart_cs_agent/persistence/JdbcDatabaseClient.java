@@ -68,6 +68,9 @@ public class JdbcDatabaseClient {
             bindArgs(statement, args);
             return statement.executeUpdate();
         } catch (SQLException e) {
+            if (isDuplicateKey(e)) {
+                throw new JdbcDuplicateKeyException(e);
+            }
             throw new IllegalStateException("Failed to execute SQL update: " + sql, e);
         }
     }
@@ -119,6 +122,23 @@ public class JdbcDatabaseClient {
         } catch (ClassNotFoundException e) {
             throw new IllegalStateException("JDBC driver not found: " + driverClassName, e);
         }
+    }
+
+    /**
+     * MySQL/MariaDB 的重复键错误码是 1062，H2 的 SQLState 是 23505。
+     *
+     * <p>这里只识别“唯一键已存在”，不把所有 23xxx 约束错误都当作并发竞争，否则 NOT NULL、
+     * 外键等真实数据问题会被错误吞掉。</p>
+     */
+    private boolean isDuplicateKey(SQLException exception) {
+        SQLException current = exception;
+        while (current != null) {
+            if (current.getErrorCode() == 1062 || "23505".equals(current.getSQLState())) {
+                return true;
+            }
+            current = current.getNextException();
+        }
+        return false;
     }
 
     @FunctionalInterface

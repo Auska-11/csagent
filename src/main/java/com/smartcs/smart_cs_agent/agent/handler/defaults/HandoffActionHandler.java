@@ -151,13 +151,7 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
     }
 
     private String extractTicketId(Object data) {
-        if (data instanceof HandoffTicketSummary ticket) {
-            return ticket.getTicketId();
-        }
-        if (data instanceof Map<?, ?> ticket) {
-            Object ticketId = ticket.get("ticket_id");
-            return ticketId == null ? null : ticketId.toString();
-        }
-        return null;
+        HandoffTicketSummary ticket = HandoffTicketSummary.fromMap(data);
+        return ticket == null ? null : ticket.getTicketId();
     }
 }

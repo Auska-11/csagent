@@ -9,6 +9,7 @@ import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.agent.context.WorkflowStatus;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
 import com.smartcs.smart_cs_agent.model.ReturnRecord;
 import com.smartcs.smart_cs_agent.tools.ReturnToolData;
@@ -20,6 +21,8 @@ import com.smartcs.smart_cs_agent.workflow.returnapply.ReturnApplyWorkflow;
 import com.smartcs.smart_cs_agent.workflow.returnapply.ReturnApplyWorkflowProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -128,6 +131,39 @@ class ReturnApplyWorkflowTest {
         FinalAnswerAction answer = assertInstanceOf(FinalAnswerAction.class, decision.getAction());
         assertTrue(answer.getAnswer().contains("没有提交"));
         assertEquals(WorkflowStatus.CANCELLED, state.getWorkflowStatus());
+    }
+
+    @Test
+    void shouldAcceptJsonMapFromPersistentIdempotencyReplay() {
+        ConversationState state = stateWaitingForConfirmation();
+        state.startNewTurn("确认提交");
+        TurnContext submitTurn = turn(state, "确认提交", "USER-002");
+        assertInstanceOf(CapabilityAction.class, workflow.nextAction(submitTurn).getAction());
+
+        // JDBC 幂等记录不会保存 Java 类名，重启后的 data 是普通 Map。
+        submitTurn.addObservation("capability", ToolResult.fromCapability(
+                true,
+                "return.apply",
+                "submitted",
+                Map.of(
+                        "found", true,
+                        "submitted", true,
+                        "return_id", "RET-MAP-001",
+                        "order_id", "ORD-003",
+                        "status", "Under Review"
+                ),
+                null,
+                CapabilityOutcome.SUCCESS,
+                "local-return-domain",
+                true
+        ));
+
+        FinalAnswerAction completed = assertInstanceOf(
+                FinalAnswerAction.class,
+                workflow.nextAction(submitTurn).getAction()
+        );
+        assertTrue(completed.getAnswer().contains("RET-MAP-001"));
+        assertEquals(WorkflowStatus.COMPLETED, state.getWorkflowStatus());
     }
 
     @Test

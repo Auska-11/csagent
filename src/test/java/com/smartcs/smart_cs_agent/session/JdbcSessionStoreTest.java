@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.persistence.JdbcDatabaseClient;
+import com.smartcs.smart_cs_agent.persistence.JdbcDuplicateKeyException;
 import com.smartcs.smart_cs_agent.session.api.SessionRecord;
 import com.smartcs.smart_cs_agent.session.api.SessionVersionConflictException;
 import com.smartcs.smart_cs_agent.session.core.ConversationStateCodec;
@@ -98,7 +99,9 @@ class JdbcSessionStoreTest {
                         number(args[7]).longValue()
                 );
                 if (rows.putIfAbsent(key, row) != null) {
-                    throw new IllegalStateException("duplicate primary key");
+                    throw new JdbcDuplicateKeyException(
+                            new SQLException("duplicate primary key", "23000", 1062)
+                    );
                 }
                 return 1;
             }

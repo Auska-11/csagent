@@ -3,6 +3,7 @@ package com.smartcs.smart_cs_agent.session.jdbc;
 import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStateSnapshot;
 import com.smartcs.smart_cs_agent.persistence.JdbcDatabaseClient;
+import com.smartcs.smart_cs_agent.persistence.JdbcDuplicateKeyException;
 import com.smartcs.smart_cs_agent.session.api.SessionRecord;
 import com.smartcs.smart_cs_agent.session.api.SessionStore;
 import com.smartcs.smart_cs_agent.session.api.SessionVersionConflictException;
@@ -98,9 +99,8 @@ public class JdbcSessionStore implements SessionStore {
                         nextVersion,
                         now,
                         now);
-            } catch (IllegalStateException insertFailure) {
-                // JdbcDatabaseClient 会包装 SQL 异常。若主键现在已经存在，就是并发创建冲突；
-                // 若仍不存在，则保留原始数据库异常，不能把连接失败伪装成版本冲突。
+            } catch (JdbcDuplicateKeyException duplicateKey) {
+                // 复合主键已被另一个执行者创建，读取实际版本后转成统一 CAS 冲突。
                 Optional<SessionRecord> existing = load(key);
                 if (existing.isPresent()) {
                     throw new SessionVersionConflictException(
@@ -109,7 +109,7 @@ public class JdbcSessionStore implements SessionStore {
                             existing.get().version()
                     );
                 }
-                throw insertFailure;
+                throw duplicateKey;
             }
         } else {
             changedRows = databaseClient.update("""

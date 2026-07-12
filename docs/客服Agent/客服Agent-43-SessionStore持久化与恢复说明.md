@@ -355,8 +355,9 @@ BUILD SUCCESS
 2. `JdbcDatabaseClient` 每次操作使用 DriverManager 新连接，没有 HikariCP 和事务 API。
 3. 表结构仍由代码执行 `CREATE TABLE IF NOT EXISTS`，没有 Flyway/Liquibase 迁移历史。
 4. schemaVersion 已建立，但注册式 Conversation/Workflow Migrator 尚未实现。
-5. CAS 只防止丢失更新，不能阻止两个实例在保存前都执行副作用。
-6. `CapabilityIdempotencyStore` 和部分领域锁仍然是进程内实现。
+5. CAS 本身只防止丢失更新；Capability 的跨实例重复执行已由下一批 JDBC 幂等 Store 缓解，
+   详见 `客服Agent-44-Capability幂等持久化与租约说明.md`。
+6. 部分领域锁仍然是进程内实现，领域表唯一约束和事务一致性尚未补齐。
 7. 物理删除后 revision 会从 1 重新开始，极端情况下仍有 ABA 风险；生产方案应增加 generation 或软删除。
 8. state_json 包含用户消息和业务槽位，尚未实现字段加密、TTL、容量限制和脱敏。
 9. 本地 ReentrantLock 表尚未做安全淘汰，长时间创建大量会话会积累轻量锁对象。
@@ -364,13 +365,13 @@ BUILD SUCCESS
 
 ## 14. 下一批建议
 
-下一批优先解决“可恢复，但多实例副作用仍可能重复”的问题：
+后续继续解决持久化幂等完成后仍存在的生产硬化问题：
 
-1. 把 Capability 幂等记录改成可持久化 SPI。
-2. 为副作用记录 requestHash、状态、结果和过期时间。
-3. 为退货申请增加数据库唯一业务约束。
-4. 实现 WorkflowStateMigrator 注册表，不在 Codec/Router 中写业务 switch。
-5. 增加 Testcontainers MySQL 契约测试和数据库 readiness。
-6. 评估 Session lease、事务锁或队列串行化。
+1. 为退货申请增加数据库唯一业务约束。
+2. 实现 WorkflowStateMigrator 注册表，不在 Codec/Router 中写业务 switch。
+3. 增加 Testcontainers MySQL 契约测试和数据库 readiness。
+4. 评估 Session lease、事务锁、outbox 或队列串行化。
+5. 为幂等记录增加 TTL 清理和真实数据库故障注入测试。
 
-完成这些后，SessionStore 才从“可靠保存状态”进一步升级为“多实例下可靠执行业务”。
+Capability 幂等 SPI、数据库唯一键、租约和结果回放已经在下一批完成；剩余工作重点是关闭
+Provider 副作用与幂等结果落库之间的崩溃窗口。

@@ -295,7 +295,8 @@ public class ReturnApplyWorkflow implements AgentWorkflow {
             );
         }
 
-        if (result.getData() instanceof ReturnToolData data) {
+        ReturnToolData data = ReturnToolData.fromMap(result.getData());
+        if (data != null) {
             state.transitionTo(ReturnApplyStep.COMPLETED);
             if (Boolean.TRUE.equals(data.getSubmitted())) {
                 context.getState().markWorkflowCompleted();

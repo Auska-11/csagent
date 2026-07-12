@@ -7,8 +7,8 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
-import com.smartcs.smart_cs_agent.capability.core.CapabilityIdempotencyStore;
 import com.smartcs.smart_cs_agent.capability.core.DefaultCapabilityGateway;
+import com.smartcs.smart_cs_agent.capability.idempotency.memory.InMemoryCapabilityIdempotencyStore;
 import com.smartcs.smart_cs_agent.capability.local.LocalReturnApplyCapabilityProvider;
 import com.smartcs.smart_cs_agent.domain.returnservice.ReturnApplicationService;
 import com.smartcs.smart_cs_agent.repository.OrderRepository;
@@ -143,7 +143,7 @@ class LocalReturnApplyCapabilityProviderTest {
         LocalReturnApplyCapabilityProvider provider = new LocalReturnApplyCapabilityProvider(service);
         DefaultCapabilityGateway gateway = new DefaultCapabilityGateway(
                 List.of(provider),
-                new CapabilityIdempotencyStore()
+                new InMemoryCapabilityIdempotencyStore()
         );
         return new Fixture(provider, gateway, returns);
     }

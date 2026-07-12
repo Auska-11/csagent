@@ -4,6 +4,8 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.smartcs.smart_cs_agent.model.ReturnRecord;
 
+import java.util.Map;
+
 /**
  * 退换货工具的结构化输出 DTO。
  *
@@ -64,6 +66,32 @@ public class ReturnToolData {
         return fromRecord(record, productName, null, null, null);
     }
 
+    /**
+     * 把持久化幂等记录或远程 MCP 返回的普通 JSON Map 恢复为领域 DTO。
+     *
+     * <p>数据库中只保存稳定 JSON，不保存 Java 类名，所以应用重启后的 data 会先变成 Map。
+     * 转换逻辑放在 DTO 自己这里，Gateway 就不需要知道“退货结果有哪些字段”。</p>
+     */
+    public static ReturnToolData fromMap(Object value) {
+        if (value instanceof ReturnToolData data) {
+            return data;
+        }
+        if (!(value instanceof Map<?, ?> map)) {
+            return null;
+        }
+        return new ReturnToolData(
+                booleanValue(map, false, "found"),
+                nullableBoolean(map, "submitted"),
+                text(map, "reason_code", "reasonCode"),
+                text(map, "return_id", "returnId"),
+                text(map, "order_id", "orderId"),
+                text(map, "product_name", "productName"),
+                text(map, "reason"),
+                text(map, "status"),
+                text(map, "expected_review_time", "expectedReviewTime")
+        );
+    }
+
     private static ReturnToolData fromRecord(ReturnRecord record,
                                              String productName,
                                              Boolean submitted,
@@ -80,6 +108,34 @@ public class ReturnToolData {
                 record.getStatus(),
                 expectedReviewTime
         );
+    }
+
+    private static String text(Map<?, ?> map, String... keys) {
+        for (String key : keys) {
+            Object value = map.get(key);
+            if (value != null) {
+                return value.toString();
+            }
+        }
+        return null;
+    }
+
+    private static boolean booleanValue(Map<?, ?> map, boolean fallback, String... keys) {
+        Boolean value = nullableBoolean(map, keys);
+        return value == null ? fallback : value;
+    }
+
+    private static Boolean nullableBoolean(Map<?, ?> map, String... keys) {
+        for (String key : keys) {
+            Object value = map.get(key);
+            if (value instanceof Boolean bool) {
+                return bool;
+            }
+            if (value != null) {
+                return Boolean.valueOf(value.toString());
+            }
+        }
+        return null;
     }
 
     @JsonProperty("found")
