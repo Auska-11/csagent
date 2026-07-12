@@ -91,12 +91,13 @@ public class HandoffTools {
                     result.createdAt()
             );
         } catch (RuntimeException e) {
-            // 这里故意不把异常继续抛出去。
-            //
-            // 对用户来说，“系统创建工单接口短暂失败”和“没人处理我的问题”是两件事。
-            // Agent 应该先把转人工请求记录下来，并给用户一个稳定回复；
-            // 后续真实生产里可以把这类 pending 工单写入 MQ/数据库，再异步补建。
-            return createMemoryTicket(userId, conversationId, reason, summary, "REMOTE_HANDOFF_PENDING");
+            // 超时只表示“客户端没有拿到结果”，远端可能已经创建了工单。
+            // 在可靠 PendingHandoffStore/Outbox 完成前，不能生成一个只存在内存的假工单并向用户宣告成功。
+            // 抛出专用异常后，Gateway 会返回技术失败；同一个幂等键会稳定回放该失败，不会立即重复请求远端。
+            throw new HandoffTicketCreationException(
+                    "Remote handoff result could not be confirmed",
+                    e
+            );
         }
     }
 
@@ -122,11 +123,7 @@ public class HandoffTools {
      * 把工单结构整理成适合 Trace 和 Prompt 阅读的文本。
      */
     public String formatTicket(HandoffTicketData ticket) {
-        String title = "REMOTE_HANDOFF_PENDING".equals(ticket.getStatus())
-                ? "已记录人工转接请求（售后工单平台暂时不可用，待补建工单）：\n"
-                : "已创建人工转接工单：\n";
-
-        return title +
+        return "已创建人工转接工单：\n" +
                 "工单号：" + ticket.getTicketId() + "\n" +
                 "用户：" + ticket.getUserId() + "\n" +
                 "会话：" + ticket.getConversationId() + "\n" +

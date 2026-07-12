@@ -4,11 +4,11 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成外部 HTTP 超时等十二批收口，pending 工单与真实数据库验收仍在继续 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成十三批收口，人工转接假成功已修复，可靠 Outbox 与真实数据库验收仍在继续 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 375 个默认测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
+| 当前验证规模 | 377 个默认测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -22,7 +22,7 @@
 
 这里的“核心目标完成”不等于整份长期路线图全部结束。Phase 7 的生产路由迁移已经完成，但旧
 `CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的应用日志与 MCP 普通审计安全已经
-收口，售后/Embedding/Qdrant 也已有独立 HTTP 超时；但整轮 deadline、pending 工单持久化、真实数据库
+收口，售后/Embedding/Qdrant 也已有独立 HTTP 超时，人工转接结果未知时也不再假报成功；但整轮 deadline、pending 工单持久化、真实数据库
 和容器故障注入，以及 Phase 9 的 Legacy 删除仍是后续演进项，
 不能把它们误写成已完成。
 
@@ -1031,6 +1031,21 @@ JDK HttpServer 故意延迟 300ms、客户端读取上限设为 50ms 的故障�
 本批完成后默认测试套件共 `375` 项，0 失败、0 错误、0 跳过。整轮 Capability deadline、LLM 重试上限、
 有限重试/退避/熔断、pending 工单 Outbox、真实 MySQL 和容器故障验收仍未完成。
 
+### Phase 8 第十三批进度（2026-07-13）
+
+`HandoffTools` 在售后平台超时或异常时，不再生成仅存在当前 JVM 的 `REMOTE_HANDOFF_PENDING` 工单。
+HTTP 超时只能证明客户端没有收到响应，远端可能已经创建工单；在没有可靠 Outbox 和结果查询能力时，
+继续向用户回复“已转接”属于无法证明的假成功。
+
+现在结果未知会抛出 `HandoffTicketCreationException`，再由 Capability Gateway 转成不泄露内部异常的
+`TECHNICAL_FAILURE`。该失败结果会由原 Capability 幂等 Store 保存；相同 idempotencyKey 再次执行时直接
+回放失败，不会盲目重复调用售后平台。`HandoffActionHandler` 会明确告诉用户工单创建失败，并记录
+`handoff_failed` Trace，不再出现“已为您转接”的成功文案。
+
+本批完成后默认测试套件共 `377` 项，0 失败、0 错误、0 跳过。这里完成的是保守且可证明的失败语义，
+不是可靠自动补建：`PendingHandoffStore`/Outbox、按幂等键查询核对、后台补建和人工复核仍是下一批任务。
+详细说明见 `客服Agent-55-人工转接结果未知与假成功修复说明.md`。
+
 ### 验收标准
 
 - 不能通过猜测 conversationId 读取或清除其他用户会话。
@@ -1241,7 +1256,7 @@ smartcs:
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 375 个测试）。
+- [x] 旧测试全部保留并通过（当前默认套件共 377 个测试）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。

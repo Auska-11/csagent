@@ -12,6 +12,7 @@ import com.smartcs.smart_cs_agent.capability.api.contracts.HandoffTicketSummary;
 import com.smartcs.smart_cs_agent.capability.core.DefaultCapabilityGateway;
 import com.smartcs.smart_cs_agent.capability.local.LocalHandoffCapabilityProvider;
 import com.smartcs.smart_cs_agent.tools.HandoffTicketData;
+import com.smartcs.smart_cs_agent.tools.HandoffProperties;
 import com.smartcs.smart_cs_agent.tools.HandoffTools;
 import org.junit.jupiter.api.Test;
 
@@ -19,6 +20,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -136,6 +138,40 @@ class LocalHandoffCapabilityProviderTest {
 
         assertEquals(CapabilityOutcome.BUSINESS_REJECTED, result.getOutcome());
         assertEquals("MISSING_ARGUMENT", result.getErrorCode());
+    }
+
+    @Test
+    void shouldReturnAndReplayTechnicalFailureWhenRemoteTicketResultIsUnknown() {
+        HandoffProperties properties = new HandoffProperties();
+        properties.setMode("after-sales-http");
+        AtomicInteger remoteCalls = new AtomicInteger();
+        HandoffTools tools = new HandoffTools(properties, request -> {
+            remoteCalls.incrementAndGet();
+            throw new IllegalStateException("http://internal-ticket password=do-not-leak");
+        });
+        DefaultCapabilityGateway gateway = new DefaultCapabilityGateway(List.of(
+                new LocalHandoffCapabilityProvider(tools)
+        ));
+        CapabilityCall call = new CapabilityCall(CapabilityIds.HANDOFF_REQUEST, Map.of(
+                "reason", "COMPLAINT",
+                "summary", "用户投诉，需要人工处理"
+        ));
+        ExecutionContext context = context(
+                AuthenticatedPrincipal.authenticated("USER-001", Set.of("CUSTOMER")),
+                "conv-remote-unknown",
+                "idem-remote-unknown"
+        );
+
+        CapabilityResult<?> first = gateway.invoke(call, context);
+        CapabilityResult<?> second = gateway.invoke(call, context);
+
+        assertEquals(CapabilityOutcome.TECHNICAL_FAILURE, first.getOutcome());
+        assertEquals("CAPABILITY_PROVIDER_ERROR", first.getErrorCode());
+        assertFalse(first.getMessage().contains("internal-ticket"));
+        assertFalse(first.getMessage().contains("do-not-leak"));
+        assertEquals(CapabilityOutcome.TECHNICAL_FAILURE, second.getOutcome());
+        assertTrue(second.isReplayed());
+        assertEquals(1, remoteCalls.get());
     }
 
     private ExecutionContext context(AuthenticatedPrincipal principal,

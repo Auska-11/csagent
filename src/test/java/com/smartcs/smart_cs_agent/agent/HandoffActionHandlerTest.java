@@ -99,6 +99,36 @@ class HandoffActionHandlerTest {
         ));
     }
 
+    @Test
+    void shouldNotTellUserHandoffSucceededWhenCapabilityReturnsTechnicalFailure() {
+        ToolManager toolManager = mock(ToolManager.class);
+        SkillManager skillManager = mock(SkillManager.class);
+        AgentSkillPackage skillPackage = packageAllowing(Set.of(CapabilityIds.HANDOFF_REQUEST));
+        when(skillManager.isCapabilityAllowed(skillPackage, CapabilityIds.HANDOFF_REQUEST)).thenReturn(true);
+        when(toolManager.execute(any(ToolCall.class), any(ExecutionContext.class))).thenReturn(
+                ToolResult.fromCapability(
+                        false,
+                        CapabilityIds.HANDOFF_REQUEST,
+                        "The remote result could not be confirmed",
+                        null,
+                        "CAPABILITY_PROVIDER_ERROR",
+                        CapabilityOutcome.TECHNICAL_FAILURE,
+                        "local-handoff",
+                        true
+                )
+        );
+        HandoffActionHandler handler = new HandoffActionHandler(toolManager, skillManager);
+        ActionHandlingContext handlingContext = handlingContext(skillPackage);
+
+        ActionExecutionResult result = handler.handle(action(), handlingContext);
+
+        assertEquals(ActionFlow.COMPLETED, result.getFlow());
+        assertTrue(result.getAnswer().contains("创建人工工单失败"));
+        assertFalse(result.getAnswer().contains("已为您转接"));
+        assertTrue(handlingContext.getTurnContext().getTraceEvents().stream()
+                .anyMatch(event -> "handoff_failed".equals(event.getEventType())));
+    }
+
     private HandoffAction action() {
         return new HandoffAction("COMPLAINT", "用户投诉服务问题", Map.of());
     }

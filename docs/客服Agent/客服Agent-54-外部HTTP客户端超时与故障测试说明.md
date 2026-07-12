@@ -1,5 +1,9 @@
 # 客服 Agent 外部 HTTP 客户端超时与故障测试说明
 
+> 后续更新（Phase 8 第十三批）：项目已取消 `REMOTE_HANDOFF_PENDING` 内存假成功。售后平台结果未知时
+> 现在返回可幂等回放的技术失败，不再向用户宣告转接成功。本文第 9、10、12 节保留的是第十二批完成时
+> 暴露的问题背景，最新实现见 `客服Agent-55-人工转接结果未知与假成功修复说明.md`。
+
 ## 1. 本批解决什么问题
 
 项目已经为 MCP 和 JDBC 配置超时，但以下三个外部 HTTP Client 仍使用 RestClient 默认行为：
@@ -199,11 +203,12 @@ Properties + test RestClient.Builder
 ```text
 HTTP 超时
   -> HttpAfterSalesTicketClient 抛出安全异常
-  -> HandoffTools 捕获
-  -> 生成 REMOTE_HANDOFF_PENDING 内存工单
+  -> HandoffTools 转为结果未知专用异常
+  -> Capability Gateway 返回并幂等保存 TECHNICAL_FAILURE
 ```
 
-这让用户请求能及时返回，但 pending 工单尚未持久化，仍是下一批需要解决的可靠性缺口。
+这让用户请求能及时返回，而且不再把未落库的 pending 工单说成成功。可靠 pending 持久化和自动补建仍是
+后续需要解决的可靠性缺口。
 
 ### Embedding 或 Qdrant
 
@@ -235,8 +240,8 @@ HTTP 超时
 - 能按 key 查询已有结果。
 - 对结果未知状态进行持久化和后台核对。
 
-本项目已经把 Idempotency-Key 传给售后平台，但 REMOTE_HANDOFF_PENDING 仍只保存在内存中，暂时没有可靠
-补建和查询流程。
+本项目已经把 Idempotency-Key 传给售后平台。第十三批开始，结果未知会返回技术失败并由 Capability 幂等
+Store 稳定回放，不再创建内存 `REMOTE_HANDOFF_PENDING`；可靠补建和查询流程仍未实现。
 
 Embedding 和 Qdrant 主要是读或按稳定文档 ID upsert，副作用风险比工单创建低，但重试、退避和熔断仍应
 在未来按剩余 deadline 统一设计。
@@ -276,7 +281,7 @@ Skipped: 0
 1. 三个客户端还没有统一重试、退避、抖动、熔断和 bulkhead。
 2. 超时配置是每次 HTTP 调用上限，还不是贯穿整个 Agent Turn 的绝对 deadline。
 3. LLM ChatModel 仍有独立 60 秒超时和默认重试问题，本批没有修改 LangChain4j 内部策略。
-4. 售后超时后的 pending 工单没有持久化、后台补建和结果查询，仍可能形成假成功语义。
+4. 售后超时已不再形成假成功，但仍没有 pending 持久化、后台补建和结果查询能力。
 5. Qdrant 首次索引在 synchronized 区域内执行；有超时但仍可能阻塞其他首次检索请求直到当前调用结束。
 6. 当前真实故障测试覆盖 read timeout，没有依赖不稳定网络环境模拟 connect timeout。
 7. 客户端异常 message 仍属于内部错误对象；不能在未来直接写入公开 Trace 或用户回复。

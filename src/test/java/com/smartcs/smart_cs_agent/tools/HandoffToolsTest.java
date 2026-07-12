@@ -54,23 +54,25 @@ class HandoffToolsTest {
     }
 
     @Test
-    void shouldFallbackToPendingTicketWhenAfterSalesPlatformFails() {
+    void shouldNotFabricatePendingTicketWhenAfterSalesPlatformFails() {
         HandoffProperties properties = new HandoffProperties();
         properties.setMode("after-sales-http");
         FakeAfterSalesTicketClient client = new FakeAfterSalesTicketClient(null);
         client.fail = true;
         HandoffTools tools = new HandoffTools(properties, client);
 
-        HandoffTicketData ticket = tools.createHandoffTicket(
-                "USER-001",
-                "conv-fallback",
-                "COMPLAINT",
-                "用户投诉，需要人工处理"
+        HandoffTicketCreationException error = assertThrows(
+                HandoffTicketCreationException.class,
+                () -> tools.createHandoffTicket(
+                        "USER-001",
+                        "conv-fallback",
+                        "COMPLAINT",
+                        "用户投诉，需要人工处理"
+                )
         );
 
-        assertTrue(ticket.getTicketId().startsWith("HD-"));
-        assertEquals("REMOTE_HANDOFF_PENDING", ticket.getStatus());
-        assertTrue(tools.formatTicket(ticket).contains("待补建工单"));
+        assertEquals("Remote handoff result could not be confirmed", error.getMessage());
+        assertFalse(error.getMessage().contains("remote platform unavailable"));
     }
 
     private static class FakeAfterSalesTicketClient implements AfterSalesTicketClient {
