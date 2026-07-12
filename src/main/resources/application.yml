@@ -45,8 +45,8 @@ smartcs:
       agent-user-id: ${SMARTCS_AFTER_SALES_AGENT_USER_ID:agent-service}
       agent-user-role: ${SMARTCS_AFTER_SALES_AGENT_USER_ROLE:AGENT}
   persistence:
-    # memory：默认使用内存模拟数据，适合本地学习、测试和 CI。
-    # jdbc：使用 JDBC 连接真实数据库，适合面试演示“业务数据持久化”。
+    # memory：业务 Repository 使用内存模拟数据，会话使用 InMemorySessionStore，适合测试和 Demo。
+    # jdbc：业务 Repository 和会话都使用 MySQL；会话写入 cs_agent_session 并使用 version 做 CAS。
     mode: ${SMARTCS_PERSISTENCE_MODE:memory}
     jdbc:
       driver-class-name: ${SMARTCS_JDBC_DRIVER:com.mysql.cj.jdbc.Driver}

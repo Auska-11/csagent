@@ -1,6 +1,8 @@
 package com.smartcs.smart_cs_agent.controller;
 
 import com.smartcs.smart_cs_agent.security.AuthenticationException;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
+import com.smartcs.smart_cs_agent.session.api.SessionVersionConflictException;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.HttpInputMessage;
@@ -65,6 +67,23 @@ class GlobalExceptionHandlerTest {
         assertNotNull(body);
         assertEquals("NOT_FOUND", body.getErrorCode());
         assertEquals("Conversation not found", body.getMessage());
+    }
+
+    @Test
+    void shouldHandleSessionVersionConflict() {
+        ResponseEntity<ApiErrorResponse> response = handler.handleSessionVersionConflict(
+                new SessionVersionConflictException(
+                        ConversationKey.defaultTenant("USER-001", "conv-conflict"),
+                        1,
+                        2
+                )
+        );
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        ApiErrorResponse body = response.getBody();
+        assertNotNull(body);
+        assertEquals("SESSION_VERSION_CONFLICT", body.getErrorCode());
+        assertEquals("Conversation changed concurrently, please retry", body.getMessage());
     }
 
     @Test

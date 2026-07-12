@@ -818,9 +818,9 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 
 - [x] ConversationStore 以 `(tenantId, userId, conversationId)` 作为身份边界。
 - [x] 读取、继续和清除会话时验证所有权。
-- [ ] 增加持久化 SessionStore 实现，内存实现只用于测试和 Demo。
-- [x] 同一进程内按完整 ConversationKey 串行执行和清除；多实例版本号/CAS 随持久化 SessionStore 补齐。
-- [ ] WorkflowState 增加 schemaVersion 和迁移策略。
+- [x] 增加持久化 SessionStore 实现，内存实现只用于测试和 Demo。
+- [x] 同一进程使用 ConversationKey 锁；SessionStore 使用 revision CAS 防止多实例丢失更新。
+- [ ] WorkflowState 已建立 stateSchemaVersion=1 和未来版本失败关闭；注册式迁移链仍待实现。
 - [ ] 长期记忆增加 TTL、容量上限、摘要上限和脱敏。
 - [ ] 认证系统为 Chat、Memory、Monitor 和 MCP 管理接口提供真实 Principal。
 - [ ] 管理类接口增加角色权限。
@@ -837,7 +837,17 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 
 本批次没有把“认证系统覆盖 Chat、Memory、Monitor 和 MCP 管理接口”标记为完成：Chat 和 Memory
 已要求 demo token，但 Monitor、MCP 管理接口、真实 JWT/网关认证和多租户 Principal 尚未统一。
-持久化、跨实例并发和 schemaVersion 也属于后续批次。
+第一批提交时，持久化、跨实例并发和 schemaVersion 尚未实现；后续进度记录如下。
+
+### Phase 8 第二批进度（2026-07-12）
+
+已完成 `SessionStore` SPI、`InMemorySessionStore`、`JdbcSessionStore`、显式会话快照、JSON Codec、
+会话 revision CAS 和 Workflow 状态恢复，详细说明见
+`客服Agent-43-SessionStore持久化与恢复说明.md`。
+
+当前可以在 `smartcs.persistence.mode=jdbc` 时把会话写入 MySQL，并在重建 ConversationStore 后
+恢复等待用户或等待确认的 Workflow。CAS 已能阻止旧版本覆盖新状态，但不能单独阻止两个实例在
+保存前重复执行副作用；持久化幂等、租约/事务锁、真实 MySQL Testcontainers 和迁移器仍属于后续工作。
 
 ### 验收标准
 

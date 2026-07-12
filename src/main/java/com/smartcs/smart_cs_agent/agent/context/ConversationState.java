@@ -61,6 +61,19 @@ public class ConversationState {
     );
 
     /**
+     * Legacy Skill 仍然依赖这些字段跨轮收集槽位，因此持久化快照需要保留它们。
+     * 其他 taskState 大多是当前一轮的工具结果或循环标记，重启后不应该恢复。
+     */
+    private static final Set<String> PERSISTENT_TASK_STATE_KEYS = Set.of(
+            "pending_slot",
+            "order_id",
+            "return_id",
+            "return_reason",
+            "last_user_preference",
+            "used_user_preference"
+    );
+
+    /**
      * 当前用户消息
      *
      * 【过渡说明】
@@ -148,6 +161,11 @@ public class ConversationState {
      * @param userId 用户标识
      */
     public ConversationState(String message, String userId) {
+        this(message, userId, true);
+    }
+
+    /** restore 使用 addInitialMessage=false，避免恢复时把最后一条用户消息再追加一次。 */
+    private ConversationState(String message, String userId, boolean addInitialMessage) {
         this.message = message;
         this.userId = userId;
         this.messages = new ArrayList<>();
@@ -164,8 +182,54 @@ public class ConversationState {
         this.workflowUpdatedAt = 0;
         this.workflowStates = new LinkedHashMap<>();
 
-        // 把用户消息加入历史记录
-        addMessage("user", message);
+        if (addInitialMessage) {
+            // 普通新会话需要把第一条用户消息加入历史；持久化恢复则直接复制原窗口。
+            addMessage("user", message);
+        }
+    }
+
+    /**
+     * 从持久化快照恢复一个可继续执行的 ConversationState。
+     *
+     * <p>Observation 和 Runtime 临时 taskState 故意不会恢复。新一轮开始时 Workflow 只需要消息、
+     * 槽位和自己的命名空间状态；旧工具结果跨重启复用反而可能产生错误判断。</p>
+     */
+    public static ConversationState restore(ConversationStateSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot cannot be null");
+        if (snapshot.schemaVersion() != ConversationStateSnapshot.CURRENT_SCHEMA_VERSION) {
+            throw new IllegalArgumentException(
+                    "Unsupported conversation state schemaVersion: " + snapshot.schemaVersion()
+            );
+        }
+
+        ConversationState state = new ConversationState(snapshot.message(), snapshot.userId(), false);
+        state.messages.addAll(snapshot.messages());
+        state.activeIntent = snapshot.activeIntent();
+        state.taskState.putAll(snapshot.taskState());
+        state.summaryMemory = snapshot.summaryMemory();
+        state.totalMessageCount = snapshot.totalMessageCount();
+        state.summaryVersion = snapshot.summaryVersion();
+        state.summaryUpdatedAt = snapshot.summaryUpdatedAt();
+        state.activeWorkflowId = snapshot.activeWorkflowId();
+        state.workflowVersion = snapshot.workflowVersion();
+        state.workflowStatus = snapshot.workflowStatus() == null || snapshot.workflowStatus().isBlank()
+                ? null
+                : WorkflowStatus.valueOf(snapshot.workflowStatus());
+        state.workflowStartedAt = snapshot.workflowStartedAt();
+        state.workflowUpdatedAt = snapshot.workflowUpdatedAt();
+        for (Map.Entry<String, WorkflowStateSnapshot> entry : snapshot.workflowStates().entrySet()) {
+            WorkflowStateSnapshot workflowSnapshot = entry.getValue();
+            if (workflowSnapshot.schemaVersion() != WorkflowStateSnapshot.CURRENT_SCHEMA_VERSION) {
+                throw new IllegalArgumentException(
+                        "Unsupported workflow state schemaVersion for " + entry.getKey()
+                );
+            }
+            state.workflowStates.put(
+                    entry.getKey(),
+                    new LinkedHashMap<>(workflowSnapshot.payload())
+            );
+        }
+        return state;
     }
 
     /**
@@ -561,6 +625,7 @@ public class ConversationState {
      */
     public void setWorkflowState(String workflowId, String key, Object value) {
         validateWorkflowStateAddress(workflowId, key);
+        validateWorkflowStateValue(workflowId, key, value);
         Map<String, Object> namespace = workflowStates.computeIfAbsent(
                 workflowId,
                 ignored -> new LinkedHashMap<>()
@@ -608,6 +673,23 @@ public class ConversationState {
     }
 
     /**
+     * Workflow 命名空间属于可持久化业务状态，不能像 taskState 那样保存任意运行时对象。
+     * 需要结构化 payload 时应先升级 WorkflowStateSnapshot schema，而不是依赖 Java 类名序列化。
+     */
+    private void validateWorkflowStateValue(String workflowId, String key, Object value) {
+        if (value == null
+                || value instanceof String
+                || value instanceof Number
+                || value instanceof Boolean
+                || value instanceof Enum<?>) {
+            return;
+        }
+        throw new IllegalArgumentException(
+                "Workflow state only supports scalar values: " + workflowId + "." + key
+        );
+    }
+
+    /**
      * 获取用户标识
      */
     public String getUserId() {
@@ -632,6 +714,76 @@ public class ConversationState {
 
     public long getSummaryUpdatedAt() {
         return summaryUpdatedAt;
+    }
+
+    /**
+     * 生成可写入 SessionStore 的稳定快照。
+     *
+     * <p>Workflow 私有状态当前只写入 step、订单号、原因等标量。这里统一保存成 String，避免
+     * Object 经过 JSON 后类型漂移。若以后确实需要结构化值，应升级 schema 并增加显式 DTO。</p>
+     */
+    public ConversationStateSnapshot toPersistenceSnapshot() {
+        Map<String, String> persistedTaskState = new LinkedHashMap<>();
+        for (String key : PERSISTENT_TASK_STATE_KEYS) {
+            Object value = taskState.get(key);
+            if (value != null) {
+                persistedTaskState.put(key, persistentText(value, "taskState." + key));
+            }
+        }
+
+        Map<String, WorkflowStateSnapshot> persistedWorkflowStates = new LinkedHashMap<>();
+        for (Map.Entry<String, Map<String, Object>> workflowEntry : workflowStates.entrySet()) {
+            Map<String, String> namespace = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> stateEntry : workflowEntry.getValue().entrySet()) {
+                if (stateEntry.getValue() != null) {
+                    namespace.put(
+                            stateEntry.getKey(),
+                            persistentText(
+                                    stateEntry.getValue(),
+                                    "workflowState." + workflowEntry.getKey() + "." + stateEntry.getKey()
+                            )
+                    );
+                }
+            }
+            persistedWorkflowStates.put(
+                    workflowEntry.getKey(),
+                    new WorkflowStateSnapshot(
+                            WorkflowStateSnapshot.CURRENT_SCHEMA_VERSION,
+                            namespace
+                    )
+            );
+        }
+
+        return new ConversationStateSnapshot(
+                ConversationStateSnapshot.CURRENT_SCHEMA_VERSION,
+                userId,
+                message,
+                new ArrayList<>(messages),
+                activeIntent,
+                persistedTaskState,
+                getSummaryMemory(),
+                totalMessageCount,
+                summaryVersion,
+                summaryUpdatedAt,
+                activeWorkflowId,
+                workflowVersion,
+                workflowStatus == null ? null : workflowStatus.name(),
+                workflowStartedAt,
+                workflowUpdatedAt,
+                persistedWorkflowStates
+        );
+    }
+
+    private String persistentText(Object value, String address) {
+        if (value instanceof String
+                || value instanceof Number
+                || value instanceof Boolean
+                || value instanceof Enum<?>) {
+            return value.toString();
+        }
+        throw new IllegalStateException(
+                "Unsupported persistent conversation value at " + address + ": " + value.getClass().getName()
+        );
     }
 
     /**

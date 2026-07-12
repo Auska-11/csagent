@@ -1,6 +1,7 @@
 package com.smartcs.smart_cs_agent.controller;
 
 import com.smartcs.smart_cs_agent.security.AuthenticationException;
+import com.smartcs.smart_cs_agent.session.api.SessionVersionConflictException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -47,6 +48,18 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.NOT_FOUND)
                 .body(new ApiErrorResponse("NOT_FOUND", safeMessage(exception.getMessage(), "Resource not found")));
+    }
+
+    /** 多实例同时更新同一会话时返回 409，提醒调用方重新获取最新会话状态。 */
+    @ExceptionHandler(SessionVersionConflictException.class)
+    public ResponseEntity<ApiErrorResponse> handleSessionVersionConflict(
+            SessionVersionConflictException exception) {
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(new ApiErrorResponse(
+                        "SESSION_VERSION_CONFLICT",
+                        "Conversation changed concurrently, please retry"
+                ));
     }
 
     /**

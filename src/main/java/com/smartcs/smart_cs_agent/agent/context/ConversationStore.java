@@ -1,5 +1,9 @@
 package com.smartcs.smart_cs_agent.agent.context;
 
+import com.smartcs.smart_cs_agent.session.api.SessionRecord;
+import com.smartcs.smart_cs_agent.session.api.SessionStore;
+import com.smartcs.smart_cs_agent.session.memory.InMemorySessionStore;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -23,25 +27,19 @@ import java.util.function.Function;
  * 如果没有 ConversationStore，系统不知道这个订单号是在补充退货流程。
  *
  * 【当前实现】
- * 第一版先用内存 Map 保存会话状态，并使用 ConversationKey 隔离租户和用户。
- * 这适合学习和演示，重启后数据仍会丢失。
+ * ConversationStore 只管理一轮会话的加载、锁和保存，真正的数据存储由 SessionStore SPI 提供。
+ * 默认是 InMemorySessionStore；smartcs.persistence.mode=jdbc 时会自动切换为 JdbcSessionStore。
  *
  * 【后续扩展】
- * 如果要做成更接近生产的系统，可以把这个类替换成：
- * - RedisConversationStore
- * - MySqlConversationStore
- * - FileConversationStore
+ * 新增 Redis 或远程 Session 服务时实现 SessionStore 即可，不需要替换 Agent 入口。
  */
 @Component
 public class ConversationStore {
 
     /**
-     * 内存会话表：(tenantId, userId, conversationId) -> ConversationState
-     *
-     * 使用 ConcurrentHashMap 是为了比普通 HashMap 更适合 Web 请求场景。
-     * 当前项目不是高并发生产系统，但这样做更稳妥。
+     * 持久化 SPI。ConversationStore 不知道底层是 Map、MySQL 还是其他服务。
      */
-    private final Map<ConversationKey, ConversationState> conversations = new ConcurrentHashMap<>();
+    private final SessionStore sessionStore;
 
     /**
      * 每个完整 ConversationKey 一把独立锁。
@@ -54,6 +52,24 @@ public class ConversationStore {
      */
     private final Map<ConversationKey, ReentrantLock> conversationLocks = new ConcurrentHashMap<>();
 
+    /** Spring 生产构造函数，会注入当前配置选中的 SessionStore 实现。 */
+    @Autowired
+    public ConversationStore(SessionStore sessionStore) {
+        if (sessionStore == null) {
+            throw new IllegalArgumentException("sessionStore cannot be null");
+        }
+        this.sessionStore = sessionStore;
+    }
+
+    /**
+     * 兼容大量不启动 Spring 的单元测试。
+     *
+     * <p>生产环境不会使用这个构造函数；测试默认得到一个全新的内存 SessionStore。</p>
+     */
+    public ConversationStore() {
+        this(new InMemorySessionStore());
+    }
+
     /**
      * 根据请求获取会话状态。
      *
@@ -64,33 +80,14 @@ public class ConversationStore {
      * 我们创建新的 ConversationState。
      */
     public ConversationState getOrCreate(ChatRequest request) {
-        ConversationKey key = ConversationKey.from(request);
-        return conversations.compute(key, (conversationKey, existingState) -> {
-            if (existingState == null) {
-                return new ConversationState(request.getMessage(), request.getUserId());
-            }
-
-            // 复合键已经隔离 owner；这里再检查一次 Map 中状态是否满足不变量。
-            // 如果未来持久化适配器把错误用户的数据装进这个 key，可以尽早失败而不是继续污染数据。
-            if (!existingState.getUserId().equals(request.getUserId())) {
-                throw new IllegalArgumentException(
-                        "Conversation state owner does not match storage key"
-                );
-            }
-
-            // 过渡阶段：当前 Skill 仍然从 ConversationState.getMessage() 读取当前消息。
-            // 后续引入 TurnContext 后，会改成从 ChatRequest 读取当前消息。
-            existingState.startNewTurn(request.getMessage());
-            return existingState;
-        });
+        return executeSerially(request, state -> state);
     }
 
     /**
      * 保存会话状态。
      *
-     * 目前 getOrCreate 返回的是同一个对象，理论上已经在 Map 里了；
-     * 这里仍然保留 save 方法，是为了让上层代码表达完整生命周期：
-     * 读取状态 -> 执行一轮 -> 保存状态。
+     * 这个兼容入口会先读取最新版本，再使用 CAS 保存。
+     * 正常 Agent 主链路应优先使用 executeSerially，让加载、业务执行和保存处于同一把本地锁中。
      */
     public void save(ConversationKey key, ConversationState state) {
         if (key == null) {
@@ -102,14 +99,22 @@ public class ConversationStore {
         if (!key.userId().equals(state.getUserId())) {
             throw new IllegalArgumentException("Conversation state owner does not match storage key");
         }
-        conversations.put(key, state);
+
+        ReentrantLock lock = conversationLocks.computeIfAbsent(key, ignored -> new ReentrantLock());
+        lock.lock();
+        try {
+            long expectedVersion = sessionStore.load(key).map(SessionRecord::version).orElse(0L);
+            sessionStore.save(key, expectedVersion, state.toPersistenceSnapshot());
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
      * 在会话级串行锁内执行完整的一轮处理。
      *
-     * <p>不同 conversationId 使用不同锁，仍然可以并行；只有同一会话的请求会排队。
-     * operation 成功后统一保存，调用方不需要忘记 save。</p>
+     * <p>不同 ConversationKey 使用不同锁，仍然可以并行；只有同一 owner 的同一会话会排队。
+     * operation 成功后使用读取时的版本做 CAS 保存，调用方不需要手工管理版本。</p>
      */
     public <T> T executeSerially(ChatRequest request, Function<ConversationState, T> operation) {
         if (request == null) {
@@ -123,9 +128,10 @@ public class ConversationStore {
         ReentrantLock lock = conversationLocks.computeIfAbsent(key, ignored -> new ReentrantLock());
         lock.lock();
         try {
-            ConversationState state = getOrCreate(request);
+            LoadedConversation loaded = loadForTurn(key, request);
+            ConversationState state = loaded.state();
             T result = operation.apply(state);
-            save(key, state);
+            sessionStore.save(key, loaded.version(), state.toPersistenceSnapshot());
             return result;
         } finally {
             lock.unlock();
@@ -144,7 +150,9 @@ public class ConversationStore {
         if (key == null) {
             return null;
         }
-        return conversations.get(key);
+        return sessionStore.load(key)
+                .map(record -> restoreAndValidate(key, record))
+                .orElse(null);
     }
 
     /**
@@ -162,11 +170,44 @@ public class ConversationStore {
         ReentrantLock lock = conversationLocks.computeIfAbsent(key, ignored -> new ReentrantLock());
         lock.lock();
         try {
-            return conversations.remove(key) != null;
+            SessionRecord record = sessionStore.load(key).orElse(null);
+            return record != null && sessionStore.delete(key, record.version());
         } finally {
             lock.unlock();
             // 不在这里移除 lock：可能还有请求已经拿到了这把锁并正在等待。
             // 少量轻量 ReentrantLock 留在内存中比制造两把并发锁更安全。
         }
+    }
+
+    private LoadedConversation loadForTurn(ConversationKey key, ChatRequest request) {
+        SessionRecord record = sessionStore.load(key).orElse(null);
+        if (record == null) {
+            return new LoadedConversation(
+                    new ConversationState(request.getMessage(), request.getUserId()),
+                    0L
+            );
+        }
+
+        ConversationState state = restoreAndValidate(key, record);
+        if (!state.getUserId().equals(request.getUserId())) {
+            throw new IllegalArgumentException("Conversation state owner does not match request");
+        }
+
+        // 当前 Skill 仍有少量兼容代码从 ConversationState.getMessage() 读取本轮消息。
+        state.startNewTurn(request.getMessage());
+        return new LoadedConversation(state, record.version());
+    }
+
+    private ConversationState restoreAndValidate(ConversationKey key, SessionRecord record) {
+        if (!key.equals(record.key())) {
+            throw new IllegalStateException("SessionStore returned a record for the wrong key");
+        }
+        if (!key.userId().equals(record.snapshot().userId())) {
+            throw new IllegalStateException("Session snapshot owner does not match storage key");
+        }
+        return ConversationState.restore(record.snapshot());
+    }
+
+    private record LoadedConversation(ConversationState state, long version) {
     }
 }
