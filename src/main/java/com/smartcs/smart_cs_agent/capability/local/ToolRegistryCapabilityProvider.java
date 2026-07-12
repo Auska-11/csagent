@@ -9,12 +9,16 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
+import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSearchResult;
+import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSummary;
 import com.smartcs.smart_cs_agent.tools.ToolCall;
 import com.smartcs.smart_cs_agent.tools.ToolDefinition;
 import com.smartcs.smart_cs_agent.tools.ToolRegistry;
 import com.smartcs.smart_cs_agent.tools.ToolResult;
 import com.smartcs.smart_cs_agent.tools.OrderToolData;
 import com.smartcs.smart_cs_agent.tools.ProductInfoToolData;
+import com.smartcs.smart_cs_agent.tools.ProductItemData;
+import com.smartcs.smart_cs_agent.tools.ProductSearchToolData;
 import com.smartcs.smart_cs_agent.tools.ReturnToolData;
 import com.smartcs.smart_cs_agent.tools.UserToolData;
 import com.smartcs.smart_cs_agent.tools.UserOrdersToolData;
@@ -28,6 +32,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 将现有 ToolRegistry 暂时包装成本地 CapabilityProvider。
@@ -46,18 +52,26 @@ public class ToolRegistryCapabilityProvider implements CapabilityProvider {
     public static final String PROVIDER_ID = "local-tool-registry";
 
     private final ToolRegistry toolRegistry;
-    private final boolean includeLegacyReturnApply;
-    private final boolean includeLegacyReturnLookup;
+    private final Set<String> overriddenCapabilityIds;
 
     @Autowired
     public ToolRegistryCapabilityProvider(ToolRegistry toolRegistry,
-                                          LocalReturnLookupCapabilityProvider ignoredMigratedProvider) {
-        this(toolRegistry, false, false);
+                                          List<LegacyCapabilityOverride> overrides) {
+        this(toolRegistry, collectOverrides(overrides));
     }
 
     /** 手动装配兼容入口：没有独立 Provider 时继续暴露旧 return.lookup。 */
     public ToolRegistryCapabilityProvider(ToolRegistry toolRegistry) {
-        this(toolRegistry, false, true);
+        this(toolRegistry, Set.of(CapabilityIds.RETURN_APPLY));
+    }
+
+    /**
+     * 兼容上一迁移批次的手动构造方式：只隐藏 return.apply 和 return.lookup。
+     * Spring 生产装配使用上面的 List 构造器，能够自动发现全部 Override。
+     */
+    public ToolRegistryCapabilityProvider(ToolRegistry toolRegistry,
+                                          LocalReturnLookupCapabilityProvider ignoredMigratedProvider) {
+        this(toolRegistry, Set.of(CapabilityIds.RETURN_APPLY, CapabilityIds.RETURN_LOOKUP));
     }
 
     /**
@@ -65,15 +79,16 @@ public class ToolRegistryCapabilityProvider implements CapabilityProvider {
      * 生产环境固定为 false，由 LocalReturnApplyCapabilityProvider 接管安全写入。
      */
     public ToolRegistryCapabilityProvider(ToolRegistry toolRegistry, boolean includeLegacyReturnApply) {
-        this(toolRegistry, includeLegacyReturnApply, true);
+        this(
+                toolRegistry,
+                includeLegacyReturnApply ? Set.of() : Set.of(CapabilityIds.RETURN_APPLY)
+        );
     }
 
     private ToolRegistryCapabilityProvider(ToolRegistry toolRegistry,
-                                           boolean includeLegacyReturnApply,
-                                           boolean includeLegacyReturnLookup) {
+                                           Set<String> overriddenCapabilityIds) {
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry cannot be null");
-        this.includeLegacyReturnApply = includeLegacyReturnApply;
-        this.includeLegacyReturnLookup = includeLegacyReturnLookup;
+        this.overriddenCapabilityIds = Set.copyOf(overriddenCapabilityIds);
     }
 
     @Override
@@ -84,10 +99,10 @@ public class ToolRegistryCapabilityProvider implements CapabilityProvider {
     @Override
     public Collection<CapabilityDefinition> definitions() {
         return toolRegistry.listTools().stream()
-                // return.apply 已迁移为独立 LocalReturnApplyCapabilityProvider，不能重复注册。
-                .filter(definition -> includeLegacyReturnApply || !"return_apply".equals(definition.getName()))
-                // Spring 生产链路由 LocalReturnLookupCapabilityProvider 接管安全只读查询。
-                .filter(definition -> includeLegacyReturnLookup || !"return_query".equals(definition.getName()))
+                // 独立 Provider 已接管的能力不能再由旧 ToolRegistry 重复注册。
+                .filter(definition -> !overriddenCapabilityIds.contains(
+                        CapabilityIds.canonicalize(definition.getName())
+                ))
                 .map(this::toCapabilityDefinition)
                 .toList();
     }
@@ -179,8 +194,33 @@ public class ToolRegistryCapabilityProvider implements CapabilityProvider {
                     new OrderListResult(userOrders.getUserId(), orders)
             );
         }
-        if (data instanceof ProductInfoToolData product && !product.isFound()) {
-            return businessRejected(capabilityId, "PRODUCT_NOT_FOUND", result);
+        if (data instanceof ProductSearchToolData products) {
+            return CapabilityResult.success(
+                    capabilityId,
+                    PROVIDER_ID,
+                    result.getMessage(),
+                    new ProductSearchResult(
+                            products.getKeyword(),
+                            products.getProducts().stream().map(this::toProductSummary).toList()
+                    )
+            );
+        }
+        if (data instanceof ProductInfoToolData product) {
+            if (!product.isFound()) {
+                return CapabilityResult.businessRejected(
+                        capabilityId,
+                        PROVIDER_ID,
+                        "PRODUCT_NOT_FOUND",
+                        result.getMessage(),
+                        null
+                );
+            }
+            return CapabilityResult.success(
+                    capabilityId,
+                    PROVIDER_ID,
+                    result.getMessage(),
+                    toProductSummary(product.getProduct())
+            );
         }
         if (data instanceof ReturnToolData returnData && !returnData.isFound()) {
             return businessRejected(capabilityId, "RETURN_NOT_FOUND", result);
@@ -221,6 +261,27 @@ public class ToolRegistryCapabilityProvider implements CapabilityProvider {
                 order.getStatus(),
                 order.getTrackingNo()
         );
+    }
+
+    private ProductSummary toProductSummary(ProductItemData product) {
+        return new ProductSummary(
+                product.getProductId(),
+                product.getName(),
+                product.getPrice(),
+                product.getStock(),
+                product.getDescription()
+        );
+    }
+
+    private static Set<String> collectOverrides(List<LegacyCapabilityOverride> overrides) {
+        if (overrides == null || overrides.isEmpty()) {
+            return Set.of();
+        }
+        return overrides.stream()
+                .filter(Objects::nonNull)
+                .flatMap(override -> override.overriddenCapabilityIds().stream())
+                .map(CapabilityIds::canonicalize)
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     private CapabilityResult<?> businessRejected(String capabilityId, String errorCode, ToolResult result) {

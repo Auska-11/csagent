@@ -9,12 +9,16 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
 import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
+import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSearchResult;
+import com.smartcs.smart_cs_agent.capability.local.LegacyCapabilityOverride;
 import com.smartcs.smart_cs_agent.capability.local.LocalReturnLookupCapabilityProvider;
 import com.smartcs.smart_cs_agent.capability.local.ToolRegistryCapabilityProvider;
 import com.smartcs.smart_cs_agent.model.Order;
 import com.smartcs.smart_cs_agent.model.Product;
 import com.smartcs.smart_cs_agent.tools.OrderToolData;
 import com.smartcs.smart_cs_agent.tools.KnowledgeSearchResult;
+import com.smartcs.smart_cs_agent.tools.ProductItemData;
+import com.smartcs.smart_cs_agent.tools.ProductSearchToolData;
 import com.smartcs.smart_cs_agent.tools.ToolCall;
 import com.smartcs.smart_cs_agent.tools.ToolDefinition;
 import com.smartcs.smart_cs_agent.tools.ToolRegistry;
@@ -41,7 +45,7 @@ import static org.mockito.Mockito.when;
 class ToolRegistryCapabilityProviderTest {
 
     @Test
-    void springStyleConstructorShouldHideMigratedLegacyReturnLookup() {
+    void compatibilityConstructorShouldHideMigratedLegacyReturnLookup() {
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         when(toolRegistry.listTools()).thenReturn(List.of(
                 new ToolDefinition("return_query", "查询退货", Map.of("return_id", "退货单号"), List.of("return_id")),
@@ -57,6 +61,30 @@ class ToolRegistryCapabilityProviderTest {
                 .map(CapabilityDefinition::getId)
                 .toList();
         assertEquals(List.of("product.search"), exposedIds);
+    }
+
+    @Test
+    void overrideListShouldHideAllCapabilitiesClaimedByIndependentProviders() {
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
+        when(toolRegistry.listTools()).thenReturn(List.of(
+                new ToolDefinition("return_apply", "申请退货", Map.of(), List.of()),
+                new ToolDefinition("return_query", "查询退货", Map.of(), List.of()),
+                new ToolDefinition("product_search", "搜索商品", Map.of(), List.of()),
+                new ToolDefinition("product_info", "商品详情", Map.of(), List.of()),
+                new ToolDefinition("user_lookup", "查询用户", Map.of(), List.of())
+        ));
+        LegacyCapabilityOverride returns = () -> Set.of("return.apply", "return.lookup");
+        LegacyCapabilityOverride products = () -> Set.of("product.search", "product.lookup");
+
+        ToolRegistryCapabilityProvider provider = new ToolRegistryCapabilityProvider(
+                toolRegistry,
+                List.of(returns, products)
+        );
+
+        assertEquals(
+                List.of("user.lookup"),
+                provider.definitions().stream().map(CapabilityDefinition::getId).toList()
+        );
     }
 
     @Test
@@ -140,6 +168,37 @@ class ToolRegistryCapabilityProviderTest {
         Object first = ((List<?>) result.getData()).get(0);
         assertTrue(first instanceof KnowledgeSearchHit);
         assertEquals("保修政策", ((KnowledgeSearchHit) first).getTitle());
+    }
+
+    @Test
+    void shouldMapLegacyProductListToStableCapabilityContract() {
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
+        Product legacyProduct = new Product(
+                "PROD-001",
+                "蓝牙耳机 Pro Max",
+                599,
+                100,
+                "支持主动降噪"
+        );
+        when(toolRegistry.execute(any(ToolCall.class))).thenReturn(
+                ToolResult.success(
+                        "product_search",
+                        "found",
+                        new ProductSearchToolData("耳机", List.of(new ProductItemData(legacyProduct)))
+                )
+        );
+        ToolRegistryCapabilityProvider provider = new ToolRegistryCapabilityProvider(toolRegistry);
+
+        CapabilityResult<?> result = provider.invoke(
+                new CapabilityCall("product.search", Map.of("keyword", "耳机")),
+                ExecutionContext.legacy()
+        );
+
+        ProductSearchResult products = (ProductSearchResult) result.getData();
+        assertTrue(result.isSuccess());
+        assertEquals(1, products.getCount());
+        assertEquals("PROD-001", products.getProducts().get(0).getProductId());
+        assertEquals(599, products.getProducts().get(0).getPrice());
     }
 
     @Test

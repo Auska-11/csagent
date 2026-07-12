@@ -24,7 +24,7 @@ import java.util.Map;
  */
 @Component
 @ConditionalOnExpression("'${smartcs.capability.provider-mode:local}' != 'mcp-remote'")
-public class LocalReturnApplyCapabilityProvider implements CapabilityProvider {
+public class LocalReturnApplyCapabilityProvider implements CapabilityProvider, LegacyCapabilityOverride {
 
     public static final String PROVIDER_ID = "local-return-domain";
 
@@ -44,6 +44,11 @@ public class LocalReturnApplyCapabilityProvider implements CapabilityProvider {
     @Override
     public Collection<CapabilityDefinition> definitions() {
         return List.of(definition);
+    }
+
+    @Override
+    public java.util.Set<String> overriddenCapabilityIds() {
+        return java.util.Set.of(CapabilityIds.RETURN_APPLY);
     }
 
     @Override

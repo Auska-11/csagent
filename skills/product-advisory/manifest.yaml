@@ -1,0 +1,19 @@
+# 商品咨询与推荐 Agent Skill Package。
+id: product-advisory
+version: 1.0.0
+description: 查询商品价格、库存和特点，并基于长期偏好提供目录内推荐
+workflow: product_advisory
+priority: 165
+triggers:
+  - 蓝牙耳机多少钱
+  - 智能手表有货吗
+  - 给我推荐一个商品
+allowed_capabilities:
+  - product.search
+  - handoff.request
+risk_level: mixed
+confirmation_policy: user-requested-handoff
+prompt: SKILL.md
+references:
+  - path: references/catalog-guidance.md
+    always: true

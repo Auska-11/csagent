@@ -9,6 +9,8 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
+import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSearchResult;
+import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSummary;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ReturnStatusSummary;
 import com.smartcs.smart_cs_agent.capability.core.CapabilityProviderProperties;
 import org.junit.jupiter.api.Test;
@@ -173,6 +175,34 @@ class McpCapabilityProviderTest {
     }
 
     @Test
+    void shouldRestoreProductContractsFromRemoteJsonMaps() {
+        FakeTransport searchTransport = new FakeTransport(List.of(readOnlyDefinition("product.search")));
+        searchTransport.invokeData = Map.of(
+                "keyword", "耳机",
+                "count", 1,
+                "products", List.of(remoteProduct())
+        );
+        CapabilityResult<?> search = provider("mcp-remote", searchTransport).invoke(
+                new CapabilityCall("product.search", Map.of("keyword", "耳机")),
+                authenticatedContext()
+        );
+
+        FakeTransport lookupTransport = new FakeTransport(List.of(readOnlyDefinition("product.lookup")));
+        lookupTransport.invokeData = remoteProduct();
+        CapabilityResult<?> lookup = provider("mcp-remote", lookupTransport).invoke(
+                new CapabilityCall("product.lookup", Map.of("product_name", "耳机")),
+                authenticatedContext()
+        );
+
+        ProductSearchResult products = (ProductSearchResult) search.getData();
+        ProductSummary product = (ProductSummary) lookup.getData();
+        assertEquals(1, products.getCount());
+        assertEquals("蓝牙耳机 Pro Max", products.getProducts().get(0).getName());
+        assertEquals("PROD-001", product.getProductId());
+        assertEquals(599, product.getPrice());
+    }
+
+    @Test
     void hybridShouldKeepLocalApplicationStartableWhenRemoteDiscoveryFails() {
         FakeTransport transport = new FakeTransport(List.of());
         transport.failDiscovery = true;
@@ -222,6 +252,16 @@ class McpCapabilityProviderTest {
                 "product_name", "蓝牙耳机 Pro Max",
                 "status", "已发货",
                 "tracking_no", "SF1234567890"
+        );
+    }
+
+    private Map<String, Object> remoteProduct() {
+        return Map.of(
+                "product_id", "PROD-001",
+                "name", "蓝牙耳机 Pro Max",
+                "price", 599,
+                "stock", 100,
+                "description", "支持主动降噪，续航30小时，蓝牙5.3"
         );
     }
 

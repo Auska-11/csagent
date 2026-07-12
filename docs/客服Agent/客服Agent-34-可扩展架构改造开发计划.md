@@ -745,7 +745,7 @@ CapabilityGateway 第一版内部仍可委托旧 ToolRegistry，逐个能力迁�
 
 1. [x] `OrderQueryWorkflow`（2026-07-12 已完成 Package、状态机、订单契约、安全与集成测试）
 2. [x] `ReturnQueryWorkflow`（2026-07-12 已完成 Package、状态机、退货契约、归属校验与集成测试）
-3. [ ] `ProductAdvisoryWorkflow`
+3. [x] `ProductAdvisoryWorkflow`（2026-07-12 已完成 Package、商品契约、长期偏好读取与集成测试）
 4. [ ] `PolicyQaWorkflow`
 5. [ ] `UserProfileWorkflow`
 6. [ ] `ComplaintWorkflow`
@@ -759,6 +759,9 @@ CapabilityGateway 第一版内部仍可委托旧 ToolRegistry，逐个能力迁�
 
 退货查询迁移的关联订单归属校验、稳定契约和回滚说明见
 [`客服Agent-36-退货查询Workflow迁移说明.md`](客服Agent-36-退货查询Workflow迁移说明.md)。
+
+商品咨询迁移的长期偏好双轨、商品契约和通用 Override 机制见
+[`客服Agent-37-商品咨询Workflow迁移说明.md`](客服Agent-37-商品咨询Workflow迁移说明.md)。
 
 ### 共用能力下沉
 
@@ -1186,7 +1189,7 @@ ChatApiController
 
 ## 20. 仍然存在的不足（后续路线图）
 
-1. `CustomerServiceSkill` 仍保留订单、退货查询的回滚分支，以及尚未迁移的商品、用户信息和
+1. `CustomerServiceSkill` 仍保留订单、退货查询、商品咨询的回滚分支，以及尚未迁移的用户信息和
    通用知识问答等 Legacy 分支；应按 Phase 7 逐个迁移，而不是继续往这个大类添加新业务。
 2. `ToolManager`、`ToolRegistry` 和 `LegacySkillWorkflowAdapter` 仍是兼容层；新代码应优先使用
    Workflow/Capability 契约，待回归稳定后再删除旧入口。

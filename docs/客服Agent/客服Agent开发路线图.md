@@ -4,9 +4,10 @@
 >
 > 改造目标：分离 Agent Skill Package 与 Executable Workflow，引入可插拔 Action Handler 和 Capability Gateway/MCP Provider；以“新增业务 Skill 不修改 AgentRuntime、核心 Router 或 CapabilityGateway，并通过全量测试”为最终成功标准。
 
-> Phase 7 当前进度：`OrderQueryWorkflow`、`ReturnQueryWorkflow` 已完成，下一批迁移商品咨询。
+> Phase 7 当前进度：订单查询、退货查询和商品咨询 Workflow 已完成，下一批迁移通用政策问答。
 > 详细说明见 [`客服Agent-35-订单查询Workflow迁移说明.md`](客服Agent-35-订单查询Workflow迁移说明.md)
-> 和 [`客服Agent-36-退货查询Workflow迁移说明.md`](客服Agent-36-退货查询Workflow迁移说明.md)。
+>、[`客服Agent-36-退货查询Workflow迁移说明.md`](客服Agent-36-退货查询Workflow迁移说明.md)
+> 和 [`客服Agent-37-商品咨询Workflow迁移说明.md`](客服Agent-37-商品咨询Workflow迁移说明.md)。
 
 > 本文档是 Smart CS Agent 后续开发的主计划。后续新增需求、调整优先级、准备简历和面试讲解，都优先参考这份文档。
 
