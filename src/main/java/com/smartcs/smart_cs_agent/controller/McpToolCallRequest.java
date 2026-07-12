@@ -19,16 +19,22 @@ import java.util.Map;
  */
 public class McpToolCallRequest {
 
-    /** 工具名称，例如 order_lookup */
+    /** Capability 名称，例如 order.lookup；旧下划线别名仍由兼容层规范化。 */
     private String name;
 
     /** 工具参数，例如 {"order_id": "ORD-001"} */
     private Map<String, Object> arguments = Collections.emptyMap();
 
-    /** 以下字段属于 MCP 执行元数据，不会传入业务 arguments。 */
+    /** requestId、conversationId、idempotencyKey 属于 MCP 执行元数据，不会传入业务 arguments。 */
     private String requestId;
+
+    /** 旧协议字段：HTTP 认证只读取 Authorization Header，这里的 token 永远不能建立身份。 */
     private String authToken;
+
+    /** 旧协议字段：只允许做一致性检查，不能覆盖 JWT Principal。 */
     private String userId;
+
+    /** 旧协议字段：只允许做一致性检查，不能覆盖 JWT Principal。 */
     private String tenantId;
     private String conversationId;
     private String idempotencyKey;

@@ -1,5 +1,9 @@
 # 客服Agent-42：会话所有权边界改造说明
 
+> 后续更新：本文记录 Phase 8 第一批的历史实现。第七批已用 Spring Security Bearer JWT、
+> `JwtPrincipalConverter` 和统一 RBAC 替换 `DemoAuthenticationService`、body token 与 `X-User-Id`。
+> 当前实现请以 `客服Agent-48-JWT统一认证与角色权限说明.md` 为准，下面内容用于理解迁移过程。
+
 ## 1. 本批次结论
 
 Phase 8 第一批已经完成“会话所有权边界”改造。

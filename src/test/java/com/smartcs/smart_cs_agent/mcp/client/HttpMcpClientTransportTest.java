@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
@@ -31,7 +32,7 @@ import static org.springframework.http.HttpMethod.POST;
  * HTTP MCP Client 的协议边界测试。
  *
  * <p>MockRestServiceServer 会接管 RestClient，不访问真实网络；测试仍会校验实际发送的 JSON-RPC
- * method、认证元数据，以及响应到 Capability 契约的映射。</p>
+ * method、HTTP Bearer 认证，以及响应到 Capability 契约的映射。</p>
  */
 class HttpMcpClientTransportTest {
 
@@ -41,6 +42,7 @@ class HttpMcpClientTransportTest {
 
         fixture.server.expect(requestTo(fixture.properties.getBaseUrl()))
                 .andExpect(method(POST))
+                .andExpect(header("Authorization", "Bearer service-secret"))
                 .andExpect(jsonPath("$.method").value("initialize"))
                 .andRespond(withSuccess("""
                         {
@@ -55,6 +57,7 @@ class HttpMcpClientTransportTest {
 
         fixture.server.expect(requestTo(fixture.properties.getBaseUrl()))
                 .andExpect(method(POST))
+                .andExpect(header("Authorization", "Bearer service-secret"))
                 .andExpect(jsonPath("$.method").value("tools/list"))
                 .andRespond(withSuccess("""
                         {
@@ -80,10 +83,11 @@ class HttpMcpClientTransportTest {
 
         fixture.server.expect(requestTo(fixture.properties.getBaseUrl()))
                 .andExpect(method(POST))
+                .andExpect(header("Authorization", "Bearer service-secret"))
                 .andExpect(jsonPath("$.method").value("tools/call"))
                 .andExpect(jsonPath("$.params.name").value("knowledge.search"))
-                .andExpect(jsonPath("$.params._meta.authToken").value("service-secret"))
-                .andExpect(jsonPath("$.params._meta.userId").value("USER-001"))
+                .andExpect(jsonPath("$.params._meta.authToken").doesNotExist())
+                .andExpect(jsonPath("$.params._meta.userId").doesNotExist())
                 .andExpect(jsonPath("$.params._meta.idempotencyKey").value("idem-http"))
                 .andRespond(withSuccess("""
                         {

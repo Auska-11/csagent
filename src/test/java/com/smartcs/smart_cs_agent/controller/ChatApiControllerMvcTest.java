@@ -8,17 +8,21 @@ import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
-import com.smartcs.smart_cs_agent.security.DemoAuthenticationService;
-import com.smartcs.smart_cs_agent.security.AuthenticationException;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
-import org.junit.jupiter.api.BeforeEach;
+import com.smartcs.smart_cs_agent.security.HttpSecurityConfiguration;
+import com.smartcs.smart_cs_agent.security.SecurityErrorWriter;
+import com.smartcs.smart_cs_agent.security.SecurityProperties;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import java.util.List;
 import java.util.Set;
@@ -31,6 +35,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -41,6 +46,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 因此可以验证 @Valid、@RequestBody、全局异常处理器是否真的按 HTTP 方式工作。
  */
 @WebMvcTest(ChatApiController.class)
+@Import({HttpSecurityConfiguration.class, SecurityProperties.class, SecurityErrorWriter.class})
 class ChatApiControllerMvcTest {
 
     @Autowired
@@ -58,34 +64,10 @@ class ChatApiControllerMvcTest {
     @MockBean
     private UserMemoryStore userMemoryStore;
 
-    @MockBean
-    private DemoAuthenticationService authenticationService;
-
-    @BeforeEach
-    void setUpAuthentication() {
-        when(authenticationService.authenticate(any(), any()))
-                .thenAnswer(invocation -> {
-                    String claimedUserId = invocation.getArgument(0);
-                    String token = invocation.getArgument(1);
-                    if (token == null || token.isBlank()) {
-                        return AuthenticatedPrincipal.unverifiedClaim(claimedUserId);
-                    }
-
-                    String actualUserId = switch (token) {
-                        case "token-zhangsan" -> "USER-001";
-                        case "token-lisi" -> "USER-002";
-                        default -> throw AuthenticationException.failed();
-                    };
-                    if (claimedUserId != null && !claimedUserId.equals(actualUserId)) {
-                        throw AuthenticationException.failed();
-                    }
-                    return AuthenticatedPrincipal.authenticated(actualUserId, Set.of("CUSTOMER"));
-                });
-    }
-
     @Test
     void shouldReturnBadRequestWhenMessageIsBlank() throws Exception {
         mockMvc.perform(post("/api/chat/send")
+                        .with(customer("USER-001"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -109,6 +91,7 @@ class ChatApiControllerMvcTest {
                 .thenReturn(new ChatResponse("conv-1", "USER-001", "ok", List.of()));
 
         mockMvc.perform(post("/api/chat/send")
+                        .with(customer("USER-001"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -158,8 +141,7 @@ class ChatApiControllerMvcTest {
         when(conversationStore.get(key)).thenReturn(state);
 
         mockMvc.perform(get("/api/chat/conversations/conv-memory/memory")
-                        .header("X-User-Id", "USER-001")
-                        .header("Authorization", "Bearer token-zhangsan"))
+                        .with(customer("USER-001")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.conversationId").value("conv-memory"))
                 .andExpect(jsonPath("$.userId").value("USER-001"))
@@ -173,8 +155,7 @@ class ChatApiControllerMvcTest {
         when(conversationStore.clear(key)).thenReturn(true);
 
         mockMvc.perform(delete("/api/chat/conversations/conv-memory/memory")
-                        .header("X-User-Id", "USER-001")
-                        .header("Authorization", "Bearer token-zhangsan"))
+                        .with(customer("USER-001")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope").value("conversation"))
                 .andExpect(jsonPath("$.targetId").value("conv-memory"))
@@ -186,7 +167,7 @@ class ChatApiControllerMvcTest {
         when(userMemoryStore.clear("USER-001")).thenReturn(true);
 
         mockMvc.perform(delete("/api/chat/users/USER-001/memory")
-                        .header("Authorization", "Bearer token-zhangsan"))
+                        .with(customer("USER-001")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope").value("user"))
                 .andExpect(jsonPath("$.targetId").value("USER-001"))
@@ -195,8 +176,7 @@ class ChatApiControllerMvcTest {
 
     @Test
     void shouldRejectConversationMemoryRequestWithoutBearerToken() throws Exception {
-        mockMvc.perform(get("/api/chat/conversations/private-conv/memory")
-                        .header("X-User-Id", "USER-001"))
+        mockMvc.perform(get("/api/chat/conversations/private-conv/memory"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_REQUIRED"))
                 .andExpect(jsonPath("$.message").value("Authentication is required"));
@@ -212,8 +192,7 @@ class ChatApiControllerMvcTest {
                 .thenReturn(new ConversationState("用户一的私有消息", "USER-001"));
 
         mockMvc.perform(get("/api/chat/conversations/shared-id/memory")
-                        .header("X-User-Id", "USER-002")
-                        .header("Authorization", "Bearer token-lisi"))
+                        .with(customer("USER-002")))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.errorCode").value("NOT_FOUND"))
                 .andExpect(jsonPath("$.message").value("Conversation not found"));
@@ -223,10 +202,9 @@ class ChatApiControllerMvcTest {
     }
 
     @Test
-    void shouldRejectClaimAndTokenMismatch() throws Exception {
+    void shouldRejectInvalidBearerTokenBeforeController() throws Exception {
         mockMvc.perform(delete("/api/chat/conversations/private-conv/memory")
-                        .header("X-User-Id", "USER-001")
-                        .header("Authorization", "Bearer token-lisi"))
+                        .header("Authorization", "Bearer invalid-jwt"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_FAILED"))
                 .andExpect(jsonPath("$.message").value("Authentication failed"));
@@ -237,10 +215,22 @@ class ChatApiControllerMvcTest {
     @Test
     void shouldRejectReadingAnotherUsersLongTermMemory() throws Exception {
         mockMvc.perform(get("/api/chat/users/USER-001/memory")
-                        .header("Authorization", "Bearer token-lisi"))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_FAILED"));
+                        .with(customer("USER-002")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("NOT_FOUND"));
 
         verify(userMemoryStore, never()).getSnapshot(any());
+    }
+
+    private RequestPostProcessor customer(String userId) {
+        AuthenticatedPrincipal principal = AuthenticatedPrincipal.authenticated(
+                userId,
+                Set.of("CUSTOMER")
+        );
+        return authentication(new UsernamePasswordAuthenticationToken(
+                principal,
+                "test-credentials",
+                List.of(new SimpleGrantedAuthority("ROLE_CUSTOMER"))
+        ));
     }
 }

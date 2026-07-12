@@ -11,40 +11,30 @@ import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.memory.UserMemorySnapshot;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
-import com.smartcs.smart_cs_agent.security.DemoAuthenticationService;
 import com.smartcs.smart_cs_agent.security.AuthenticationException;
-import com.smartcs.smart_cs_agent.repository.UserRepository;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.*;
 
 @RestController
 @RequestMapping("/api/chat")
 public class ChatApiController {
 
-    private static final String DEFAULT_TENANT_ID = ConversationKey.DEFAULT_TENANT_ID;
-    private static final String AUTHORIZATION_HEADER = "Authorization";
-    private static final String USER_ID_HEADER = "X-User-Id";
-
     private final CustomerServiceAgent agent;
     private final MonitorService monitorService;
     private final ConversationStore conversationStore;
     private final UserMemoryStore userMemoryStore;
-    private final DemoAuthenticationService authenticationService;
 
     @Autowired
     public ChatApiController(CustomerServiceAgent agent,
                              MonitorService monitorService,
                              ConversationStore conversationStore,
-                             UserMemoryStore userMemoryStore,
-                             DemoAuthenticationService authenticationService) {
+                             UserMemoryStore userMemoryStore) {
         this.agent = agent;
         this.monitorService = monitorService;
         this.conversationStore = conversationStore;
         this.userMemoryStore = userMemoryStore;
-        this.authenticationService = authenticationService;
     }
 
     /**
@@ -60,33 +50,19 @@ public class ChatApiController {
                 agent,
                 monitorService,
                 conversationStore,
-                new UserMemoryStore(),
-                new DemoAuthenticationService(new UserRepository())
-        );
-    }
-
-    /** 兼容需要传入自定义 UserMemoryStore 的旧单元测试。 */
-    public ChatApiController(CustomerServiceAgent agent,
-                             MonitorService monitorService,
-                             ConversationStore conversationStore,
-                             UserMemoryStore userMemoryStore) {
-        this(
-                agent,
-                monitorService,
-                conversationStore,
-                userMemoryStore,
-                new DemoAuthenticationService(new UserRepository())
+                new UserMemoryStore()
         );
     }
 
     @PostMapping("/send")
-    public ChatResponse sendMessage(@Valid @RequestBody(required = false) ChatApiRequest request) {
+    public ChatResponse sendMessage(
+            @Valid @RequestBody(required = false) ChatApiRequest request,
+            @AuthenticationPrincipal AuthenticatedPrincipal principal) {
         if (request == null) {
             throw new IllegalArgumentException("Message cannot be empty");
         }
 
         String message = request.getMessage();
-        String userId = request.getUserId();
         String conversationId = request.getConversationId();
 
         // 真实 HTTP 请求会被 @Valid 拦住；这里是给单元测试或内部直接调用留一道兜底防线。
@@ -94,15 +70,13 @@ public class ChatApiController {
             throw new IllegalArgumentException("Message cannot be empty");
         }
 
-        String claimedUserId = userId != null ? userId : "anonymous";
-        AuthenticatedPrincipal principal = authenticateRequired(claimedUserId, request.getToken());
-        // userId 只相信 token 恢复出的 Principal，不能使用客户端自己填写的 claim。
+        requireAuthenticated(principal);
+        requireMatchingClaim(request.getUserId(), principal);
+        // userId 和 tenantId 只相信 Spring Security 验证 JWT 后生成的 Principal。
         String actualUserId = principal.getUserId();
         String actualConversationId = normalizeConversationId(conversationId, actualUserId);
-        // 当前 Demo 只有一个可信租户。真实多租户系统应从网关或 JWT claim 注入 tenantId，
-        // 不能直接相信前端随请求传来的 tenantId。
         ChatRequest chatRequest = new ChatRequest(
-                DEFAULT_TENANT_ID,
+                principal.getTenantId(),
                 actualConversationId,
                 actualUserId,
                 message,
@@ -136,21 +110,16 @@ public class ChatApiController {
         return "default-" + userId;
     }
 
-    @GetMapping("/users")
-    public List<Map<String, String>> getUsers() {
-        return List.of(
-            Map.of("userId", "USER-001", "name", "Zhang San", "token", "token-zhangsan"),
-            Map.of("userId", "USER-002", "name", "Li Si", "token", "token-lisi")
-        );
-    }
-
     @GetMapping("/conversations/{conversationId}/memory")
     public ConversationMemorySnapshot getConversationMemory(
             @PathVariable String conversationId,
-            @RequestHeader(value = USER_ID_HEADER, required = false) String claimedUserId,
-            @RequestHeader(value = AUTHORIZATION_HEADER, required = false) String authorizationHeader) {
-        AuthenticatedPrincipal principal = requireAuthenticatedPrincipal(claimedUserId, authorizationHeader);
-        ConversationKey key = new ConversationKey(DEFAULT_TENANT_ID, principal.getUserId(), conversationId);
+            @AuthenticationPrincipal AuthenticatedPrincipal principal) {
+        requireAuthenticated(principal);
+        ConversationKey key = new ConversationKey(
+                principal.getTenantId(),
+                principal.getUserId(),
+                conversationId
+        );
         ConversationState state = conversationStore.get(key);
         if (state == null) {
             // 对“确实不存在”和“存在但属于别人”返回完全相同的结果，避免泄露会话归属。
@@ -167,10 +136,13 @@ public class ChatApiController {
     @DeleteMapping("/conversations/{conversationId}/memory")
     public MemoryClearResponse clearConversationMemory(
             @PathVariable String conversationId,
-            @RequestHeader(value = USER_ID_HEADER, required = false) String claimedUserId,
-            @RequestHeader(value = AUTHORIZATION_HEADER, required = false) String authorizationHeader) {
-        AuthenticatedPrincipal principal = requireAuthenticatedPrincipal(claimedUserId, authorizationHeader);
-        ConversationKey key = new ConversationKey(DEFAULT_TENANT_ID, principal.getUserId(), conversationId);
+            @AuthenticationPrincipal AuthenticatedPrincipal principal) {
+        requireAuthenticated(principal);
+        ConversationKey key = new ConversationKey(
+                principal.getTenantId(),
+                principal.getUserId(),
+                conversationId
+        );
         boolean cleared = conversationStore.clear(key);
         String message = cleared ? "Conversation memory cleared" : "Conversation memory not found";
         return new MemoryClearResponse("conversation", conversationId, cleared, message, System.currentTimeMillis());
@@ -186,8 +158,8 @@ public class ChatApiController {
     @GetMapping("/users/{userId}/memory")
     public UserMemorySnapshot getUserMemory(
             @PathVariable String userId,
-            @RequestHeader(value = AUTHORIZATION_HEADER, required = false) String authorizationHeader) {
-        AuthenticatedPrincipal principal = requireAuthenticatedPrincipal(userId, authorizationHeader);
+            @AuthenticationPrincipal AuthenticatedPrincipal principal) {
+        requireSelfOrHide(userId, principal);
         return userMemoryStore.getSnapshot(principal.getUserId());
     }
 
@@ -199,48 +171,33 @@ public class ChatApiController {
     @DeleteMapping("/users/{userId}/memory")
     public MemoryClearResponse clearUserMemory(
             @PathVariable String userId,
-            @RequestHeader(value = AUTHORIZATION_HEADER, required = false) String authorizationHeader) {
-        AuthenticatedPrincipal principal = requireAuthenticatedPrincipal(userId, authorizationHeader);
+            @AuthenticationPrincipal AuthenticatedPrincipal principal) {
+        requireSelfOrHide(userId, principal);
         boolean cleared = userMemoryStore.clear(principal.getUserId());
         String message = cleared ? "User memory cleared" : "User memory not found";
         return new MemoryClearResponse("user", userId, cleared, message, System.currentTimeMillis());
     }
 
-    /**
-     * 从标准 Bearer Header 恢复可信 Principal，并拒绝未认证 claim。
-     *
-     * <p>{@code X-User-Id} 只是前端声明，真正身份始终由 token 对应的用户决定。即使攻击者把
-     * Header 改成受害者 userId，没有匹配 token 也无法读取或删除 Memory。</p>
-     */
-    private AuthenticatedPrincipal requireAuthenticatedPrincipal(String claimedUserId,
-                                                                  String authorizationHeader) {
-        String token = extractBearerToken(authorizationHeader);
-        return authenticateRequired(claimedUserId, token);
-    }
-
-    /** Chat body token 和 Memory Bearer token 最终都通过同一个认证检查。 */
-    private AuthenticatedPrincipal authenticateRequired(String claimedUserId, String token) {
-        AuthenticatedPrincipal principal = authenticationService.authenticate(claimedUserId, token);
-        if (!principal.isAuthenticated()) {
+    private void requireAuthenticated(AuthenticatedPrincipal principal) {
+        if (principal == null || !principal.isAuthenticated()) {
             throw AuthenticationException.required();
         }
-        return principal;
     }
 
-    private String extractBearerToken(String authorizationHeader) {
-        if (authorizationHeader == null || authorizationHeader.isBlank()) {
-            return null;
-        }
-
-        String prefix = "Bearer ";
-        if (!authorizationHeader.regionMatches(true, 0, prefix, 0, prefix.length())) {
+    private void requireMatchingClaim(String claimedUserId, AuthenticatedPrincipal principal) {
+        if (claimedUserId != null
+                && !claimedUserId.isBlank()
+                && !"anonymous".equals(claimedUserId)
+                && !claimedUserId.equals(principal.getUserId())) {
             throw AuthenticationException.failed();
         }
+    }
 
-        String token = authorizationHeader.substring(prefix.length()).trim();
-        if (token.isEmpty()) {
-            throw AuthenticationException.failed();
+    private void requireSelfOrHide(String requestedUserId, AuthenticatedPrincipal principal) {
+        requireAuthenticated(principal);
+        if (!principal.getUserId().equals(requestedUserId)) {
+            // 对其他用户的长期记忆返回 404，不暴露目标用户是否存在。
+            throw new ApiNotFoundException("User memory not found");
         }
-        return token;
     }
 }

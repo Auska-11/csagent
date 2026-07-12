@@ -7,12 +7,15 @@ import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationMemorySnapshot;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
+import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.memory.UserMemorySnapshot;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
 import com.smartcs.smart_cs_agent.security.AuthenticationException;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -39,7 +42,10 @@ class ChatApiControllerTest {
 
         IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
-                () -> controller.sendMessage(new ChatApiRequest(" ", "USER-001", "conv-1"))
+                () -> controller.sendMessage(
+                        new ChatApiRequest(" ", "USER-001", "conv-1"),
+                        customer("USER-001")
+                )
         );
 
         assertEquals("Message cannot be empty", exception.getMessage());
@@ -57,7 +63,7 @@ class ChatApiControllerTest {
 
         IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
-                () -> controller.sendMessage(null)
+                () -> controller.sendMessage(null, customer("USER-001"))
         );
 
         assertEquals("Message cannot be empty", exception.getMessage());
@@ -77,8 +83,7 @@ class ChatApiControllerTest {
         ChatApiController controller = new ChatApiController(agent, monitorService, new ConversationStore());
 
         ChatApiRequest apiRequest = new ChatApiRequest("帮我查订单 ORD-001", "USER-001", "conv-1");
-        apiRequest.setToken("token-zhangsan");
-        ChatResponse response = controller.sendMessage(apiRequest);
+        ChatResponse response = controller.sendMessage(apiRequest, customer("USER-001"));
 
         assertInstanceOf(ChatResponse.class, response);
         assertEquals("conv-1", response.getConversationId());
@@ -104,17 +109,16 @@ class ChatApiControllerTest {
 
         ChatApiController controller = new ChatApiController(agent, monitorService, new ConversationStore());
 
-        // 即使请求没有 userId，token 也能恢复真实用户；身份不依赖客户端 claim。
+        // 即使请求没有 userId，JWT Principal 也能提供真实用户；身份不依赖客户端 claim。
         ChatApiRequest apiRequest = new ChatApiRequest("你好", null, null);
-        apiRequest.setToken("token-zhangsan");
-        ChatResponse response = controller.sendMessage(apiRequest);
+        ChatResponse response = controller.sendMessage(apiRequest, customer("USER-001"));
 
         assertEquals("USER-001", response.getUserId());
         assertEquals("default-USER-001", response.getConversationId());
     }
 
     @Test
-    void shouldRejectClaimedUserIdWithoutToken() {
+    void shouldRejectClaimThatDoesNotMatchJwtPrincipal() {
         CustomerServiceAgent agent = mock(CustomerServiceAgent.class);
         MonitorService monitorService = mock(MonitorService.class);
         ChatApiController controller = new ChatApiController(agent, monitorService, new ConversationStore());
@@ -122,11 +126,12 @@ class ChatApiControllerTest {
         AuthenticationException error = assertThrows(
                 AuthenticationException.class,
                 () -> controller.sendMessage(
-                        new ChatApiRequest("你好", "USER-001", "claimed-private-conv")
+                        new ChatApiRequest("你好", "USER-001", "claimed-private-conv"),
+                        customer("USER-002")
                 )
         );
 
-        assertEquals("AUTHENTICATION_REQUIRED", error.getErrorCode());
+        assertEquals("AUTHENTICATION_FAILED", error.getErrorCode());
         verify(agent, never()).chatWithTrace(any(ChatRequest.class));
         verify(monitorService, never()).recordTurn(any(ChatResponse.class));
     }
@@ -145,8 +150,7 @@ class ChatApiControllerTest {
 
         ConversationMemorySnapshot snapshot = controller.getConversationMemory(
                 "conv-memory",
-                "USER-001",
-                "Bearer token-zhangsan"
+                customer("USER-001")
         );
 
         assertEquals("conv-memory", snapshot.getConversationId());
@@ -168,7 +172,7 @@ class ChatApiControllerTest {
                 userMemoryStore
         );
 
-        UserMemorySnapshot snapshot = controller.getUserMemory("USER-001", "Bearer token-zhangsan");
+        UserMemorySnapshot snapshot = controller.getUserMemory("USER-001", customer("USER-001"));
 
         assertEquals("USER-001", snapshot.getUserId());
         assertEquals("蓝牙耳机", snapshot.getProductPreferences().get(0));
@@ -185,8 +189,7 @@ class ChatApiControllerTest {
 
         MemoryClearResponse response = controller.clearConversationMemory(
                 "conv-memory",
-                "USER-001",
-                "Bearer token-zhangsan"
+                customer("USER-001")
         );
 
         assertEquals("conversation", response.getScope());
@@ -208,7 +211,7 @@ class ChatApiControllerTest {
                 userMemoryStore
         );
 
-        MemoryClearResponse response = controller.clearUserMemory("USER-001", "Bearer token-zhangsan");
+        MemoryClearResponse response = controller.clearUserMemory("USER-001", customer("USER-001"));
 
         assertEquals("user", response.getScope());
         assertEquals("USER-001", response.getTargetId());
@@ -227,7 +230,7 @@ class ChatApiControllerTest {
 
         AuthenticationException error = assertThrows(
                 AuthenticationException.class,
-                () -> controller.getConversationMemory("private-conv", "USER-001", null)
+                () -> controller.getConversationMemory("private-conv", null)
         );
 
         assertEquals("AUTHENTICATION_REQUIRED", error.getErrorCode());
@@ -247,20 +250,22 @@ class ChatApiControllerTest {
                 ApiNotFoundException.class,
                 () -> controller.getConversationMemory(
                         "shared-id",
-                        "USER-002",
-                        "Bearer token-lisi"
+                        customer("USER-002")
                 )
         );
 
         MemoryClearResponse clearResponse = controller.clearConversationMemory(
                 "shared-id",
-                "USER-002",
-                "Bearer token-lisi"
+                customer("USER-002")
         );
         assertEquals(false, clearResponse.isCleared());
         assertEquals(
                 "用户一的私有消息",
                 conversationStore.get(ownerKey).getMessages().get(0).get("content")
         );
+    }
+
+    private AuthenticatedPrincipal customer(String userId) {
+        return AuthenticatedPrincipal.authenticated(userId, Set.of("CUSTOMER"));
     }
 }

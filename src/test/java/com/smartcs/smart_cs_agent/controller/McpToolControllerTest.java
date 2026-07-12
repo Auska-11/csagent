@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
 import com.smartcs.smart_cs_agent.capability.core.DefaultCapabilityGateway;
 import com.smartcs.smart_cs_agent.capability.local.ToolRegistryCapabilityProvider;
@@ -10,11 +11,12 @@ import com.smartcs.smart_cs_agent.repository.ProductRepository;
 import com.smartcs.smart_cs_agent.repository.ReturnRepository;
 import com.smartcs.smart_cs_agent.repository.UserRepository;
 import com.smartcs.smart_cs_agent.tools.*;
-import com.smartcs.smart_cs_agent.security.DemoAuthenticationService;
+import com.smartcs.smart_cs_agent.security.SecurityRoles;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -52,7 +54,7 @@ class McpToolControllerTest {
         McpToolController controller = new McpToolController(createAdapter());
 
         McpToolCallRequest request = authenticatedRequest("order.lookup", Map.of("order_id", "ORD-001"));
-        McpToolResponse response = controller.callTool(request);
+        McpToolResponse response = controller.callTool(request, adminCustomer());
 
         assertTrue(response.isSuccess());
         assertEquals("order.lookup", response.getToolName());
@@ -65,7 +67,10 @@ class McpToolControllerTest {
     void shouldReturnBadRequestWhenToolNameIsMissing() {
         McpToolController controller = new McpToolController(createAdapter());
 
-        McpToolResponse response = controller.callTool(new McpToolCallRequest("", Map.of()));
+        McpToolResponse response = controller.callTool(
+                new McpToolCallRequest("", Map.of()),
+                adminCustomer()
+        );
 
         assertFalse(response.isSuccess());
         assertEquals("BAD_REQUEST", response.getErrorCode());
@@ -75,7 +80,10 @@ class McpToolControllerTest {
     void shouldReturnFailureWhenToolDoesNotExist() {
         McpToolController controller = new McpToolController(createAdapter());
 
-        McpToolResponse response = controller.callTool(authenticatedRequest("not.exist", Map.of()));
+        McpToolResponse response = controller.callTool(
+                authenticatedRequest("not.exist", Map.of()),
+                adminCustomer()
+        );
 
         assertFalse(response.isSuccess());
         assertEquals("not.exist", response.getToolName());
@@ -87,11 +95,28 @@ class McpToolControllerTest {
         McpToolController controller = new McpToolController(createAdapter());
 
         McpToolResponse response = controller.callTool(
-                new McpToolCallRequest("order.lookup", Map.of("order_id", "ORD-001"))
+                new McpToolCallRequest("order.lookup", Map.of("order_id", "ORD-001")),
+                null
         );
 
         assertFalse(response.isSuccess());
         assertEquals("MCP_AUTHENTICATION_REQUIRED", response.getErrorCode());
+    }
+
+    @Test
+    void servicePrincipalShouldRequireSignedDelegationForIdentityCapability() {
+        McpToolController controller = new McpToolController(createAdapter());
+
+        McpToolResponse response = controller.callTool(
+                authenticatedRequest("order.lookup", Map.of("order_id", "ORD-001")),
+                AuthenticatedPrincipal.authenticated(
+                        "mcp-service",
+                        Set.of(SecurityRoles.MCP_CLIENT)
+                )
+        );
+
+        assertFalse(response.isSuccess());
+        assertEquals("MCP_DELEGATION_REQUIRED", response.getErrorCode());
     }
 
     private McpToolCallRequest authenticatedRequest(String name, Map<String, Object> arguments) {
@@ -99,7 +124,7 @@ class McpToolControllerTest {
         request.setRequestId("mcp-rest-test");
         request.setAuthToken("token-zhangsan");
         request.setUserId("USER-001");
-        request.setTenantId("test");
+        request.setTenantId("default");
         request.setConversationId("conv-mcp-test");
         request.setIdempotencyKey("idem-mcp-test");
         return request;
@@ -112,8 +137,14 @@ class McpToolControllerTest {
         ));
         return new McpServerAdapter(
                 gateway,
-                new DemoAuthenticationService(new UserRepository()),
                 new McpServerSecurityProperties()
+        );
+    }
+
+    private AuthenticatedPrincipal adminCustomer() {
+        return AuthenticatedPrincipal.authenticated(
+                "USER-001",
+                Set.of(SecurityRoles.CUSTOMER, SecurityRoles.ADMIN)
         );
     }
 

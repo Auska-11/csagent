@@ -17,7 +17,12 @@ public class FeedbackRequest {
     @Size(max = 128, message = "ConversationId is too long")
     private String conversationId;
 
-    /** 提交反馈的用户 ID */
+    /**
+     * 旧客户端兼容字段。
+     *
+     * 服务端不会用它决定提交者身份，只会使用已验证 JWT Principal 中的 userId；
+     * 如果客户端仍传此字段且与 JWT 不一致，请求会被拒绝，避免替别人提交反馈。
+     */
     @Size(max = 64, message = "UserId is too long")
     private String userId;
 
@@ -31,10 +36,10 @@ public class FeedbackRequest {
     private String reason;
 
     /**
-     * 被评价的助手回复内容。
+     * 旧客户端传入的助手回复快照。
      *
-     * 这个字段不是为了让 Monitor 重新理解业务，而是为了后续生成 Eval 候选样本时，
-     * 能看到“用户到底对哪段回复点了无用”。
+     * 服务端会从会话记录读取最后一条助手回复，并要求该字段与服务端记录一致。
+     * 这样既能兼容现有页面，也不能通过伪造回复污染后续 Eval 候选样本。
      */
     @Size(max = 2000, message = "Assistant reply is too long")
     private String assistantReply;

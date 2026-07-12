@@ -21,7 +21,7 @@ public class UserRepository {
     // 模拟用户表：userId -> User 对象
     private final Map<String, User> userTable = new HashMap<>();
 
-    // Token 索引：token -> userId（用于根据 token 快速查找用户）
+    // Legacy token 索引：仅供 Phase 9 前的旧 Tool 兼容，不参与 HTTP/MCP 认证。
     private final Map<String, String> tokenIndex = new HashMap<>();
 
     private final JdbcDatabaseClient databaseClient;
@@ -113,8 +113,10 @@ public class UserRepository {
     }
 
     /**
-     * 根据 token 查询用户
-     * 这是最常用的查询方式，因为前端请求通常带 token
+     * 根据旧演示 token 查询用户。
+     *
+     * 当前认证已经统一由 Spring Security JWT 完成；新代码应按 Principal 的 userId 调用
+     * findByUserId，不应把这个方法当登录校验器。
      */
     public User findByToken(String token) {
         if (isJdbcMode()) {

@@ -172,5 +172,9 @@ mvn "-Dmaven.repo.local=.m2\repository" "-Dtest=McpJsonRpcControllerTest" test
 
 如果被追问“现在是不是完整 MCP”，可以诚实回答：
 
-> 当前是 MCP Server 第一版，已经覆盖工具发现和工具调用这两个核心动作，但还没有做完整会话生命周期、鉴权和流式协议。我的设计重点是先把工具协议边界做清楚，后续独立部署时不会推翻内部工具层。
+> 当前是 MCP Server 第一版，已经覆盖工具发现、工具调用和 HTTP Bearer JWT 鉴权，但还没有完整
+> 会话生命周期、流式协议和签名用户委托。MCP_CLIENT 只表示服务 actor，不能通过 `_meta.userId`
+> 冒充最终用户；在委托协议完成前，身份型 Capability 会失败关闭。
 
+JWT、角色矩阵与 MCP actor/subject 边界的当前实现见
+`客服Agent-48-JWT统一认证与角色权限说明.md`。

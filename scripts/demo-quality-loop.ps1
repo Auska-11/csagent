@@ -22,10 +22,14 @@ function Invoke-JsonRequest {
     param(
         [string]$Method,
         [string]$Url,
-        [object]$Body = $null
+        [object]$Body = $null,
+        [string]$BearerToken = ""
     )
 
     $headers = @{ "Content-Type" = "application/json" }
+    if (-not [string]::IsNullOrWhiteSpace($BearerToken)) {
+        $headers["Authorization"] = "Bearer $BearerToken"
+    }
     if ($null -eq $Body) {
         return Invoke-RestMethod -Method $Method -Uri $Url -Headers $headers
     }
@@ -43,6 +47,8 @@ New-Item -ItemType Directory -Force -Path $EvalDir | Out-Null
 Copy-Item -LiteralPath $SourceEvalFile -Destination $EvalFilePath -Force
 
 $HealthUrl = "$BaseUrl/api/health"
+$DemoTokensUrl = "$BaseUrl/api/auth/demo/tokens"
+$ChatUrl = "$BaseUrl/api/chat/send"
 $FeedbackUrl = "$BaseUrl/api/monitor/feedback"
 $CandidatesUrl = "$BaseUrl/api/monitor/feedback/candidates"
 $MergeUrl = "$BaseUrl/api/monitor/feedback/candidates/merge"
@@ -63,22 +69,44 @@ try {
     Write-Error "Cannot access $HealthUrl. Start the Spring Boot app first, then run this script again."
 }
 
-$conversationId = "demo-quality-loop-" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-$feedbackBody = @{
-    conversationId = $conversationId
-    userId = "USER-001"
-    rating = "UNHELPFUL"
-    reason = "Missing return timeline; good response-quality negative sample"
-    assistantReply = "We can submit a return request for you"
+# USER-001 同时拥有 CUSTOMER 和 ADMIN，能够先发起真实对话，再完成候选审核与合并。
+$demoTokens = Invoke-JsonRequest -Method "Post" -Url $DemoTokensUrl
+$demoIdentity = $demoTokens | Where-Object { $_.userId -eq "USER-001" } | Select-Object -First 1
+if ($null -eq $demoIdentity -or [string]::IsNullOrWhiteSpace($demoIdentity.token)) {
+    Write-Error "Cannot obtain USER-001 demo JWT. Ensure SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=true."
+}
+$bearerToken = $demoIdentity.token
+
+# 反馈必须关联当前用户真实存在的会话，并匹配服务端保存的最后一条助手回复。
+$requestedConversationId = "demo-quality-loop-" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$chatBody = @{
+    conversationId = $requestedConversationId
+    message = "我要退货"
 }
 
-Write-Host "1. Submit UNHELPFUL feedback..."
-$feedbackResponse = Invoke-JsonRequest -Method "Post" -Url $FeedbackUrl -Body $feedbackBody
+Write-Host "1. Create a real conversation turn..."
+$chatResponse = Invoke-JsonRequest -Method "Post" -Url $ChatUrl -Body $chatBody -BearerToken $bearerToken
+$conversationId = $chatResponse.conversationId
+$assistantReply = $chatResponse.reply
+if ([string]::IsNullOrWhiteSpace($conversationId) -or [string]::IsNullOrWhiteSpace($assistantReply)) {
+    Write-Error "Chat response did not contain conversationId and reply."
+}
+Write-Host "   conversationId = $conversationId"
+
+$feedbackBody = @{
+    conversationId = $conversationId
+    rating = "UNHELPFUL"
+    reason = "Missing return timeline; good response-quality negative sample"
+    assistantReply = $assistantReply
+}
+
+Write-Host "2. Submit UNHELPFUL feedback..."
+$feedbackResponse = Invoke-JsonRequest -Method "Post" -Url $FeedbackUrl -Body $feedbackBody -BearerToken $bearerToken
 $feedbackId = $feedbackResponse.feedback.feedbackId
 Write-Host "   feedbackId = $feedbackId"
 
-Write-Host "2. Find the generated Eval candidate..."
-$candidates = Invoke-JsonRequest -Method "Get" -Url $CandidatesUrl
+Write-Host "3. Find the generated Eval candidate..."
+$candidates = Invoke-JsonRequest -Method "Get" -Url $CandidatesUrl -BearerToken $bearerToken
 $candidate = $candidates | Where-Object { $_.feedbackId -eq $feedbackId } | Select-Object -First 1
 if ($null -eq $candidate) {
     Write-Error "No Eval candidate found for feedbackId=$feedbackId."
@@ -86,34 +114,34 @@ if ($null -eq $candidate) {
 $candidateId = $candidate.candidateId
 Write-Host "   candidateId = $candidateId"
 
-Write-Host "3. Review the candidate as APPROVED..."
+Write-Host "4. Review the candidate as APPROVED..."
 $reviewBody = @{
     status = "APPROVED"
     reviewNote = "Demo approved after assertions are completed"
 }
 $ReviewUrl = "$BaseUrl/api/monitor/feedback/candidates/$candidateId/review"
-Invoke-JsonRequest -Method "Post" -Url $ReviewUrl -Body $reviewBody | Out-Null
+Invoke-JsonRequest -Method "Post" -Url $ReviewUrl -Body $reviewBody -BearerToken $bearerToken | Out-Null
 
-Write-Host "4. Merge the approved draft into the temporary eval file..."
+Write-Host "5. Merge the approved draft into the temporary eval file..."
 $caseId = "feedback_" + $candidateId.ToLower().Replace("-", "_")
 $mergeBody = @{
     cases = @(
         @{
             sourceCandidateId = $candidateId
             id = $caseId
-            candidateReply = "We can submit a return request for you"
+            candidateReply = $assistantReply
             requiredKeywords = @("return timeline")
             forbiddenKeywords = @("Tool", "tool_")
             expectedPass = $false
         }
     )
 }
-$mergeResponse = Invoke-JsonRequest -Method "Post" -Url $MergeUrl -Body $mergeBody
+$mergeResponse = Invoke-JsonRequest -Method "Post" -Url $MergeUrl -Body $mergeBody -BearerToken $bearerToken
 Write-Host "   mergedCount = $($mergeResponse.result.mergedCount)"
 Write-Host "   afterCount  = $($mergeResponse.result.afterCount)"
 
 if (-not $SkipMavenTest) {
-    Write-Host "5. Run ResponseQualityEvaluationTest with the temporary eval file..."
+    Write-Host "6. Run ResponseQualityEvaluationTest with the temporary eval file..."
     $mavenArgs = @(
         "-Dmaven.repo.local=.m2\repository",
         "-Dsmartcs.eval.response-quality-file=$EvalFilePath",

@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
+import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.agent.context.TraceEvent;
 import com.smartcs.smart_cs_agent.monitor.FeedbackIssueType;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -62,7 +64,7 @@ class MonitorControllerTest {
                 "order shipped"
         );
 
-        FeedbackResponse response = controller.recordFeedback(request);
+        FeedbackResponse response = controller.recordFeedback(request, customer());
         MonitorSummary summary = controller.getSummary();
 
         assertTrue(response.isSuccess());
@@ -85,7 +87,7 @@ class MonitorControllerTest {
                 "we can submit a return request"
         );
 
-        controller.recordFeedback(request);
+        controller.recordFeedback(request, customer());
 
         assertEquals(1, controller.getFeedbackEvalCandidates().size());
         assertEquals("EVAL-CAND-000001", controller.getFeedbackEvalCandidates().get(0).getCandidateId());
@@ -103,7 +105,7 @@ class MonitorControllerTest {
                 "UNHELPFUL",
                 "\u6ca1\u6709\u8bf4\u660e\u9000\u8d27\u65f6\u6548",
                 "we can submit a return request"
-        ));
+        ), customer());
 
         EvalCandidateReviewResponse response = controller.reviewFeedbackEvalCandidate(
                 "EVAL-CAND-000001",
@@ -128,7 +130,7 @@ class MonitorControllerTest {
                 "UNHELPFUL",
                 "\u6ca1\u6709\u8bf4\u660e\u9000\u8d27\u65f6\u6548",
                 "we can submit a return request"
-        ));
+        ), customer());
         controller.reviewFeedbackEvalCandidate(
                 "EVAL-CAND-000001",
                 new EvalCandidateReviewRequest("APPROVED", "can be used as a negative sample")
@@ -151,7 +153,7 @@ class MonitorControllerTest {
                 "UNHELPFUL",
                 "\u6ca1\u6709\u8bf4\u660e\u9000\u8d27\u65f6\u6548",
                 "we can submit a return request"
-        ));
+        ), customer());
         controller.reviewFeedbackEvalCandidate(
                 "EVAL-CAND-000001",
                 new EvalCandidateReviewRequest("APPROVED", "requiredKeywords completed")
@@ -231,7 +233,7 @@ class MonitorControllerTest {
 
         IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
-                () -> controller.recordFeedback(request)
+                () -> controller.recordFeedback(request, customer())
         );
 
         assertEquals("Rating must be HELPFUL or UNHELPFUL", exception.getMessage());
@@ -243,5 +245,9 @@ class MonitorControllerTest {
                 service,
                 new ResponseQualityEvalCaseFileService(new ObjectMapper(), evalFile.toString())
         );
+    }
+
+    private AuthenticatedPrincipal customer() {
+        return AuthenticatedPrincipal.authenticated("USER-001", Set.of("CUSTOMER"));
     }
 }

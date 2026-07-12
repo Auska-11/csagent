@@ -1,9 +1,11 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.mcp.server.McpInvocationMetadata;
 import com.smartcs.smart_cs_agent.mcp.server.McpServerAdapter;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,7 +28,9 @@ public class McpJsonRpcController {
     }
 
     @PostMapping("/mcp")
-    public McpJsonRpcResponse handle(@RequestBody(required = false) McpJsonRpcRequest request) {
+    public McpJsonRpcResponse handle(
+            @RequestBody(required = false) McpJsonRpcRequest request,
+            @AuthenticationPrincipal AuthenticatedPrincipal principal) {
         if (request == null || request.getMethod() == null || request.getMethod().isBlank()) {
             return McpJsonRpcResponse.error(null, INVALID_PARAMS, "MCP method cannot be empty");
         }
@@ -36,7 +40,7 @@ public class McpJsonRpcController {
             case "tools/list" -> McpJsonRpcResponse.success(request.getId(), toolsListResult());
             case "tools/call" -> McpJsonRpcResponse.success(
                     request.getId(),
-                    toolsCallResult(request.getId(), request.getParams())
+                    toolsCallResult(request.getId(), request.getParams(), principal)
             );
             default -> McpJsonRpcResponse.error(
                     request.getId(),
@@ -84,7 +88,10 @@ public class McpJsonRpcController {
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> toolsCallResult(Object requestId, Map<String, Object> params) {
+    private Map<String, Object> toolsCallResult(
+            Object requestId,
+            Map<String, Object> params,
+            AuthenticatedPrincipal principal) {
         if (params == null || params.isEmpty()) {
             return errorToolResult("BAD_REQUEST", "Tool call params cannot be empty", null);
         }
@@ -106,12 +113,13 @@ public class McpJsonRpcController {
                 arguments,
                 new McpInvocationMetadata(
                         defaultText(text(meta.get("requestId")), String.valueOf(requestId)),
-                        text(meta.get("authToken")),
+                        "",
                         text(meta.get("userId")),
                         text(meta.get("tenantId")),
                         text(meta.get("conversationId")),
                         text(meta.get("idempotencyKey"))
-                )
+                ),
+                principal
         );
         if (!result.isSuccess()) {
             return errorToolResult(result.getErrorCode(), result.getMessage(), result);

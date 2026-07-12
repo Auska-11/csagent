@@ -1,9 +1,11 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.mcp.server.McpInvocationMetadata;
 import com.smartcs.smart_cs_agent.mcp.server.McpServerAdapter;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -40,7 +42,9 @@ public class McpToolController {
     }
 
     @PostMapping("/tools/call")
-    public McpToolResponse callTool(@RequestBody(required = false) McpToolCallRequest request) {
+    public McpToolResponse callTool(
+            @RequestBody(required = false) McpToolCallRequest request,
+            @AuthenticationPrincipal AuthenticatedPrincipal principal) {
         if (request == null || request.getName() == null || request.getName().isBlank()) {
             return McpToolResponse.failure(null, "BAD_REQUEST", "Capability name cannot be empty");
         }
@@ -50,12 +54,13 @@ public class McpToolController {
                 request.getArguments(),
                 new McpInvocationMetadata(
                         request.getRequestId(),
-                        request.getAuthToken(),
+                        "",
                         request.getUserId(),
                         request.getTenantId(),
                         request.getConversationId(),
                         request.getIdempotencyKey()
-                )
+                ),
+                principal
         );
         return McpToolResponse.from(result);
     }

@@ -9,16 +9,11 @@ import org.springframework.stereotype.Component;
 /**
  * 用户相关工具类
  *
- * 【功能】根据 token 查询用户信息
+ * 【Legacy 功能】根据旧 token 或 userId 查询用户信息
  *
- * 【为什么用 token 而不是 userId？】
- * - 真实场景：前端请求会带 token（登录凭证），不是 userId
- * - token 是用户登录后获得的，代表用户身份
- * - 我们的设计：用户登录 -> 获取 token -> 后续请求带 token
- *
- * 【模拟数据】
- * - 张三的 token: token-zhangsan -> USER-001
- * - 李四的 token: token-lisi -> USER-002
+ * <p>注意：这个类属于 Phase 9 前保留的旧 ToolRegistry 兼容层。当前生产 user.lookup 已由
+ * LocalUserProfileCapabilityProvider 接管，只使用 ExecutionContext 中的 JWT Principal；
+ * 本类参数绝不能用于 HTTP 或 MCP 认证。</p>
  */
 @Component
 public class UserTools {
@@ -30,23 +25,18 @@ public class UserTools {
     }
 
     /**
-     * 根据 token 查询用户信息
+     * 根据旧 token 或 userId 查询用户信息。
      *
-     * 【使用场景】
-     * - 用户说 "查看我的信息"，但没说 userId
-     * - 前端会自动带上 token，我们用 token 识别用户
-     *
-     * @param token 用户登录凭证，如 token-zhangsan
+     * @param tokenOrUserId Legacy 查找值；不是当前安全边界的登录凭据
      * @return 用户基本信息（ID、姓名、手机号）
      */
     @Tool("query user info by token, return user id, name and phone")
     public String queryUserInfo(
-            @P("user login token or user id") String token) {
+            @P("legacy token or user id") String tokenOrUserId) {
 
-        // 通过 token 查找用户；演示前端当前传 userId，这里兼容两种身份标识。
-        User user = userRepository.findByToken(token);
+        User user = userRepository.findByToken(tokenOrUserId);
         if (user == null) {
-            user = userRepository.findByUserId(token);
+            user = userRepository.findByUserId(tokenOrUserId);
         }
 
         if (user == null) {
@@ -65,10 +55,10 @@ public class UserTools {
      *
      * 注意：这里不把 token 放进返回数据，避免把登录凭证暴露到 Trace 或前端调试面板。
      */
-    public UserToolData queryUserInfoData(String token) {
-        User user = userRepository.findByToken(token);
+    public UserToolData queryUserInfoData(String tokenOrUserId) {
+        User user = userRepository.findByToken(tokenOrUserId);
         if (user == null) {
-            user = userRepository.findByUserId(token);
+            user = userRepository.findByUserId(tokenOrUserId);
         }
 
         if (user == null) {

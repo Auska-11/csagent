@@ -1051,7 +1051,9 @@
 
     async function init() {
         bindEvents();
-        await Promise.all([loadUsers(), loadTools(), loadMonitorSummary(), loadEvalReports()]);
+        // 受保护面板需要 JWT，因此必须先从明确的 demo-only 入口取得当前本地身份。
+        await loadUsers();
+        await Promise.all([loadTools(), loadMonitorSummary(), loadEvalReports()]);
         renderInspector();
     }
 
@@ -1114,7 +1116,7 @@
 
     async function loadUsers() {
         try {
-            const response = await fetch('/api/chat/users');
+            const response = await fetch('/api/auth/demo/tokens', {method: 'POST'});
             const payload = await readJson(response);
             if (!response.ok) {
                 throw new Error(payload.message || '用户列表加载失败');
@@ -1131,7 +1133,7 @@
 
     async function loadTools() {
         try {
-            const response = await fetch('/api/tools');
+            const response = await fetch('/api/tools', {headers: currentAuthHeaders()});
             const payload = await readJson(response);
             if (!response.ok) {
                 throw new Error(payload.message || '工具列表加载失败');
@@ -1146,7 +1148,7 @@
 
     async function loadEvalReports() {
         try {
-            const response = await fetch('/api/eval/reports');
+            const response = await fetch('/api/eval/reports', {headers: currentAuthHeaders()});
             const payload = await readJson(response);
             if (!response.ok) {
                 throw new Error(payload.message || '评测报告加载失败');
@@ -1161,7 +1163,7 @@
 
     async function loadMonitorSummary() {
         try {
-            const response = await fetch('/api/monitor/summary');
+            const response = await fetch('/api/monitor/summary', {headers: currentAuthHeaders()});
             const payload = await readJson(response);
             if (!response.ok) {
                 throw new Error(payload.message || 'Monitor 指标加载失败');
@@ -1318,11 +1320,10 @@
             const userId = currentUserId();
             const response = await fetch('/api/chat/send', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: currentAuthHeaders({'Content-Type': 'application/json'}),
                 body: JSON.stringify({
                     message,
                     userId,
-                    token: state.currentUser?.token || null,
                     conversationId: state.conversationIds[userId]
                 })
             });
@@ -2177,7 +2178,9 @@
 
     async function exportEvalCaseDrafts() {
         try {
-            const response = await fetch('/api/monitor/feedback/candidates/export');
+            const response = await fetch('/api/monitor/feedback/candidates/export', {
+                headers: currentAuthHeaders()
+            });
             const payload = await readJson(response);
             if (!response.ok) {
                 appendSystemMessage(payload.message || 'Eval 样本草稿导出失败');
@@ -2201,7 +2204,9 @@
 
     async function mergeEvalCaseDrafts() {
         try {
-            const response = await fetch('/api/monitor/feedback/candidates/export');
+            const response = await fetch('/api/monitor/feedback/candidates/export', {
+                headers: currentAuthHeaders()
+            });
             const payload = await readJson(response);
             if (!response.ok) {
                 appendSystemMessage(payload.message || 'Eval 样本草稿加载失败。');
@@ -2243,7 +2248,7 @@
 
             const mergeResponse = await fetch('/api/monitor/feedback/candidates/merge', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: currentAuthHeaders({'Content-Type': 'application/json'}),
                 body: JSON.stringify(requestBody)
             });
             const mergePayload = await readJson(mergeResponse);
@@ -2278,10 +2283,9 @@
         try {
             const response = await fetch('/api/monitor/feedback', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: currentAuthHeaders({'Content-Type': 'application/json'}),
                 body: JSON.stringify({
                     conversationId: currentConversationId(),
-                    userId: currentUserId(),
                     rating,
                     reason: rating === 'HELPFUL' ? '前端快捷反馈：有用' : '前端快捷反馈：无用',
                     assistantReply: message.content || ''
@@ -2314,7 +2318,7 @@
         try {
             const response = await fetch('/api/monitor/feedback/candidates/' + encodeURIComponent(candidateId) + '/review', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: currentAuthHeaders({'Content-Type': 'application/json'}),
                 body: JSON.stringify({
                     status,
                     reviewNote: note
@@ -2360,12 +2364,11 @@
     }
 
     /**
-     * Memory 接口使用 Header 携带演示认证信息。
-     * X-User-Id 只是“我声称自己是谁”，后端仍会用 Bearer token 恢复可信 Principal；
-     * 因此只篡改 userId 并不能读取另一个用户的记忆。
+     * 所有受保护接口统一使用 Bearer JWT。页面只把 token 保存在当前内存状态中，
+     * 不写入 localStorage，也不再用 X-User-Id 或请求体字段建立身份。
      */
-    function currentAuthHeaders() {
-        const headers = {'X-User-Id': currentUserId()};
+    function currentAuthHeaders(additionalHeaders = {}) {
+        const headers = {...additionalHeaders};
         const token = state.currentUser?.token;
         if (token) {
             headers.Authorization = 'Bearer ' + token;

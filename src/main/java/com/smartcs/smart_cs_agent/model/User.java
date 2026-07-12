@@ -8,7 +8,7 @@ public class User {
     private String userId;    // 用户ID
     private String name;      // 用户名
     private String phone;     // 手机号
-    private String token;     // 登录令牌（用于识别用户身份）
+    private String token;     // Legacy 演示字段；当前 HTTP/MCP 身份由 JWT Principal 提供
 
     public User(String userId, String name, String phone, String token) {
         this.userId = userId;

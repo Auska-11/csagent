@@ -18,14 +18,14 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - 前端调试工作台：支持多用户会话、典型 Demo 脚本、Trace 过滤/复制、Trace 指标摘要，以及工具 input/output schema 可视化。
 - 评测报告看板：前端 Eval 面板可以展示最新评测概览、历史趋势和核心指标变化。
 - LLM 降级：模型调用失败时不会直接中断接口，会基于工具结构化结果生成模板回复，并记录 `llm_failed` Trace。
-- MCP-style 工具层：工具具备统一 `ToolDefinition`、`ToolCall`、`ToolResult`、`inputSchema`、`outputSchema` 和只读工具列表接口，订单、商品、退货、用户和人工转接等业务工具已升级为明确 DTO 输出。
-- MCP Adapter：新增 `GET /api/mcp/tools` 和 `POST /api/mcp/tools/call`，把内部工具注册表暴露成更接近 MCP `tools/list`、`tools/call` 的协议边界。
-- 独立 MCP Server 第一版：新增 `POST /mcp` JSON-RPC 风格入口，支持 `initialize`、`tools/list` 和 `tools/call`。
+- Capability 与 MCP：统一 `CapabilityDefinition`、输入/输出 schema、三态结果、Gateway 和 Local/MCP Provider；`GET /api/mcp/tools`、`POST /api/mcp/tools/call` 与 `POST /mcp` 共用同一 Catalog 和 Server Adapter。
+- 独立 MCP Server 第一版：`POST /mcp` 支持 `initialize`、`tools/list` 和 `tools/call`；HTTP Client 每次请求使用 MCP_CLIENT Bearer JWT，JSON-RPC body 不再携带身份凭据。
 - 数据库持久化：支持 `memory` / `jdbc` 双模式，默认内存模式保证本地测试和 CI 稳定；JDBC 模式除业务数据外，还持久化会话状态和 Capability 幂等记录，并为连接、网络读取和 SQL 执行设置明确超时。
 - 状态演进：Workflow 私有状态支持按 Workflow ID 注册 `1 -> 2 -> 3` 逐版本迁移链；缺链、重复注册和未来版本都会失败关闭，不在 Runtime、Router 或 Codec 中堆业务分支。
 - 后端联调：`HandoffTools` 支持 `memory` / `after-sales-http` 双模式，可调用桌面 `demo/after-sales-sla-platform` 的 `POST /api/tickets` 创建真实售后工单。
 - Monitor 指标与反馈闭环：支持 `GET /api/monitor/summary`、`POST /api/monitor/feedback`、`GET /api/monitor/feedback/candidates`、候选样本审核接口、Eval case 草稿导出接口和半自动合并正式评测集接口，基于 Trace 聚合整体/按工具成功率、LLM 失败率、转人工次数、平均耗时、用户反馈有用率、候选样本审核状态数量和负反馈问题类型分布，并能把无用反馈沉淀成 Eval 待审核候选样本；候选样本会持久化到本地 JSON 文件，服务重启后仍可继续审核；Monitor Summary 会进一步生成结构化风险告警，前端 Monitor 面板可以直接看到工具失败率、LLM 失败率、低有用反馈率、不安全承诺和内部实现泄露等风险。
 - 接口工程化：聊天接口使用明确 DTO、Spring Validation 和统一 `ApiErrorResponse`。
+- 统一认证与 RBAC：Spring Security Resource Server 校验 Bearer JWT 的 HS256 签名、issuer、audience、时间、subject 和 tenant；Chat/Memory、反馈、管理面板与 MCP 使用 CUSTOMER、ADMIN、MCP_CLIENT 角色隔离，未知地址默认拒绝。
 - 部署工程化：支持 Docker 多阶段构建、`docker compose` 一键启动、环境变量注入，并提供独立 liveness/readiness 健康探针。
 - 离线评测：覆盖路由、知识库召回、回复质量规则、Agent 链路回复、LLM-as-Judge 五类评测，并输出 JSON 总览、历史快照和趋势指标。
 
@@ -33,25 +33,30 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 
 ```text
 前端页面
-  -> ChatApiController
-  -> ChatApiRequest / ChatRequest
+  -> Spring Security Resource Server
+  -> JwtPrincipalConverter -> AuthenticatedPrincipal
+  -> ChatApiController -> ChatRequest
   -> CustomerServiceAgent
-  -> ConversationStore / TurnContext
+  -> ConversationStore / SessionStore / TurnContext
   -> AgentRuntime
-  -> SkillManager Multi-Agent 路由
-  -> CustomerServiceSkill
-  -> AgentAction
-  -> ToolManager / ToolRegistry
-  -> OrderTools / ProductTools / ReturnTools / UserTools / KnowledgeTools / HandoffTools
-  -> Repository 内存/JDBC 双模式数据层 / Markdown 知识库 / Embedding + Qdrant / 售后工单平台 HTTP Client
+  -> WorkflowRouter -> WorkflowRegistry -> 独立业务 Workflow
+  -> ActionHandlerRegistry -> AgentAction Handler
+  -> CapabilityGateway
+       -> Local Capability Provider -> Domain Service -> Repository
+       -> MCP Capability Provider -> HTTP JSON-RPC -> Remote MCP Server
+
+AgentSkillPackageRegistry
+  -> manifest.yaml / SKILL.md / prompts / references
 ```
 
 核心设计取舍：
 
-- `Skill` 负责决策下一步做什么，`Runtime` 负责执行，`Tool` 负责业务能力。
+- Agent Skill Package 表达说明、Prompt、references 和能力 allowlist；Executable Workflow 负责任务状态机。
+- `AgentRuntime` 只执行通用循环，Action Handler 执行动作，Capability Provider 提供原子业务能力。
 - 高频明确场景优先用规则，表达模糊时再用 LLM 兜底。
 - 当前输入、跨轮状态、本轮执行过程分别放在 `ChatRequest`、`ConversationState`、`TurnContext`。
-- 工具层先做本地 MCP-style 边界，后续再演进为独立 MCP Server。
+- Local/MCP Provider 共用 Capability 契约，Workflow 不感知能力位于本地还是远程。
+- HTTP 身份只来自已验证 JWT Principal，不能由请求体、LLM 参数或 MCP `_meta` 覆盖。
 - Repository 默认使用内存模式，开启 JDBC 模式后可连接 MySQL，保证学习演示和真实持久化两种需求都能覆盖。
 - 人工转接默认使用本地工单，联调时再切换到售后工单平台，保证单项目运行和双项目联动都稳定。
 - RAG 默认使用本地检索，开启 `embedding-qdrant` 后再依赖真实 embedding API 和 Qdrant，保证基础演示和高级检索都能覆盖。
@@ -59,15 +64,31 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 
 ## 主要接口
 
+本地工作台先从 Demo-only 入口取得预置身份的短期 JWT：
+
+```http
+POST /api/auth/demo/tokens
+```
+
+响应带 `Cache-Control: no-store`。生产必须设置 `SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=false`，并由真实
+身份系统签发 JWT。除首页、Demo 签发入口和健康探针外，下面的请求都需要：
+
+```http
+Authorization: Bearer <JWT>
+```
+
+主要角色边界：Chat/Memory 和反馈允许 CUSTOMER 或 ADMIN；Monitor 其余接口、Eval、Tool 只允许
+ADMIN；`/api/mcp/**` 与 `/mcp` 允许 MCP_CLIENT 或 ADMIN。
+
 发送聊天消息：
 
 ```http
 POST /api/chat/send
+Authorization: Bearer <CUSTOMER_JWT>
 Content-Type: application/json
 
 {
   "message": "我要退货",
-  "userId": "USER-001",
   "conversationId": "demo-001"
 }
 ```
@@ -84,22 +105,18 @@ Content-Type: application/json
 
 接口层还提供了全局异常处理，JSON 解析失败、参数异常和未预期异常都会统一包装成 `ApiErrorResponse`。
 
-查看模拟用户：
-
-```http
-GET /api/chat/users
-```
-
 查看当前会话记忆：
 
 ```http
 GET /api/chat/conversations/{conversationId}/memory
+Authorization: Bearer <CUSTOMER_JWT>
 ```
 
 查看用户长期记忆：
 
 ```http
 GET /api/chat/users/{userId}/memory
+Authorization: Bearer <CUSTOMER_JWT>
 ```
 
 清空当前会话记忆：
@@ -118,22 +135,25 @@ DELETE /api/chat/users/{userId}/memory
 
 ```http
 GET /api/tools
+Authorization: Bearer <ADMIN_JWT>
 ```
 
 查看 MCP Adapter 工具列表：
 
 ```http
 GET /api/mcp/tools
+Authorization: Bearer <MCP_CLIENT_JWT>
 ```
 
 通过 MCP Adapter 调用工具：
 
 ```http
 POST /api/mcp/tools/call
+Authorization: Bearer <MCP_CLIENT_JWT>
 Content-Type: application/json
 
 {
-  "name": "order_lookup",
+  "name": "order.lookup",
   "arguments": {
     "order_id": "ORD-001"
   }
@@ -144,6 +164,7 @@ Content-Type: application/json
 
 ```http
 POST /mcp
+Authorization: Bearer <MCP_CLIENT_JWT>
 Content-Type: application/json
 
 {
@@ -151,7 +172,7 @@ Content-Type: application/json
   "id": 1,
   "method": "tools/call",
   "params": {
-    "name": "order_lookup",
+    "name": "order.lookup",
     "arguments": {
       "order_id": "ORD-001"
     }
@@ -163,17 +184,18 @@ Content-Type: application/json
 
 ```http
 GET /api/monitor/summary
+Authorization: Bearer <ADMIN_JWT>
 ```
 
 提交用户反馈：
 
 ```http
 POST /api/monitor/feedback
+Authorization: Bearer <CUSTOMER_JWT>
 Content-Type: application/json
 
 {
   "conversationId": "conv-USER-001-001",
-  "userId": "USER-001",
   "rating": "HELPFUL",
   "reason": "前端快捷反馈：有用",
   "assistantReply": "您的订单已经发货"
@@ -273,6 +295,19 @@ $env:OPENAI_API_KEY="your-api-key"
 $env:OPENAI_BASE_URL="your-openai-compatible-base-url"
 $env:OPENAI_MODEL_NAME="your-model-name"
 ```
+
+本地默认会开启 Demo JWT 签发器。部署到共享或生产环境时至少设置：
+
+```powershell
+$env:SMARTCS_SECURITY_DEMO_ISSUER_ENABLED="false"
+$env:SMARTCS_SECURITY_ISSUER="your-identity-provider"
+$env:SMARTCS_SECURITY_AUDIENCE="smart-cs-api"
+$env:SMARTCS_SECURITY_JWT_SECRET="replace-with-at-least-32-random-bytes"
+```
+
+当前 HS256 方案是单体学习基线；跨服务生产架构建议改为独立 IdP 的 RS256/ES256，并让业务服务只
+持有验证公钥。完整角色矩阵与 MCP 服务身份边界见
+[JWT 统一认证与角色权限说明](docs/客服Agent/客服Agent-48-JWT统一认证与角色权限说明.md)。
 
 启动项目：
 
@@ -403,7 +438,11 @@ Copy-Item .env.example .env
 OPENAI_API_KEY=your-api-key
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL_NAME=your-model-name
+SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=true
+SMARTCS_SECURITY_JWT_SECRET=replace-with-at-least-32-random-bytes
 ```
+
+上面的 `true` 只适合本地工作台。共享或生产环境必须改为 `false`，并接入真实身份签发系统。
 
 启动容器：
 
@@ -460,7 +499,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 324 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 332 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -503,17 +542,19 @@ docker compose down
 - [Liveness 与 Readiness 健康探针说明](docs/客服Agent/客服Agent-45-Liveness与Readiness健康探针说明.md)
 - [WorkflowStateMigrator 注册链说明](docs/客服Agent/客服Agent-46-WorkflowStateMigrator注册链说明.md)
 - [长期记忆 TTL、容量与脱敏说明](docs/客服Agent/客服Agent-47-长期记忆TTL容量与脱敏说明.md)
+- [JWT 统一认证与角色权限说明](docs/客服Agent/客服Agent-48-JWT统一认证与角色权限说明.md)
 
 ## 简历表达参考
 
-智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，支持多轮任务状态、MCP-style/JSON-RPC 工具调用、RAG 知识库、本地向量召回、真 embedding + Qdrant 向量数据库、Multi-Agent 路由、Agent Trace、Monitor 反馈闭环、LLM-as-Judge、数据库持久化和售后工单平台联调，提升客服场景下大模型应用的可控性、可观测性和可验证性。
+智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Agent Skill Package、Workflow、Runtime、Capability Gateway 分层架构，支持多轮任务状态、MCP/JSON-RPC 能力调用、JWT 认证与 RBAC、RAG 知识库、Qdrant 向量检索、Agent Trace、Monitor 反馈闭环、LLM-as-Judge、数据库持久化和售后工单平台联调，提升客服场景下大模型应用的可控性、可观测性和可验证性。
 
 可展开描述：
 
-- 设计 Skill / Runtime / Tool 分层架构，将意图识别、工具调用、业务查询、知识库检索和回复生成解耦，支持订单查询、商品咨询、退货申请、政策问答和人工转接等客服场景。
+- 设计 Agent Skill Package / Workflow / Runtime / Capability 分层架构，将指令与知识、任务状态机、通用执行循环和原子业务能力解耦，支持订单查询、商品咨询、退货申请、政策问答和人工转接等客服场景。
 - 实现多轮会话状态管理，使用 `ConversationState` 保存任务槽位、短期消息窗口和摘要记忆，支持退货申请等跨轮槽位填充流程。
 - 设计 MCP-style 工具注册与调用层，统一 `ToolDefinition`、`ToolCall`、`ToolResult`、`inputSchema` 和 `outputSchema`，并提供 MCP Adapter 接口暴露工具列表和工具调用能力。
 - 实现 `/mcp` JSON-RPC 风格入口，支持 `initialize`、`tools/list` 和 `tools/call`，让内部工具注册表具备独立 MCP Server 的协议边界。
+- 接入 Spring Security Resource Server，统一校验 JWT 签名、issuer、audience、有效期、租户和角色；区分 CUSTOMER、ADMIN 与 MCP_CLIENT，并禁止 MCP 服务通过普通元数据冒充最终用户。
 - 实现 RAG 双模式：默认 local 模式保证测试和演示稳定，高级模式接入 OpenAI-compatible embedding API 与 Qdrant 向量数据库，并在外部服务失败时回退本地检索。
 - 实现轻量 Multi-Agent 路由，将用户消息分配到售前、售后、投诉和通用专家域，并通过 Trace 记录路由原因和置信度。
 - 实现 Repository 层 `memory` / `jdbc` 双模式，默认内存模式保证测试稳定，开启 JDBC 模式后可将用户、商品、订单和退货记录持久化到 MySQL。

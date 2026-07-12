@@ -1,9 +1,11 @@
 package com.smartcs.smart_cs_agent.mcp.server;
 
 /**
- * MCP tools/call 中不属于业务 arguments 的可信执行元数据。
+ * MCP tools/call 中不属于业务 arguments 的协议元数据。
  *
- * <p>这些字段会进入 ExecutionContext，绝不能与 LLM 生成的工具参数混在一起。</p>
+ * <p>requestId、conversationId 和 idempotencyKey 可以参与执行上下文构建；
+ * authToken、userId、tenantId 是旧协议遗留字段，HTTP 入口绝不能信任它们来建立身份。
+ * 当前身份只能来自已经验证的 Authorization Bearer JWT。</p>
  */
 public final class McpInvocationMetadata {
 

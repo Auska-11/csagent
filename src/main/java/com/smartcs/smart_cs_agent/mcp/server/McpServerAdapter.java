@@ -6,7 +6,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityCall;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityGateway;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
-import com.smartcs.smart_cs_agent.security.DemoAuthenticationService;
+import com.smartcs.smart_cs_agent.security.SecurityRoles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -14,7 +14,6 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * MCP 协议到 CapabilityGateway 的服务端适配器。
@@ -29,14 +28,11 @@ public class McpServerAdapter {
     private static final String MCP_SERVER_PROVIDER = "mcp-server-adapter";
 
     private final CapabilityGateway capabilityGateway;
-    private final DemoAuthenticationService authenticationService;
     private final McpServerSecurityProperties properties;
 
     public McpServerAdapter(CapabilityGateway capabilityGateway,
-                            DemoAuthenticationService authenticationService,
                             McpServerSecurityProperties properties) {
         this.capabilityGateway = capabilityGateway;
-        this.authenticationService = authenticationService;
         this.properties = properties;
     }
 
@@ -46,27 +42,15 @@ public class McpServerAdapter {
 
     public CapabilityResult<?> invoke(String capabilityId,
                                       Map<String, Object> arguments,
-                                      McpInvocationMetadata metadata) {
+                                      McpInvocationMetadata metadata,
+                                      AuthenticatedPrincipal callerPrincipal) {
         long startedAtNanos = System.nanoTime();
         McpInvocationMetadata safeMetadata = metadata == null
                 ? McpInvocationMetadata.anonymous("")
                 : metadata;
 
-        AuthenticatedPrincipal principal;
-        try {
-            principal = authenticate(safeMetadata);
-        } catch (IllegalArgumentException e) {
-            return CapabilityResult.businessRejected(
-                    capabilityId,
-                    MCP_SERVER_PROVIDER,
-                    "MCP_AUTHENTICATION_FAILED",
-                    "MCP authentication failed",
-                    null
-            );
-        }
-
         // MCP 是外部执行边界：即使某项 Capability 本身是公开读，也要求调用方先通过 MCP 认证。
-        if (!principal.isAuthenticated()) {
+        if (callerPrincipal == null || !callerPrincipal.isAuthenticated()) {
             return CapabilityResult.businessRejected(
                     capabilityId,
                     MCP_SERVER_PROVIDER,
@@ -76,10 +60,38 @@ public class McpServerAdapter {
             );
         }
 
+        var definition = capabilityGateway.catalog().get(capabilityId);
+        if (callerPrincipal.hasRole(SecurityRoles.MCP_CLIENT)
+                && definition != null
+                && (definition.isRequiresIdentity() || definition.isRequiresAuthentication())) {
+            // 服务 JWT 只能证明“哪个服务在调用”，不能把 _meta.userId 升级成任意客户。
+            // 在签名委托 token / token-exchange 完成前，身份型 Capability 必须失败关闭。
+            return CapabilityResult.businessRejected(
+                    capabilityId,
+                    MCP_SERVER_PROVIDER,
+                    "MCP_DELEGATION_REQUIRED",
+                    "MCP identity capability requires a signed user delegation",
+                    null
+            );
+        }
+
+        if ((!safeMetadata.getUserId().isBlank()
+                && !safeMetadata.getUserId().equals(callerPrincipal.getUserId()))
+                || (!safeMetadata.getTenantId().isBlank()
+                && !safeMetadata.getTenantId().equals(callerPrincipal.getTenantId()))) {
+            return CapabilityResult.businessRejected(
+                    capabilityId,
+                    MCP_SERVER_PROVIDER,
+                    "MCP_IDENTITY_METADATA_REJECTED",
+                    "MCP identity metadata cannot override the authenticated caller",
+                    null
+            );
+        }
+
         ExecutionContext context = new ExecutionContext(
                 safeMetadata.getRequestId(),
-                principal,
-                defaultText(safeMetadata.getTenantId(), "default"),
+                callerPrincipal,
+                callerPrincipal.getTenantId(),
                 safeMetadata.getConversationId(),
                 safeMetadata.getIdempotencyKey(),
                 Instant.now().plusSeconds(30)
@@ -103,21 +115,4 @@ public class McpServerAdapter {
         return result;
     }
 
-    private AuthenticatedPrincipal authenticate(McpInvocationMetadata metadata) {
-        if (!properties.getServiceToken().isBlank()
-                && properties.getServiceToken().equals(metadata.getAuthToken())) {
-            if (metadata.getUserId().isBlank()) {
-                throw new IllegalArgumentException("Trusted MCP call must include userId");
-            }
-            return AuthenticatedPrincipal.authenticated(
-                    metadata.getUserId(),
-                    Set.of("CUSTOMER", "MCP_TRUSTED_CALLER")
-            );
-        }
-        return authenticationService.authenticate(metadata.getUserId(), metadata.getAuthToken());
-    }
-
-    private String defaultText(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
-    }
 }

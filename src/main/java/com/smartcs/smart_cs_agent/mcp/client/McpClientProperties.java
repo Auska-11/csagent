@@ -10,7 +10,8 @@ public class McpClientProperties {
 
     private String baseUrl = "http://localhost:8081/mcp";
     private String serverId = "remote-cs";
-    private String serviceToken = "dev-mcp-service-token";
+    /** 远程 MCP 服务签发给本服务的 Bearer JWT，不再放进 JSON-RPC body。 */
+    private String serviceToken = "";
     private long timeoutMs = 10_000;
     private int maxRetries = 1;
     private int circuitFailureThreshold = 3;

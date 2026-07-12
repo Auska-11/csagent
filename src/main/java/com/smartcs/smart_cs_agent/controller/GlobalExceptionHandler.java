@@ -1,6 +1,7 @@
 package com.smartcs.smart_cs_agent.controller;
 
 import com.smartcs.smart_cs_agent.security.AuthenticationException;
+import com.smartcs.smart_cs_agent.security.AuthorizationException;
 import com.smartcs.smart_cs_agent.session.api.SessionVersionConflictException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -41,6 +42,14 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.UNAUTHORIZED)
                 .body(new ApiErrorResponse(exception.getErrorCode(), exception.getMessage()));
+    }
+
+    /** 已认证用户越权时返回 403，和“还没有登录”的 401 明确区分。 */
+    @ExceptionHandler(AuthorizationException.class)
+    public ResponseEntity<ApiErrorResponse> handleAuthorization(AuthorizationException exception) {
+        return ResponseEntity
+                .status(HttpStatus.FORBIDDEN)
+                .body(new ApiErrorResponse("ACCESS_DENIED", exception.getMessage()));
     }
 
     /** 资源不存在时返回稳定 404；越权会话也使用同一响应，避免暴露资源归属。 */

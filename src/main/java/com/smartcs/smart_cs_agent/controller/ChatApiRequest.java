@@ -29,7 +29,10 @@ public class ChatApiRequest {
     @Size(max = 1000, message = "Message is too long")
     private String message;
 
-    /** 用户 ID，用来查询“我的订单”“我的信息”等个人数据。 */
+    /**
+     * 旧客户端的用户声明，只用于检查是否与 JWT Principal 一致。
+     * 查询“我的订单”“我的信息”时，真正身份始终来自 Authorization Bearer JWT。
+     */
     @Size(max = 64, message = "UserId is too long")
     private String userId;
 
@@ -37,7 +40,9 @@ public class ChatApiRequest {
     @Size(max = 128, message = "ConversationId is too long")
     private String conversationId;
 
-    /** 演示环境登录令牌。生产环境通常放在 Authorization Header，而不是请求体。 */
+    /**
+     * 旧前端兼容字段。HTTP 认证已经统一改用 Authorization: Bearer JWT，服务端不再读取这里的值。
+     */
     @Size(max = 128, message = "Token is too long")
     private String token;
 

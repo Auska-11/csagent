@@ -34,7 +34,8 @@ class HealthEndpointIntegrationTest {
                 .andExpect(content().string(not(containsString("mode"))));
 
         mockMvc.perform(get("/actuator/env"))
-                .andExpect(status().isNotFound());
+                // 非 health 的 Actuator 路径先被安全链拒绝，且配置本身也没有暴露 env 端点。
+                .andExpect(status().isUnauthorized());
 
         // 旧入口继续作为兼容 liveness 使用。
         mockMvc.perform(get("/api/health"))

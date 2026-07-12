@@ -143,7 +143,7 @@ public class CapabilityActionHandler implements ActionHandler<CapabilityAction> 
 
     /**
      * 安全字段来自服务端 TurnContext，而不是 LLM 可生成的 arguments。
-     * Chat API 会先通过 DemoAuthenticationService 生成 Principal；副作用能力还会由 Gateway
+     * Chat API 会先通过 Spring Security 验证 JWT 并生成 Principal；副作用能力还会由 Gateway
      * 再次检查 isAuthenticated，未验证 claim 无法越过这道边界。
      */
     private ExecutionContext buildExecutionContext(ActionHandlingContext context, String capability) {

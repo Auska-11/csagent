@@ -26,6 +26,16 @@ spring:
     name: smart-cs-agent
 
 smartcs:
+  security:
+    # 本地工作台通过 demo issuer 获取短期 JWT；生产环境必须设为 false，并由真实身份系统签发。
+    demo-issuer-enabled: ${SMARTCS_SECURITY_DEMO_ISSUER_ENABLED:true}
+    issuer: ${SMARTCS_SECURITY_ISSUER:smart-cs-agent}
+    audience: ${SMARTCS_SECURITY_AUDIENCE:smart-cs-api}
+    default-tenant-id: ${SMARTCS_SECURITY_DEFAULT_TENANT_ID:default}
+    # HS256 至少需要 32 字节。这里的默认值只用于本地，部署时必须替换。
+    jwt-secret: ${SMARTCS_SECURITY_JWT_SECRET:dev-only-smart-cs-agent-change-this-secret-32bytes}
+    token-ttl-seconds: ${SMARTCS_SECURITY_TOKEN_TTL_SECONDS:28800}
+    clock-skew-seconds: ${SMARTCS_SECURITY_CLOCK_SKEW_SECONDS:30}
   memory:
     # 长期偏好默认保留 30 天；重复表达同一偏好会刷新 TTL。
     preference-ttl-ms: ${SMARTCS_MEMORY_PREFERENCE_TTL_MS:2592000000}
@@ -45,12 +55,12 @@ smartcs:
   mcp:
     server:
       server-id: ${SMARTCS_MCP_SERVER_ID:smart-cs-local}
-      service-token: ${SMARTCS_MCP_SERVER_SERVICE_TOKEN:dev-mcp-service-token}
     client:
       # 只有 provider-mode=mcp-remote 或 hybrid 时才会创建远程 MCP Client。
       base-url: ${SMARTCS_MCP_REMOTE_URL:http://localhost:8081/mcp}
       server-id: ${SMARTCS_MCP_REMOTE_SERVER_ID:remote-cs}
-      service-token: ${SMARTCS_MCP_REMOTE_TOKEN:dev-mcp-service-token}
+      # 远程服务签发的 MCP_CLIENT JWT；local 模式不需要配置。
+      service-token: ${SMARTCS_MCP_REMOTE_TOKEN:}
       timeout-ms: ${SMARTCS_MCP_TIMEOUT_MS:10000}
       max-retries: ${SMARTCS_MCP_MAX_RETRIES:1}
       circuit-failure-threshold: ${SMARTCS_MCP_CIRCUIT_FAILURE_THRESHOLD:3}

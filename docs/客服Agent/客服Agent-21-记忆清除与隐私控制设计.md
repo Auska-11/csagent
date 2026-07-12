@@ -114,8 +114,9 @@ Workflow 正在保存时和清除操作互相覆盖。`UserMemoryStore.clear()` 
 
 仍未达到生产完整标准：
 
-- 当前认证是项目内的 Demo token，不是真实 JWT、OIDC 或网关 Principal。
-- Monitor 和 MCP 管理接口尚未全部接入统一角色权限。
+- HTTP 已统一使用 Spring Security Bearer JWT，Memory 只信任经过签名、issuer、audience、时间、subject
+  和 tenant 校验的 `AuthenticatedPrincipal`；本地 Demo 签发器仍不等于真实 OIDC 登录系统。
+- Monitor、Eval、Tool 和 MCP HTTP 接口已接入角色权限；远程 MCP 的签名用户委托尚未实现。
 - 长期偏好仍在进程内，服务重启后会自然丢失，多实例之间也不共享。
 - 没有记录“谁在何时查看或删除了哪类记忆”的持久化审计日志。
 - 没有单条偏好删除、个人数据导出和保留策略版本记录。
@@ -129,12 +130,12 @@ Workflow 正在保存时和清除操作互相覆盖。`UserMemoryStore.clear()` 
 > 我把会话记忆和用户长期记忆分成两个生命周期，并提供独立查询和删除接口。会话操作基于
 > tenantId、userId、conversationId 的完整所有权边界，长期记忆接口也校验认证 Principal。长期偏好
 > 还有 TTL、容量和写入前脱敏，摘要在生成和旧快照恢复时都会重新脱敏。当前版本已经解决基础的用户
-> 可控和资源边界，但我不会把它描述成完整生产隐私体系，因为真实认证、角色权限、审计、上下文型
-> 敏感信息识别和全链路 Trace 脱敏仍需继续完成。
+> 可控和资源边界，并通过统一 JWT Principal 阻止请求体 userId 冒充。但我不会把它描述成完整生产
+> 隐私体系，因为真实 OIDC/令牌撤销、访问审计、上下文型敏感信息识别和全链路 Trace 脱敏仍需完成。
 
 ## 8. 后续优化
 
-- 用真实 JWT / OIDC Principal 替换 Demo token，并给管理接口增加角色权限。
+- 用独立 IdP 的 OIDC/非对称 JWT 替换本地 Demo 签发器，并增加令牌撤销、轮换和账户停用联动。
 - 把长期记忆抽成持久化 SPI，支持数据库删除、到期索引和多实例一致性。
 - 增加单条偏好撤销、数据导出、来源说明和用户确认。
 - 增加删除审计，但审计记录本身不能保存被删除的敏感正文。
@@ -142,3 +143,4 @@ Workflow 正在保存时和清除操作互相覆盖。`UserMemoryStore.clear()` 
 - 对 Trace、Prompt、最近消息、工具参数和 MCP 审计做统一脱敏测试。
 
 TTL、容量和脱敏的具体实现见 `客服Agent-47-长期记忆TTL容量与脱敏说明.md`。
+JWT Principal、角色矩阵和 MCP 服务身份边界见 `客服Agent-48-JWT统一认证与角色权限说明.md`。

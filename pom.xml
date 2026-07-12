@@ -45,6 +45,15 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!--
+            HTTP 认证和角色权限统一交给 Spring Security。
+            Resource Server 会验证 Bearer JWT 的签名、有效期、issuer 和 audience，Controller 不再手工解析 token。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+        </dependency>
+
         <!-- LangChain4j 核心 -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
@@ -125,6 +134,13 @@
                     <artifactId>assertj-core</artifactId>
                 </exclusion>
             </exclusions>
+        </dependency>
+
+        <!-- MockMvc 的认证 RequestPostProcessor，用于验证 401 / 403 和角色矩阵。 -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 

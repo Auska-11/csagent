@@ -1,5 +1,9 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
+import com.smartcs.smart_cs_agent.agent.context.ConversationState;
+import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.monitor.FeedbackEvalCaseDraft;
 import com.smartcs.smart_cs_agent.monitor.FeedbackEvalCandidate;
 import com.smartcs.smart_cs_agent.monitor.FeedbackEvalCandidateStatus;
@@ -10,7 +14,11 @@ import com.smartcs.smart_cs_agent.monitor.MonitorService;
 import com.smartcs.smart_cs_agent.monitor.MonitorSummary;
 import com.smartcs.smart_cs_agent.monitor.ResponseQualityEvalCase;
 import com.smartcs.smart_cs_agent.monitor.ResponseQualityEvalCaseFileService;
+import com.smartcs.smart_cs_agent.security.AuthenticationException;
+import com.smartcs.smart_cs_agent.security.AuthorizationException;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -38,11 +46,21 @@ public class MonitorController {
 
     private final MonitorService monitorService;
     private final ResponseQualityEvalCaseFileService evalCaseFileService;
+    private final ConversationStore conversationStore;
 
+    @Autowired
     public MonitorController(MonitorService monitorService,
-                             ResponseQualityEvalCaseFileService evalCaseFileService) {
+                             ResponseQualityEvalCaseFileService evalCaseFileService,
+                             ConversationStore conversationStore) {
         this.monitorService = monitorService;
         this.evalCaseFileService = evalCaseFileService;
+        this.conversationStore = conversationStore;
+    }
+
+    /** 包内单元测试可省略会话仓库；外部代码和 Spring 生产装配只能使用完整安全构造函数。 */
+    MonitorController(MonitorService monitorService,
+                      ResponseQualityEvalCaseFileService evalCaseFileService) {
+        this(monitorService, evalCaseFileService, null);
     }
 
     @GetMapping("/summary")
@@ -58,21 +76,64 @@ public class MonitorController {
      * 都是用来观察 Agent 表现的指标，所以第一版放在 Monitor 模块里最清晰。
      */
     @PostMapping("/feedback")
-    public FeedbackResponse recordFeedback(@Valid @RequestBody(required = false) FeedbackRequest request) {
+    public FeedbackResponse recordFeedback(
+            @Valid @RequestBody(required = false) FeedbackRequest request,
+            @AuthenticationPrincipal AuthenticatedPrincipal principal) {
         if (request == null) {
             throw new IllegalArgumentException("Feedback request cannot be empty");
         }
+        requireFeedbackOwner(request, principal);
+        String assistantReply = verifiedAssistantReply(request, principal);
 
         FeedbackRating rating = FeedbackRating.from(request.getRating());
         FeedbackRecord record = monitorService.recordFeedback(
                 request.getConversationId(),
-                request.getUserId(),
+                principal.getUserId(),
                 rating,
                 request.getReason(),
-                request.getAssistantReply()
+                assistantReply
         );
 
         return new FeedbackResponse(true, "Feedback recorded", record);
+    }
+
+    private void requireFeedbackOwner(FeedbackRequest request, AuthenticatedPrincipal principal) {
+        if (principal == null || !principal.isAuthenticated()) {
+            throw AuthenticationException.required();
+        }
+        if (request.getUserId() != null
+                && !request.getUserId().isBlank()
+                && !request.getUserId().equals(principal.getUserId())) {
+            throw AuthorizationException.denied();
+        }
+    }
+
+    private String verifiedAssistantReply(FeedbackRequest request, AuthenticatedPrincipal principal) {
+        if (conversationStore == null) {
+            return request.getAssistantReply();
+        }
+
+        ConversationKey key = new ConversationKey(
+                principal.getTenantId(),
+                principal.getUserId(),
+                request.getConversationId()
+        );
+        ConversationState state = conversationStore.get(key);
+        if (state == null) {
+            throw new ApiNotFoundException("Conversation not found");
+        }
+
+        String latestAssistantReply = state.getMessages().stream()
+                .filter(message -> "assistant".equals(message.get("role")))
+                .map(message -> message.getOrDefault("content", ""))
+                .reduce((previous, current) -> current)
+                .orElseThrow(() -> new IllegalArgumentException("Conversation has no assistant reply"));
+        if (request.getAssistantReply() != null
+                && !request.getAssistantReply().isBlank()
+                && !request.getAssistantReply().equals(latestAssistantReply)) {
+            throw AuthorizationException.denied();
+        }
+        return latestAssistantReply;
     }
 
     /**

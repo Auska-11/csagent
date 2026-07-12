@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.capability.core.DefaultCapabilityGateway;
 import com.smartcs.smart_cs_agent.capability.local.ToolRegistryCapabilityProvider;
 import com.smartcs.smart_cs_agent.mcp.server.McpServerAdapter;
@@ -9,11 +10,12 @@ import com.smartcs.smart_cs_agent.repository.ProductRepository;
 import com.smartcs.smart_cs_agent.repository.ReturnRepository;
 import com.smartcs.smart_cs_agent.repository.UserRepository;
 import com.smartcs.smart_cs_agent.tools.*;
-import com.smartcs.smart_cs_agent.security.DemoAuthenticationService;
+import com.smartcs.smart_cs_agent.security.SecurityRoles;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -24,7 +26,7 @@ class McpJsonRpcControllerTest {
         McpJsonRpcController controller = new McpJsonRpcController(createAdapter());
         McpJsonRpcRequest request = request(1, "initialize", Map.of());
 
-        McpJsonRpcResponse response = controller.handle(request);
+        McpJsonRpcResponse response = controller.handle(request, adminCustomer());
 
         assertNull(response.getError());
         Map<?, ?> result = assertInstanceOf(Map.class, response.getResult());
@@ -37,7 +39,7 @@ class McpJsonRpcControllerTest {
         McpJsonRpcController controller = new McpJsonRpcController(createAdapter());
         McpJsonRpcRequest request = request(2, "tools/list", Map.of());
 
-        McpJsonRpcResponse response = controller.handle(request);
+        McpJsonRpcResponse response = controller.handle(request, adminCustomer());
 
         assertNull(response.getError());
         Map<?, ?> result = assertInstanceOf(Map.class, response.getResult());
@@ -54,7 +56,7 @@ class McpJsonRpcControllerTest {
                 "_meta", authenticatedMeta()
         ));
 
-        McpJsonRpcResponse response = controller.handle(request);
+        McpJsonRpcResponse response = controller.handle(request, adminCustomer());
 
         assertNull(response.getError());
         Map<?, ?> result = assertInstanceOf(Map.class, response.getResult());
@@ -67,7 +69,7 @@ class McpJsonRpcControllerTest {
         McpJsonRpcController controller = new McpJsonRpcController(createAdapter());
         McpJsonRpcRequest request = request(4, "unknown/method", Map.of());
 
-        McpJsonRpcResponse response = controller.handle(request);
+        McpJsonRpcResponse response = controller.handle(request, adminCustomer());
 
         assertNotNull(response.getError());
         assertEquals(-32601, response.getError().getCode());
@@ -78,7 +80,7 @@ class McpJsonRpcControllerTest {
         McpJsonRpcController controller = new McpJsonRpcController(createAdapter());
         McpJsonRpcRequest request = request(5, "tools/call", null);
 
-        McpJsonRpcResponse response = controller.handle(request);
+        McpJsonRpcResponse response = controller.handle(request, adminCustomer());
 
         assertNull(response.getError());
         Map<?, ?> result = assertInstanceOf(Map.class, response.getResult());
@@ -100,7 +102,7 @@ class McpJsonRpcControllerTest {
                 "requestId", "json-rpc-test",
                 "authToken", "token-zhangsan",
                 "userId", "USER-001",
-                "tenantId", "test",
+                "tenantId", "default",
                 "conversationId", "conv-json-rpc",
                 "idempotencyKey", "idem-json-rpc"
         );
@@ -112,8 +114,14 @@ class McpJsonRpcControllerTest {
         ));
         return new McpServerAdapter(
                 gateway,
-                new DemoAuthenticationService(new UserRepository()),
                 new McpServerSecurityProperties()
+        );
+    }
+
+    private AuthenticatedPrincipal adminCustomer() {
+        return AuthenticatedPrincipal.authenticated(
+                "USER-001",
+                Set.of(SecurityRoles.CUSTOMER, SecurityRoles.ADMIN)
         );
     }
 

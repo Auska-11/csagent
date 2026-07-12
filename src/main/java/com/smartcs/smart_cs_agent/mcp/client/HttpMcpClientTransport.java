@@ -7,6 +7,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityRiskLevel;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -93,8 +94,7 @@ public class HttpMcpClientTransport implements McpClientTransport {
 
     @Override
     public CapabilityResult<?> invoke(CapabilityCall call, ExecutionContext context) {
-        // serviceToken 代表“本服务被远程 MCP 信任”，但它不能替用户完成身份认证。
-        // 如果这里把 unverified userId 连同服务令牌发过去，远端会误以为用户已认证，形成权限提升。
+        // serviceToken 只证明调用服务身份，不能代表最终用户。远端没有签名委托时会拒绝身份型能力。
         if (!context.getPrincipal().isAuthenticated()) {
             throw new McpTransportException(
                     "Remote MCP invocation requires an authenticated principal"
@@ -106,9 +106,6 @@ public class HttpMcpClientTransport implements McpClientTransport {
 
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("requestId", context.getTraceId());
-        metadata.put("authToken", properties.getServiceToken());
-        metadata.put("userId", context.getPrincipal().getUserId());
-        metadata.put("tenantId", context.getTenantId());
         metadata.put("conversationId", context.getConversationId());
         metadata.put("idempotencyKey", context.getIdempotencyKey());
 
@@ -159,6 +156,9 @@ public class HttpMcpClientTransport implements McpClientTransport {
     }
 
     private Map<String, Object> rpc(String method, Map<String, Object> params, Object id) {
+        if (properties.getServiceToken() == null || properties.getServiceToken().isBlank()) {
+            throw new McpTransportException("Remote MCP Bearer JWT is not configured");
+        }
         return executeWithRetry(() -> {
             Map<String, Object> request = new LinkedHashMap<>();
             request.put("jsonrpc", "2.0");
@@ -168,6 +168,7 @@ public class HttpMcpClientTransport implements McpClientTransport {
 
             Map<?, ?> response = restClient.post()
                     .uri(properties.getBaseUrl())
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getServiceToken())
                     .body(request)
                     .retrieve()
                     .body(Map.class);

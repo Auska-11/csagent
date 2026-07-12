@@ -34,7 +34,7 @@
 | PRODUCT_QUERY | 产品名/关键词 | - |
 | RETURN_APPLY | 订单号、原因 | - |
 | RETURN_QUERY | 退换单号 | - |
-| USER_INFO | 用户token | - |
+| USER_INFO | 已认证 Principal | 不向用户追问 token 或 userId |
 
 ### 追问策略
 

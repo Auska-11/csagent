@@ -4,11 +4,11 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Legacy 清理与生产硬化继续按后续 Phase 渐进推进 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成 JWT/RBAC 等七批收口，观测与故障测试仍在继续 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 256 个默认离线测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
+| 当前验证规模 | 332 个默认离线测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -21,8 +21,8 @@
 身份、确认、并发和幂等保护，并新增 `WarrantyQuery` 作为零核心业务特判的扩展证明。
 
 这里的“核心目标完成”不等于整份长期路线图全部结束。Phase 7 的生产路由迁移已经完成，但旧
-`CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的分布式持久化/生产认证、Phase 9
-的 Legacy 删除仍是后续演进项，不能把它们误写成已完成。
+`CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的统一脱敏、失败指标和故障注入测试，
+以及 Phase 9 的 Legacy 删除仍是后续演进项，不能把它们误写成已完成。
 
 ## 2. 为什么需要这次改造（改造前问题）
 
@@ -824,8 +824,8 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 - [x] Capability 幂等存储拆为 SPI；JDBC 使用唯一键、租约和结果回放阻止正常并发重复执行。
 - [x] WorkflowState 已建立 stateSchemaVersion 基线、未来版本失败关闭和注册式逐版本迁移链。
 - [x] 长期记忆增加 TTL、容量上限、摘要上限和脱敏。
-- [ ] 认证系统为 Chat、Memory、Monitor 和 MCP 管理接口提供真实 Principal。
-- [ ] 管理类接口增加角色权限。
+- [x] Spring Security Resource Server 为 Chat、Memory、Monitor 和 MCP 接口提供统一 JWT Principal。
+- [x] 管理类接口已增加 ADMIN / CUSTOMER / MCP_CLIENT 角色权限矩阵。
 - [ ] Trace 默认不返回原始 Prompt、完整手机号、用户消息全文和工具敏感参数。
 - [ ] Monitor 区分业务拒绝、技术失败、Guardrail 拒绝和用户取消。
 - [ ] 异常路径也记录 Turn 失败指标。
@@ -897,6 +897,26 @@ Workflow 状态或用户回复。详细说明和测试记录见 `客服Agent-47-
 
 本批仍不是完整隐私治理：长期偏好仍是进程内数据，TTL 采用读写时惰性清理；姓名、地址等上下文型
 字段尚未自动识别，Trace、Prompt、最近消息和 MCP 审计的统一脱敏仍属于后续任务。
+
+### Phase 8 第七批进度（2026-07-12）
+
+已接入 Spring Security OAuth2 Resource Server，所有 HTTP 身份统一来自经过 HS256 签名、issuer、
+audience、时间、subject 和 tenant claim 校验的 Bearer JWT。`AuthenticatedPrincipal` 现在同时携带
+tenantId、userId 和规范化角色；Chat、Memory、Monitor、Eval、Tool、MCP 与 LLM Demo 均由统一
+SecurityFilterChain 按角色授权，未知接口默认拒绝。
+
+本地工作台通过可关闭的 `POST /api/auth/demo/tokens` 获取短期 Demo JWT，令牌只保存在页面内存中；
+生产必须关闭该签发器并替换开发密钥。反馈提交者、会话 owner 和助手回复都以服务端 Principal 与
+ConversationStore 为准，客户端 body 里的旧 userId/assistantReply 只能用于迁移一致性检查。
+
+MCP_CLIENT JWT 只表示“哪个服务正在调用”，不能把 `_meta.userId` 或 `_meta.tenantId` 提升成客户身份。
+由于当前尚未实现签名用户委托，MCP_CLIENT 调用要求用户身份或认证的 Capability 会返回
+`MCP_DELEGATION_REQUIRED`；HTTP MCP Client 每次请求都通过 Authorization Header 发送服务 JWT，
+不再把 token 和用户身份放入 JSON-RPC body。详细说明和测试矩阵见
+`客服Agent-48-JWT统一认证与角色权限说明.md`。
+
+第七批完成的是统一 Web 认证与 RBAC 基线，不代表 Phase 8 整体完成。非对称密钥/独立 IdP、签名用户
+委托、令牌撤销、统一 Trace/Prompt 脱敏、失败指标和数据库故障注入仍需后续批次处理。
 
 ### 验收标准
 
@@ -1098,14 +1118,14 @@ smartcs:
 
 ### 安全与可靠性
 
-- [ ] 用户身份由认证上下文注入，不信任模型或普通请求参数。
+- [x] HTTP 用户身份由已验证 JWT Principal 注入，不信任模型、请求体或 MCP `_meta` 身份字段。
 - [ ] 会话、订单、退货、工单和 Monitor 管理操作有所有权/角色校验。
 - [ ] 同一会话并发安全。
 - [ ] Trace 和日志完成敏感信息脱敏。
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 177 个测试）。
+- [x] 旧测试全部保留并通过（当前默认套件共 332 个测试）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。
@@ -1216,7 +1236,8 @@ smartcs:
 
 ```text
 ChatApiController
-  -> DemoAuthenticationService              # token -> AuthenticatedPrincipal
+  -> Spring Security Resource Server         # 验证 Bearer JWT 的签名与标准/业务 claim
+  -> JwtPrincipalConverter                   # JWT -> AuthenticatedPrincipal
   -> CustomerServiceAgent
   -> ConversationStore.executeSerially       # 同一会话串行化、校验 user 所有权
   -> AgentRuntime                            # 通用 observe-act 循环
@@ -1267,6 +1288,7 @@ ChatApiController
 | Runtime 不按 Action 写业务分支 | `ActionHandlerRegistryTest`、`NewArchitectureBoundaryTest` |
 | 身份、三态结果和幂等 | `CapabilitySecurityAndIdempotencyTest`、`LocalReturnApplyCapabilityProviderTest` |
 | MCP Server/Client 协议 | `McpJsonRpcControllerTest`、`McpToolControllerTest`、`HttpMcpClientTransportTest` |
+| JWT 与 HTTP 角色边界 | `HttpSecurityIntegrationTest`、`DemoIssuerDisabledIntegrationTest`、`JwtPrincipalConverterTest` |
 | Local/MCP 输出契约一致 | `ToolRegistryCapabilityProviderTest`、`McpCapabilityProviderTest` |
 | 新 Skill 零核心业务特判 | `WarrantySkillExtensionProofTest` |
 | 人工升级独立路由与工单边界 | `EscalationWorkflowTest`、`EscalationWorkflowIntegrationTest`、`HandoffActionHandlerTest` |
@@ -1283,10 +1305,12 @@ Phase 7 的最终验收结论、核心文件 diff 证据和 Legacy 清理条件�
    Workflow/Capability 契约，待回归稳定后再删除旧入口。
 3. Conversation 和 Capability 幂等记录已经提供 JDBC 实现，但默认 memory 模式仍只适合单实例；
    Repository 领域锁、业务唯一约束、事务/outbox 和真实数据库并发验证仍需继续补齐。
-4. `DemoAuthenticationService` 适合学习和演示，不等于生产认证；真实系统应接 JWT、Session 或网关身份。
+4. HTTP 已统一使用 JWT Resource Server，但当前单体仍采用共享 HS256 密钥和本地 Demo 签发器。生产应
+   关闭 Demo 入口，并迁移到独立 IdP 的 RS256/ES256 或等价非对称验证、密钥轮换和撤销策略。
 5. 远程 MCP 工具发现当前主要用于启动期不可变 Catalog。TTL 缓存可刷新 Provider 自身快照，
    但运行中动态增删 Capability 还不能原子替换 Gateway Catalog。
-6. Trace 已避免 MCP 日志记录完整参数，但 Chat Trace、Monitor 管理接口和角色授权仍需做系统性脱敏与 RBAC。
+6. Monitor、Eval、Tool 和 MCP HTTP 接口已经接入 RBAC；但远程 MCP 的签名用户委托尚未实现，
+   Trace、Prompt、最近消息和审计日志仍需做系统性脱敏。
 7. 项目仍是单 Maven Module。这是当前有意选择；只有包边界稳定且确有独立发布需求时才拆多 Module。
 
 这些不足不影响本轮“可插拔核心接缝 + 扩展证明”的验收，但会影响多实例、动态更新和正式生产安全，

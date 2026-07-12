@@ -48,10 +48,10 @@ $env:SMARTCS_MONITOR_EVAL_CANDIDATES_FILE="target/demo-quality-loop/feedback-eva
 脚本会依次执行：
 
 1. 调用 `/api/health` 检查服务是否启动。
-2. 调用 `POST /api/monitor/feedback` 提交一条 `UNHELPFUL` 反馈。
-3. 调用 `GET /api/monitor/feedback/candidates` 找到新生成的候选样本。
-4. 调用 `POST /api/monitor/feedback/candidates/{candidateId}/review` 把候选样本审核为 `APPROVED`。
-5. 调用 `POST /api/monitor/feedback/candidates/merge` 把补齐断言后的样本合并进临时评测文件。
+2. 调用 `POST /api/auth/demo/tokens` 获取 USER-001 的短期 JWT。
+3. 携带 Bearer JWT 调用 `POST /api/chat/send`，创建真实会话并取得服务端助手回复。
+4. 调用 `POST /api/monitor/feedback` 提交一条匹配该会话的 `UNHELPFUL` 反馈。
+5. 以 ADMIN 角色调用候选查询、审核和 merge 接口，把补齐断言后的样本合并进临时评测文件。
 6. 使用下面命令运行回复质量评测：
 
 ```powershell
