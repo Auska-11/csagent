@@ -66,6 +66,12 @@ public class RagProperties {
 
         private int dimensions = 1536;
 
+        /** 建立 embedding HTTP 连接的上限。 */
+        private int connectTimeoutMs = 3000;
+
+        /** 等待 embedding 向量响应的上限。 */
+        private int readTimeoutMs = 10000;
+
         public String getBaseUrl() {
             return baseUrl;
         }
@@ -97,6 +103,28 @@ public class RagProperties {
         public void setDimensions(int dimensions) {
             this.dimensions = dimensions;
         }
+
+        public int getConnectTimeoutMs() {
+            return connectTimeoutMs;
+        }
+
+        public void setConnectTimeoutMs(int connectTimeoutMs) {
+            this.connectTimeoutMs = BoundedRestClientFactory.requirePositive(
+                    "smartcs.rag.embedding.connect-timeout-ms",
+                    connectTimeoutMs
+            );
+        }
+
+        public int getReadTimeoutMs() {
+            return readTimeoutMs;
+        }
+
+        public void setReadTimeoutMs(int readTimeoutMs) {
+            this.readTimeoutMs = BoundedRestClientFactory.requirePositive(
+                    "smartcs.rag.embedding.read-timeout-ms",
+                    readTimeoutMs
+            );
+        }
     }
 
     public static class Qdrant {
@@ -105,6 +133,12 @@ public class RagProperties {
         private String baseUrl = "http://localhost:6333";
 
         private String collectionName = "smart_cs_knowledge";
+
+        /** 建立 Qdrant HTTP 连接的上限。 */
+        private int connectTimeoutMs = 3000;
+
+        /** 等待 Qdrant 建表、写入或检索响应的上限。 */
+        private int readTimeoutMs = 10000;
 
         public String getBaseUrl() {
             return baseUrl;
@@ -120,6 +154,28 @@ public class RagProperties {
 
         public void setCollectionName(String collectionName) {
             this.collectionName = collectionName;
+        }
+
+        public int getConnectTimeoutMs() {
+            return connectTimeoutMs;
+        }
+
+        public void setConnectTimeoutMs(int connectTimeoutMs) {
+            this.connectTimeoutMs = BoundedRestClientFactory.requirePositive(
+                    "smartcs.rag.qdrant.connect-timeout-ms",
+                    connectTimeoutMs
+            );
+        }
+
+        public int getReadTimeoutMs() {
+            return readTimeoutMs;
+        }
+
+        public void setReadTimeoutMs(int readTimeoutMs) {
+            this.readTimeoutMs = BoundedRestClientFactory.requirePositive(
+                    "smartcs.rag.qdrant.read-timeout-ms",
+                    readTimeoutMs
+            );
         }
     }
 }

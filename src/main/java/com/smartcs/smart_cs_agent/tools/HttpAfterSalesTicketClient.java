@@ -31,9 +31,21 @@ public class HttpAfterSalesTicketClient implements AfterSalesTicketClient {
 
     @Autowired
     public HttpAfterSalesTicketClient(HandoffProperties properties) {
-        this(properties, RestClient.builder());
+        this.properties = properties;
+        HandoffProperties.AfterSales afterSales = properties.getAfterSales();
+        this.restClient = BoundedRestClientFactory.create(
+                normalizeBaseUrl(afterSales.getBaseUrl()),
+                afterSales.getConnectTimeoutMs(),
+                afterSales.getReadTimeoutMs()
+        );
     }
 
+    /**
+     * 单元测试构造函数。
+     *
+     * <p>传入的 Builder 可能已经绑定 MockRestServiceServer，因此这里不能再覆盖 requestFactory。
+     * 生产超时由上面的 Spring 构造函数和真实慢 HTTP 测试验证。</p>
+     */
     HttpAfterSalesTicketClient(HandoffProperties properties, RestClient.Builder restClientBuilder) {
         this.properties = properties;
         this.restClient = restClientBuilder

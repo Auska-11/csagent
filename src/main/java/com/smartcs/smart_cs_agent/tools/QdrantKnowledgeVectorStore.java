@@ -28,9 +28,16 @@ public class QdrantKnowledgeVectorStore implements KnowledgeVectorStore {
 
     @Autowired
     public QdrantKnowledgeVectorStore(RagProperties properties) {
-        this(properties, RestClient.builder());
+        this.properties = properties;
+        RagProperties.Qdrant qdrant = properties.getQdrant();
+        this.restClient = BoundedRestClientFactory.create(
+                normalizeBaseUrl(qdrant.getBaseUrl()),
+                qdrant.getConnectTimeoutMs(),
+                qdrant.getReadTimeoutMs()
+        );
     }
 
+    /** 测试构造函数：保留测试 Builder 已安装的 Mock requestFactory。 */
     QdrantKnowledgeVectorStore(RagProperties properties, RestClient.Builder restClientBuilder) {
         this.properties = properties;
         this.restClient = restClientBuilder

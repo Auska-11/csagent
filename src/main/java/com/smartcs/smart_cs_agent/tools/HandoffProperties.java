@@ -57,6 +57,12 @@ public class HandoffProperties {
         /** demo 后端允许 AGENT 角色创建工单 */
         private String agentUserRole = "AGENT";
 
+        /** 建立 TCP 连接最多等待多久；不能设为 0，否则可能无限等待。 */
+        private int connectTimeoutMs = 3000;
+
+        /** 工单平台建立连接后，最多等待响应多久。 */
+        private int readTimeoutMs = 10000;
+
         public String getBaseUrl() {
             return baseUrl;
         }
@@ -87,6 +93,28 @@ public class HandoffProperties {
 
         public void setAgentUserRole(String agentUserRole) {
             this.agentUserRole = agentUserRole;
+        }
+
+        public int getConnectTimeoutMs() {
+            return connectTimeoutMs;
+        }
+
+        public void setConnectTimeoutMs(int connectTimeoutMs) {
+            this.connectTimeoutMs = BoundedRestClientFactory.requirePositive(
+                    "smartcs.handoff.after-sales.connect-timeout-ms",
+                    connectTimeoutMs
+            );
+        }
+
+        public int getReadTimeoutMs() {
+            return readTimeoutMs;
+        }
+
+        public void setReadTimeoutMs(int readTimeoutMs) {
+            this.readTimeoutMs = BoundedRestClientFactory.requirePositive(
+                    "smartcs.handoff.after-sales.read-timeout-ms",
+                    readTimeoutMs
+            );
         }
     }
 }

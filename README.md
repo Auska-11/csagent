@@ -355,8 +355,12 @@ $env:SMARTCS_EMBEDDING_BASE_URL="https://api.openai.com/v1"
 $env:SMARTCS_EMBEDDING_API_KEY="your-api-key"
 $env:SMARTCS_EMBEDDING_MODEL_NAME="text-embedding-3-small"
 $env:SMARTCS_EMBEDDING_DIMENSIONS="1536"
+$env:SMARTCS_EMBEDDING_CONNECT_TIMEOUT_MS="3000"
+$env:SMARTCS_EMBEDDING_READ_TIMEOUT_MS="10000"
 $env:SMARTCS_QDRANT_BASE_URL="http://localhost:6333"
 $env:SMARTCS_QDRANT_COLLECTION="smart_cs_knowledge"
+$env:SMARTCS_QDRANT_CONNECT_TIMEOUT_MS="3000"
+$env:SMARTCS_QDRANT_READ_TIMEOUT_MS="10000"
 ```
 
 开启后，`KnowledgeTools` 会把 Markdown 知识库向量化后写入 Qdrant，并用用户问题的 query embedding 做相似度检索；如果 embedding 或 Qdrant 暂时不可用，会自动回退本地 RAG。设计说明见 [客服Agent-33-Embedding向量数据库RAG设计.md](docs/客服Agent/客服Agent-33-Embedding向量数据库RAG设计.md)。
@@ -376,9 +380,15 @@ $env:SMARTCS_AFTER_SALES_BASE_URL="http://localhost:8081"
 $env:SMARTCS_AFTER_SALES_TENANT_ID="demo"
 $env:SMARTCS_AFTER_SALES_AGENT_USER_ID="agent-service"
 $env:SMARTCS_AFTER_SALES_AGENT_USER_ROLE="AGENT"
+$env:SMARTCS_AFTER_SALES_CONNECT_TIMEOUT_MS="3000"
+$env:SMARTCS_AFTER_SALES_READ_TIMEOUT_MS="10000"
 ```
 
 此时用户触发转人工后，Agent 会调用售后工单平台 `POST /api/tickets` 创建真实工单，返回 `AS-{id}`。设计说明见 [客服Agent-32-售后工单平台联调设计.md](docs/客服Agent/客服Agent-32-售后工单平台联调设计.md)。
+
+售后、Embedding 和 Qdrant 的连接/读取超时均可独立配置，且不能设置为 0。真实慢 HTTP
+故障测试和“超时不代表副作用没有发生”的边界见
+[外部 HTTP 客户端超时说明](docs/客服Agent/客服Agent-54-外部HTTP客户端超时与故障测试说明.md)。
 
 运行测试：
 
@@ -499,7 +509,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 370 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 375 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -543,6 +553,12 @@ docker compose down
 - [WorkflowStateMigrator 注册链说明](docs/客服Agent/客服Agent-46-WorkflowStateMigrator注册链说明.md)
 - [长期记忆 TTL、容量与脱敏说明](docs/客服Agent/客服Agent-47-长期记忆TTL容量与脱敏说明.md)
 - [JWT 统一认证与角色权限说明](docs/客服Agent/客服Agent-48-JWT统一认证与角色权限说明.md)
+- [Trace 统一脱敏与隐私边界说明](docs/客服Agent/客服Agent-49-Trace统一脱敏与隐私边界说明.md)
+- [Monitor 统一 Turn 结果说明](docs/客服Agent/客服Agent-50-Monitor统一Turn结果与异常指标说明.md)
+- [失败生命周期与可靠性故障注入说明](docs/客服Agent/客服Agent-51-失败生命周期与可靠性故障注入说明.md)
+- [项目简历与面试完整手册](docs/客服Agent/客服Agent-52-项目简历与面试完整手册.md)
+- [应用日志与 MCP 审计安全说明](docs/客服Agent/客服Agent-53-应用日志与MCP审计安全说明.md)
+- [外部 HTTP 客户端超时说明](docs/客服Agent/客服Agent-54-外部HTTP客户端超时与故障测试说明.md)
 
 ## 简历表达参考
 

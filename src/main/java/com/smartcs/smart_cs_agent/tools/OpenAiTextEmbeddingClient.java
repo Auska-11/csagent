@@ -24,9 +24,16 @@ public class OpenAiTextEmbeddingClient implements TextEmbeddingClient {
 
     @Autowired
     public OpenAiTextEmbeddingClient(RagProperties properties) {
-        this(properties, RestClient.builder());
+        this.properties = properties;
+        RagProperties.Embedding embedding = properties.getEmbedding();
+        this.restClient = BoundedRestClientFactory.create(
+                normalizeBaseUrl(embedding.getBaseUrl()),
+                embedding.getConnectTimeoutMs(),
+                embedding.getReadTimeoutMs()
+        );
     }
 
+    /** 测试构造函数：保留测试 Builder 已安装的 Mock requestFactory。 */
     OpenAiTextEmbeddingClient(RagProperties properties, RestClient.Builder restClientBuilder) {
         this.properties = properties;
         this.restClient = restClientBuilder

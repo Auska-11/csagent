@@ -4,11 +4,11 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成日志与 MCP 审计安全等十一批收口，外部依赖与真实数据库验收仍在继续 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成外部 HTTP 超时等十二批收口，pending 工单与真实数据库验收仍在继续 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 370 个默认测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
+| 当前验证规模 | 375 个默认测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -22,7 +22,8 @@
 
 这里的“核心目标完成”不等于整份长期路线图全部结束。Phase 7 的生产路由迁移已经完成，但旧
 `CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的应用日志与 MCP 普通审计安全已经
-收口，但外部 HTTP deadline、真实数据库和容器故障注入，以及 Phase 9 的 Legacy 删除仍是后续演进项，
+收口，售后/Embedding/Qdrant 也已有独立 HTTP 超时；但整轮 deadline、pending 工单持久化、真实数据库
+和容器故障注入，以及 Phase 9 的 Legacy 删除仍是后续演进项，
 不能把它们误写成已完成。
 
 ## 2. 为什么需要这次改造（改造前问题）
@@ -46,7 +47,7 @@
 5. 每轮只按最新消息选 Skill，不足以支持可靠的多轮 Workflow 粘性状态。
 6. `AgentRuntime` 使用 Action 类型分支执行动作，新增 Action 仍需修改 Runtime。
 7. Tool 契约、Tool 执行、MCP 协议适配之间仍有耦合，未来本地和远程实现容易出现重复定义。
-8. 外部 HTTP 超时、pending 人工工单、真实数据库故障注入和部分生产数据一致性边界仍未完全收口。
+8. pending 人工工单、整轮 deadline、真实数据库故障注入和部分生产数据一致性边界仍未完全收口。
 
 因此，本次改造的目标不是增加更多目录，而是建立稳定的扩展协议和单向依赖关系。
 
@@ -836,7 +837,8 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
   - [x] 进程内会话串行、跨 Store CAS、幂等并发合并和租约恢复测试。
   - [x] ConversationStore/CapabilityIdempotencyStore 重建恢复与 Session 保存失败回放测试。
   - [x] Agent 步数预算、MCP 真实读取超时、有限重试、协议失败、熔断打开和冷却恢复测试。
-  - [ ] Capability 执行中 deadline、LLM 重试上限及售后/Embedding/Qdrant HTTP 黑洞测试。
+  - [x] 售后、Embedding 和 Qdrant 独立连接/读取超时及真实慢 HTTP Server 测试。
+  - [ ] Capability 执行中 deadline 和 LLM 重试上限测试。
   - [ ] 真实 MySQL 并发、重启、查询超时、readiness 掉线与恢复测试。
 
 ### Phase 8 第一批进度（2026-07-12）
@@ -1009,6 +1011,25 @@ errorCode、replayed 和 durationMs；arguments、Bearer token、userId、tenant
 本批完成后默认测试套件共 `370` 项，0 失败、0 错误、0 跳过。完成的是普通应用日志安全默认值与 MCP
 调用审计，不等于完整安全审计平台；Spring Security Filter 层事件、集中式审计存储、保留期、访问控制、
 告警和第三方 Prompt 数据最小化仍需独立建设。
+
+### Phase 8 第十二批进度（2026-07-13）
+
+`HttpAfterSalesTicketClient`、`OpenAiTextEmbeddingClient` 和 `QdrantKnowledgeVectorStore` 现在通过统一
+`BoundedRestClientFactory` 创建生产 RestClient，并分别配置不可关闭的 connect/read timeout。三个依赖
+默认连接超时 3 秒、读取超时 10 秒，配置为 0 或负数时会在绑定或创建 Client 时失败，不能用 0 重新打开
+“永不超时”。
+
+`application.yml`、`docker-compose.yml` 和 `.env.example` 已同步六个独立环境变量。请求结构单元测试
+继续保留 MockRestServiceServer Builder，不会被生产 requestFactory 覆盖；生产构造函数的真实时间边界由
+JDK HttpServer 故意延迟 300ms、客户端读取上限设为 50ms 的故障测试验证。
+
+售后工单超时会及时回到现有 REMOTE_HANDOFF_PENDING 降级，Embedding/Qdrant 超时会让
+`KnowledgeTools` 回退本地 RAG。但超时只表示客户端停止等待，不代表远端副作用一定没有发生；pending
+工单仍需持久化和后台核对，不能把本批描述成已经解决人工转接假成功。详细说明见
+`客服Agent-54-外部HTTP客户端超时与故障测试说明.md`。
+
+本批完成后默认测试套件共 `375` 项，0 失败、0 错误、0 跳过。整轮 Capability deadline、LLM 重试上限、
+有限重试/退避/熔断、pending 工单 Outbox、真实 MySQL 和容器故障验收仍未完成。
 
 ### 验收标准
 
@@ -1220,7 +1241,7 @@ smartcs:
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 370 个测试）。
+- [x] 旧测试全部保留并通过（当前默认套件共 375 个测试）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。
