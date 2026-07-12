@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.agent;
 
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.repository.UserRepository;
+import com.smartcs.smart_cs_agent.security.AuthenticationException;
 import com.smartcs.smart_cs_agent.security.DemoAuthenticationService;
 import org.junit.jupiter.api.Test;
 
@@ -35,9 +36,22 @@ class DemoAuthenticationServiceTest {
 
     @Test
     void shouldRejectTokenAndClaimMismatch() {
-        assertThrows(
-                IllegalArgumentException.class,
+        AuthenticationException error = assertThrows(
+                AuthenticationException.class,
                 () -> authentication.authenticate("USER-001", "token-lisi")
         );
+
+        assertEquals("AUTHENTICATION_FAILED", error.getErrorCode());
+    }
+
+    @Test
+    void shouldRejectUnknownTokenWithoutLeakingAccountDetails() {
+        AuthenticationException error = assertThrows(
+                AuthenticationException.class,
+                () -> authentication.authenticate("USER-001", "unknown-token")
+        );
+
+        assertEquals("AUTHENTICATION_FAILED", error.getErrorCode());
+        assertEquals("Authentication failed", error.getMessage());
     }
 }

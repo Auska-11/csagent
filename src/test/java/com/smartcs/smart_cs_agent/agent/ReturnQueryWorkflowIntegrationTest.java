@@ -3,6 +3,7 @@ package com.smartcs.smart_cs_agent.agent;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,7 +27,7 @@ class ReturnQueryWorkflowIntegrationTest {
     @Test
     void shouldQueryOwnedReturnAndKeepWorkflowStickyAcrossTurns() {
         String conversationId = "conv-return-query-integration";
-        conversationStore.clear(conversationId);
+        conversationStore.clear(ConversationKey.defaultTenant("USER-002", conversationId));
 
         ChatResponse first = agent.chatWithTrace(request(
                 conversationId,
@@ -55,7 +56,7 @@ class ReturnQueryWorkflowIntegrationTest {
     @Test
     void shouldRejectAnotherUsersReturnWithoutLeakingLinkedDetails() {
         String conversationId = "conv-return-query-owner-integration";
-        conversationStore.clear(conversationId);
+        conversationStore.clear(ConversationKey.defaultTenant("USER-001", conversationId));
 
         ChatResponse response = agent.chatWithTrace(request(
                 conversationId,

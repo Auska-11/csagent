@@ -29,13 +29,14 @@ public class DemoAuthenticationService {
 
         User user = userRepository.findByToken(token.trim());
         if (user == null) {
-            throw new IllegalArgumentException("Authentication token is invalid");
+            throw AuthenticationException.failed();
         }
         if (claimedUserId != null
                 && !claimedUserId.isBlank()
                 && !"anonymous".equals(claimedUserId)
                 && !claimedUserId.equals(user.getUserId())) {
-            throw new IllegalArgumentException("Authentication token does not belong to claimed userId");
+            // 不向客户端说明 token 实际属于谁，否则会泄露账户是否存在。
+            throw AuthenticationException.failed();
         }
         return AuthenticatedPrincipal.authenticated(user.getUserId(), Set.of("CUSTOMER"));
     }

@@ -816,10 +816,10 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 
 ### 任务
 
-- [ ] ConversationStore 以 `(tenantId, userId, conversationId)` 作为身份边界。
-- [ ] 读取、继续和清除会话时验证所有权。
+- [x] ConversationStore 以 `(tenantId, userId, conversationId)` 作为身份边界。
+- [x] 读取、继续和清除会话时验证所有权。
 - [ ] 增加持久化 SessionStore 实现，内存实现只用于测试和 Demo。
-- [ ] 同一会话增加锁、版本号或 compare-and-set。
+- [x] 同一进程内按完整 ConversationKey 串行执行和清除；多实例版本号/CAS 随持久化 SessionStore 补齐。
 - [ ] WorkflowState 增加 schemaVersion 和迁移策略。
 - [ ] 长期记忆增加 TTL、容量上限、摘要上限和脱敏。
 - [ ] 认证系统为 Chat、Memory、Monitor 和 MCP 管理接口提供真实 Principal。
@@ -829,6 +829,15 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 - [ ] 异常路径也记录 Turn 失败指标。
 - [ ] 健康检查区分 liveness 和 readiness。
 - [ ] 增加并发、重启恢复、超时、熔断和故障注入测试。
+
+### Phase 8 第一批进度（2026-07-12）
+
+已完成会话所有权边界和 Memory API 的最小认证收口，详细设计与测试记录见
+`客服Agent-42-会话所有权边界改造说明.md`。
+
+本批次没有把“认证系统覆盖 Chat、Memory、Monitor 和 MCP 管理接口”标记为完成：Chat 和 Memory
+已要求 demo token，但 Monitor、MCP 管理接口、真实 JWT/网关认证和多租户 Principal 尚未统一。
+持久化、跨实例并发和 schemaVersion 也属于后续批次。
 
 ### 验收标准
 

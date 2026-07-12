@@ -3,6 +3,7 @@ package com.smartcs.smart_cs_agent.agent;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.agent.context.WorkflowStatus;
@@ -38,7 +39,8 @@ class ReturnApplyWorkflowIntegrationTest {
     @Test
     void shouldKeepWorkflowStickyAndSubmitOnlyAfterExplicitConfirmation() {
         String conversationId = "conv-return-v2-integration";
-        conversationStore.clear(conversationId);
+        ConversationKey key = ConversationKey.defaultTenant("USER-002", conversationId);
+        conversationStore.clear(key);
         assertNull(returnRepository.findByOrderId("ORD-003"));
 
         ChatResponse first = agent.chatWithTrace(authenticatedRequest(conversationId, "我要退货"));
@@ -62,7 +64,7 @@ class ReturnApplyWorkflowIntegrationTest {
         assertNotNull(record);
         assertEquals("质量问题", record.getReason());
 
-        ConversationState state = conversationStore.get(conversationId);
+        ConversationState state = conversationStore.get(key);
         assertEquals(WorkflowStatus.COMPLETED, state.getWorkflowStatus());
         assertTrue(state.getActiveWorkflowStateSnapshot().isEmpty());
     }

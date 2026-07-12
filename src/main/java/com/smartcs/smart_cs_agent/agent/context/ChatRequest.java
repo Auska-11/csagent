@@ -18,6 +18,12 @@ package com.smartcs.smart_cs_agent.agent.context;
  */
 public class ChatRequest {
 
+    /** 旧入口和当前 Demo 都运行在默认租户；真实多租户值应由网关或 JWT 注入。 */
+    public static final String DEFAULT_TENANT_ID = ConversationKey.DEFAULT_TENANT_ID;
+
+    /** 租户 ID：用于隔离不同商家或组织的数据，不能由 LLM 参数决定。 */
+    private final String tenantId;
+
     /** 会话 ID：用于区分不同聊天窗口或不同任务 */
     private final String conversationId;
 
@@ -34,20 +40,39 @@ public class ChatRequest {
     private final AuthenticatedPrincipal principal;
 
     public ChatRequest(String conversationId, String userId, String message) {
-        this(conversationId, userId, message, AuthenticatedPrincipal.unverifiedClaim(userId));
+        this(
+                DEFAULT_TENANT_ID,
+                conversationId,
+                userId,
+                message,
+                AuthenticatedPrincipal.unverifiedClaim(userId)
+        );
     }
 
     public ChatRequest(String conversationId,
                        String userId,
                        String message,
                        AuthenticatedPrincipal principal) {
-        this.conversationId = conversationId;
-        this.userId = userId;
+        this(DEFAULT_TENANT_ID, conversationId, userId, message, principal);
+    }
+
+    public ChatRequest(String tenantId,
+                       String conversationId,
+                       String userId,
+                       String message,
+                       AuthenticatedPrincipal principal) {
+        this.tenantId = tenantId == null || tenantId.isBlank() ? DEFAULT_TENANT_ID : tenantId.trim();
+        this.conversationId = requireIdentityText(conversationId, "conversationId");
+        this.userId = requireIdentityText(userId, "userId");
         this.message = message;
         this.principal = principal == null ? AuthenticatedPrincipal.anonymous() : principal;
-        if (this.principal.isAuthenticated() && !this.principal.getUserId().equals(userId)) {
+        if (this.principal.isAuthenticated() && !this.principal.getUserId().equals(this.userId)) {
             throw new IllegalArgumentException("Authenticated principal does not match request userId");
         }
+    }
+
+    public String getTenantId() {
+        return tenantId;
     }
 
     public String getConversationId() {
@@ -64,5 +89,12 @@ public class ChatRequest {
 
     public AuthenticatedPrincipal getPrincipal() {
         return principal;
+    }
+
+    private static String requireIdentityText(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(fieldName + " cannot be empty");
+        }
+        return value.trim();
     }
 }

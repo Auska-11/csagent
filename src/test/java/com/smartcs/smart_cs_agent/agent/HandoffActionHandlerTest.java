@@ -92,7 +92,11 @@ class HandoffActionHandlerTest {
         assertEquals(Set.of("reason", "summary"), callCaptor.getValue().getArguments().keySet());
         assertFalse(callCaptor.getValue().getArguments().containsKey("user_id"));
         assertEquals("USER-001", contextCaptor.getValue().getPrincipal().getUserId());
+        assertEquals("tenant-demo", contextCaptor.getValue().getTenantId());
         assertEquals("conv-handler", contextCaptor.getValue().getConversationId());
+        assertTrue(contextCaptor.getValue().getIdempotencyKey().startsWith(
+                "11:tenant-demo8:USER-00112:conv-handler:"
+        ));
     }
 
     private HandoffAction action() {
@@ -101,6 +105,7 @@ class HandoffActionHandlerTest {
 
     private ActionHandlingContext handlingContext(AgentSkillPackage skillPackage) {
         ChatRequest request = new ChatRequest(
+                "tenant-demo",
                 "conv-handler",
                 "USER-001",
                 "我要投诉",

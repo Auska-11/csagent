@@ -3,6 +3,7 @@ package com.smartcs.smart_cs_agent.agent;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.config.SkillConfig;
@@ -56,6 +57,7 @@ class CustomerServiceAgentCharacterizationTest {
         TestFixture fixture = createFixture();
         String conversationId = "characterization-return-flow";
         String userId = "USER-002";
+        ConversationKey conversationKey = ConversationKey.defaultTenant(userId, conversationId);
 
         // 第一轮只有业务意图，没有订单号。Agent 应记录 pending_slot=order_id 并向用户追问。
         ChatResponse first = fixture.agent().chatWithTrace(
@@ -65,7 +67,7 @@ class CustomerServiceAgentCharacterizationTest {
         assertTrue(hasTrace(first, "ask_user"));
         assertFalse(hasTrace(first, "tool_called"));
 
-        ConversationState stateAfterFirstTurn = fixture.conversationStore().get(conversationId);
+        ConversationState stateAfterFirstTurn = fixture.conversationStore().get(conversationKey);
         assertNotNull(stateAfterFirstTurn);
         assertEquals("return_apply", stateAfterFirstTurn.getActiveIntent());
         assertEquals("order_id", stateAfterFirstTurn.getPendingSlot());
@@ -78,7 +80,7 @@ class CustomerServiceAgentCharacterizationTest {
         assertTrue(hasTrace(second, "ask_user"));
         assertFalse(hasTrace(second, "tool_called"));
 
-        ConversationState stateAfterSecondTurn = fixture.conversationStore().get(conversationId);
+        ConversationState stateAfterSecondTurn = fixture.conversationStore().get(conversationKey);
         assertEquals("ORD-003", stateAfterSecondTurn.getTaskState("order_id"));
         assertEquals("return_reason", stateAfterSecondTurn.getPendingSlot());
 
@@ -98,7 +100,7 @@ class CustomerServiceAgentCharacterizationTest {
         assertEquals("质量问题", savedRecord.getReason());
 
         // 任务完成后，订单号、原因和 pending_slot 应被清理，避免污染用户的下一项任务。
-        ConversationState completedState = fixture.conversationStore().get(conversationId);
+        ConversationState completedState = fixture.conversationStore().get(conversationKey);
         assertNull(completedState.getPendingSlot());
         assertNull(completedState.getTaskState("order_id"));
         assertNull(completedState.getTaskState("return_reason"));

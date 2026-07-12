@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.agent;
 
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,7 +56,7 @@ class PolicyQaWorkflowIntegrationTest {
     @Test
     void shouldAskBroadTopicThenResumePolicyWorkflow() {
         String conversationId = "conv-policy-topic";
-        conversationStore.clear(conversationId);
+        conversationStore.clear(ConversationKey.defaultTenant("USER-POLICY", conversationId));
 
         ChatResponse first = agent.chatWithTrace(request(conversationId, "我想咨询政策"));
         assertTrue(first.getReply().contains("哪类政策"));
@@ -69,7 +70,7 @@ class PolicyQaWorkflowIntegrationTest {
     }
 
     private ChatResponse chat(String conversationId, String message) {
-        conversationStore.clear(conversationId);
+        conversationStore.clear(ConversationKey.defaultTenant("USER-POLICY", conversationId));
         return agent.chatWithTrace(request(conversationId, message));
     }
 

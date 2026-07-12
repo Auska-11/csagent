@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.agent.handler.defaults;
 
 import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
 import com.smartcs.smart_cs_agent.agent.context.ExecutionContext;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionExecutionResult;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandler;
@@ -127,13 +128,15 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
     private ExecutionContext executionContext(ActionHandlingContext handlingContext) {
         TurnContext turn = handlingContext.getTurnContext();
         String conversationId = turn.getRequest().getConversationId();
+        String conversationScope = ConversationKey.from(turn.getRequest()).toScopedId();
         String workflowId = handlingContext.getWorkflow().descriptor().getId();
         return new ExecutionContext(
-                conversationId + ":step-" + turn.getStepCount(),
+                conversationScope + ":step-" + turn.getStepCount(),
                 turn.getRequest().getPrincipal(),
-                "default",
+                turn.getRequest().getTenantId(),
                 conversationId,
-                conversationId + ":" + workflowId + ":" + turn.getState().getWorkflowStartedAt() + ":handoff",
+                conversationScope + ":" + workflowId
+                        + ":" + turn.getState().getWorkflowStartedAt() + ":handoff",
                 Instant.now().plus(30, ChronoUnit.SECONDS)
         );
     }

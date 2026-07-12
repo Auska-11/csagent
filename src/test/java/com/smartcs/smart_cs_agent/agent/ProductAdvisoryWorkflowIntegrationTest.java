@@ -3,6 +3,7 @@ package com.smartcs.smart_cs_agent.agent;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import org.junit.jupiter.api.Test;
@@ -29,7 +30,7 @@ class ProductAdvisoryWorkflowIntegrationTest {
     @Test
     void shouldAnswerPriceStockAndDescriptionFromRealCatalog() {
         String conversationId = "conv-product-advisory-integration";
-        conversationStore.clear(conversationId);
+        conversationStore.clear(ConversationKey.defaultTenant("USER-PRODUCT-A", conversationId));
 
         ChatResponse response = agent.chatWithTrace(request(
                 conversationId,
@@ -48,7 +49,7 @@ class ProductAdvisoryWorkflowIntegrationTest {
     @Test
     void shouldAskForProductThenResumeWorkflow() {
         String conversationId = "conv-product-keyword-integration";
-        conversationStore.clear(conversationId);
+        conversationStore.clear(ConversationKey.defaultTenant("USER-PRODUCT-B", conversationId));
 
         ChatResponse first = agent.chatWithTrace(request(
                 conversationId,
@@ -73,7 +74,7 @@ class ProductAdvisoryWorkflowIntegrationTest {
     void shouldUsePreferenceWrittenByUserProfileWorkflow() {
         String conversationId = "conv-product-preference-integration";
         String userId = "USER-PRODUCT-C";
-        conversationStore.clear(conversationId);
+        conversationStore.clear(ConversationKey.defaultTenant(userId, conversationId));
         userMemoryStore.clear(userId);
 
         // 偏好写入已由 UserProfileWorkflow 接管，商品 Workflow 只负责读取并推荐。

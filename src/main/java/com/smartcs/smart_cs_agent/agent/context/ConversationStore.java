@@ -23,8 +23,8 @@ import java.util.function.Function;
  * 如果没有 ConversationStore，系统不知道这个订单号是在补充退货流程。
  *
  * 【当前实现】
- * 第一版先用内存 Map 保存会话状态。
- * 这适合学习和演示，重启后数据会丢失。
+ * 第一版先用内存 Map 保存会话状态，并使用 ConversationKey 隔离租户和用户。
+ * 这适合学习和演示，重启后数据仍会丢失。
  *
  * 【后续扩展】
  * 如果要做成更接近生产的系统，可以把这个类替换成：
@@ -36,20 +36,23 @@ import java.util.function.Function;
 public class ConversationStore {
 
     /**
-     * 内存会话表：conversationId -> ConversationState
+     * 内存会话表：(tenantId, userId, conversationId) -> ConversationState
      *
      * 使用 ConcurrentHashMap 是为了比普通 HashMap 更适合 Web 请求场景。
      * 当前项目不是高并发生产系统，但这样做更稳妥。
      */
-    private final Map<String, ConversationState> conversations = new ConcurrentHashMap<>();
+    private final Map<ConversationKey, ConversationState> conversations = new ConcurrentHashMap<>();
 
     /**
-     * 每个 conversationId 一把独立锁。
+     * 每个完整 ConversationKey 一把独立锁。
      *
      * <p>不能只依赖 ConcurrentHashMap：它只能保证 Map 自身操作安全，不能保证
      * “读取状态 -> 执行多步 Workflow -> 保存状态”这一整段业务事务不被另一个请求插入。</p>
+     *
+     * <p>锁和状态必须使用同一种 key。如果状态按复合键隔离，锁却仍然只按 conversationId，
+     * 不同用户碰巧使用同名会话时就会无故互相阻塞。</p>
      */
-    private final Map<String, ReentrantLock> conversationLocks = new ConcurrentHashMap<>();
+    private final Map<ConversationKey, ReentrantLock> conversationLocks = new ConcurrentHashMap<>();
 
     /**
      * 根据请求获取会话状态。
@@ -61,16 +64,17 @@ public class ConversationStore {
      * 我们创建新的 ConversationState。
      */
     public ConversationState getOrCreate(ChatRequest request) {
-        return conversations.compute(request.getConversationId(), (conversationId, existingState) -> {
+        ConversationKey key = ConversationKey.from(request);
+        return conversations.compute(key, (conversationKey, existingState) -> {
             if (existingState == null) {
                 return new ConversationState(request.getMessage(), request.getUserId());
             }
 
-            // conversationId 是状态访问凭证之一，但不能让另一个 userId 猜中 ID 后继续原任务。
-            // 这里在追加新消息之前拒绝，避免越权请求污染已有会话历史。
+            // 复合键已经隔离 owner；这里再检查一次 Map 中状态是否满足不变量。
+            // 如果未来持久化适配器把错误用户的数据装进这个 key，可以尽早失败而不是继续污染数据。
             if (!existingState.getUserId().equals(request.getUserId())) {
                 throw new IllegalArgumentException(
-                        "Conversation " + request.getConversationId() + " belongs to another user"
+                        "Conversation state owner does not match storage key"
                 );
             }
 
@@ -88,8 +92,17 @@ public class ConversationStore {
      * 这里仍然保留 save 方法，是为了让上层代码表达完整生命周期：
      * 读取状态 -> 执行一轮 -> 保存状态。
      */
-    public void save(String conversationId, ConversationState state) {
-        conversations.put(conversationId, state);
+    public void save(ConversationKey key, ConversationState state) {
+        if (key == null) {
+            throw new IllegalArgumentException("conversation key cannot be null");
+        }
+        if (state == null) {
+            throw new IllegalArgumentException("conversation state cannot be null");
+        }
+        if (!key.userId().equals(state.getUserId())) {
+            throw new IllegalArgumentException("Conversation state owner does not match storage key");
+        }
+        conversations.put(key, state);
     }
 
     /**
@@ -106,15 +119,13 @@ public class ConversationStore {
             throw new IllegalArgumentException("conversation operation cannot be null");
         }
 
-        ReentrantLock lock = conversationLocks.computeIfAbsent(
-                request.getConversationId(),
-                ignored -> new ReentrantLock()
-        );
+        ConversationKey key = ConversationKey.from(request);
+        ReentrantLock lock = conversationLocks.computeIfAbsent(key, ignored -> new ReentrantLock());
         lock.lock();
         try {
             ConversationState state = getOrCreate(request);
             T result = operation.apply(state);
-            save(request.getConversationId(), state);
+            save(key, state);
             return result;
         } finally {
             lock.unlock();
@@ -129,11 +140,11 @@ public class ConversationStore {
      * - 如果会话存在，就返回当前状态；
      * - 如果会话不存在，就让 Controller 返回“会话不存在”。
      */
-    public ConversationState get(String conversationId) {
-        if (conversationId == null || conversationId.isBlank()) {
+    public ConversationState get(ConversationKey key) {
+        if (key == null) {
             return null;
         }
-        return conversations.get(conversationId);
+        return conversations.get(key);
     }
 
     /**
@@ -141,12 +152,21 @@ public class ConversationStore {
      *
      * 后续做“新建会话”或“重置对话”按钮时会用到。
      */
-    public boolean clear(String conversationId) {
-        if (conversationId == null || conversationId.isBlank()) {
+    public boolean clear(ConversationKey key) {
+        if (key == null) {
             return false;
         }
-        // 不在这里立即移除 lock：可能已有请求正持有或等待同一把锁。
-        // 少量轻量 ReentrantLock 留在内存中比制造两把并发锁更安全。
-        return conversations.remove(conversationId) != null;
+
+        // clear 也要进入同一把锁。如果一轮 Workflow 正在执行，clear 会等它保存完成后再删除；
+        // 否则可能出现“用户刚清空，旧请求又在 finally 前把状态保存回来”的竞态。
+        ReentrantLock lock = conversationLocks.computeIfAbsent(key, ignored -> new ReentrantLock());
+        lock.lock();
+        try {
+            return conversations.remove(key) != null;
+        } finally {
+            lock.unlock();
+            // 不在这里移除 lock：可能还有请求已经拿到了这把锁并正在等待。
+            // 少量轻量 ReentrantLock 留在内存中比制造两把并发锁更安全。
+        }
     }
 }

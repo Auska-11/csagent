@@ -1177,7 +1177,10 @@
     async function loadMemorySnapshot() {
         try {
             const conversationId = currentConversationId();
-            const response = await fetch('/api/chat/conversations/' + encodeURIComponent(conversationId) + '/memory');
+            const response = await fetch(
+                    '/api/chat/conversations/' + encodeURIComponent(conversationId) + '/memory',
+                    {headers: currentAuthHeaders()}
+            );
             const payload = await readJson(response);
             if (!response.ok) {
                 throw new Error(payload.message || '会话记忆加载失败');
@@ -1198,7 +1201,10 @@
     async function loadUserMemorySnapshot() {
         try {
             const userId = currentUserId();
-            const response = await fetch('/api/chat/users/' + encodeURIComponent(userId) + '/memory');
+            const response = await fetch(
+                    '/api/chat/users/' + encodeURIComponent(userId) + '/memory',
+                    {headers: currentAuthHeaders()}
+            );
             const payload = await readJson(response);
             if (!response.ok) {
                 throw new Error(payload.message || '用户长期记忆加载失败');
@@ -1213,7 +1219,8 @@
         const conversationId = currentConversationId();
         try {
             const response = await fetch('/api/chat/conversations/' + encodeURIComponent(conversationId) + '/memory', {
-                method: 'DELETE'
+                method: 'DELETE',
+                headers: currentAuthHeaders()
             });
             const payload = await readJson(response);
             if (!response.ok) {
@@ -1231,7 +1238,8 @@
         const userId = currentUserId();
         try {
             const response = await fetch('/api/chat/users/' + encodeURIComponent(userId) + '/memory', {
-                method: 'DELETE'
+                method: 'DELETE',
+                headers: currentAuthHeaders()
             });
             const payload = await readJson(response);
             if (!response.ok) {
@@ -2349,6 +2357,20 @@
 
     function currentUserId() {
         return state.currentUser?.userId || 'anonymous';
+    }
+
+    /**
+     * Memory 接口使用 Header 携带演示认证信息。
+     * X-User-Id 只是“我声称自己是谁”，后端仍会用 Bearer token 恢复可信 Principal；
+     * 因此只篡改 userId 并不能读取另一个用户的记忆。
+     */
+    function currentAuthHeaders() {
+        const headers = {'X-User-Id': currentUserId()};
+        const token = state.currentUser?.token;
+        if (token) {
+            headers.Authorization = 'Bearer ' + token;
+        }
+        return headers;
     }
 
     function currentConversationId() {

@@ -3,11 +3,13 @@ package com.smartcs.smart_cs_agent.controller;
 import com.smartcs.smart_cs_agent.agent.CustomerServiceAgent;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
 import com.smartcs.smart_cs_agent.security.DemoAuthenticationService;
+import com.smartcs.smart_cs_agent.security.AuthenticationException;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,6 +21,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
@@ -61,7 +64,23 @@ class ChatApiControllerMvcTest {
     @BeforeEach
     void setUpAuthentication() {
         when(authenticationService.authenticate(any(), any()))
-                .thenAnswer(invocation -> AuthenticatedPrincipal.unverifiedClaim(invocation.getArgument(0)));
+                .thenAnswer(invocation -> {
+                    String claimedUserId = invocation.getArgument(0);
+                    String token = invocation.getArgument(1);
+                    if (token == null || token.isBlank()) {
+                        return AuthenticatedPrincipal.unverifiedClaim(claimedUserId);
+                    }
+
+                    String actualUserId = switch (token) {
+                        case "token-zhangsan" -> "USER-001";
+                        case "token-lisi" -> "USER-002";
+                        default -> throw AuthenticationException.failed();
+                    };
+                    if (claimedUserId != null && !claimedUserId.equals(actualUserId)) {
+                        throw AuthenticationException.failed();
+                    }
+                    return AuthenticatedPrincipal.authenticated(actualUserId, Set.of("CUSTOMER"));
+                });
     }
 
     @Test
@@ -95,7 +114,8 @@ class ChatApiControllerMvcTest {
                                 {
                                   "message": "帮我查订单 ORD-001",
                                   "userId": "USER-001",
-                                  "conversationId": "conv-1"
+                                  "conversationId": "conv-1",
+                                  "token": "token-zhangsan"
                                 }
                                 """))
                 .andExpect(status().isOk())
@@ -112,13 +132,34 @@ class ChatApiControllerMvcTest {
     }
 
     @Test
+    void shouldRejectTokenlessClaimBeforeEnteringAgent() throws Exception {
+        mockMvc.perform(post("/api/chat/send")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "message": "你好",
+                                  "userId": "USER-001",
+                                  "conversationId": "private-conv"
+                                }
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_REQUIRED"));
+
+        verify(agent, never()).chatWithTrace(any(ChatRequest.class));
+        verify(monitorService, never()).recordTurn(any(ChatResponse.class));
+    }
+
+    @Test
     void shouldReturnConversationMemoryWhenConversationExists() throws Exception {
         ConversationState state = new ConversationState("我要退货", "USER-001");
         state.setActiveIntent("return_apply");
         state.setPendingSlot("order_id");
-        when(conversationStore.get("conv-memory")).thenReturn(state);
+        ConversationKey key = ConversationKey.defaultTenant("USER-001", "conv-memory");
+        when(conversationStore.get(key)).thenReturn(state);
 
-        mockMvc.perform(get("/api/chat/conversations/conv-memory/memory"))
+        mockMvc.perform(get("/api/chat/conversations/conv-memory/memory")
+                        .header("X-User-Id", "USER-001")
+                        .header("Authorization", "Bearer token-zhangsan"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.conversationId").value("conv-memory"))
                 .andExpect(jsonPath("$.userId").value("USER-001"))
@@ -128,9 +169,12 @@ class ChatApiControllerMvcTest {
 
     @Test
     void shouldClearConversationMemory() throws Exception {
-        when(conversationStore.clear("conv-memory")).thenReturn(true);
+        ConversationKey key = ConversationKey.defaultTenant("USER-001", "conv-memory");
+        when(conversationStore.clear(key)).thenReturn(true);
 
-        mockMvc.perform(delete("/api/chat/conversations/conv-memory/memory"))
+        mockMvc.perform(delete("/api/chat/conversations/conv-memory/memory")
+                        .header("X-User-Id", "USER-001")
+                        .header("Authorization", "Bearer token-zhangsan"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope").value("conversation"))
                 .andExpect(jsonPath("$.targetId").value("conv-memory"))
@@ -141,10 +185,62 @@ class ChatApiControllerMvcTest {
     void shouldClearUserMemory() throws Exception {
         when(userMemoryStore.clear("USER-001")).thenReturn(true);
 
-        mockMvc.perform(delete("/api/chat/users/USER-001/memory"))
+        mockMvc.perform(delete("/api/chat/users/USER-001/memory")
+                        .header("Authorization", "Bearer token-zhangsan"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope").value("user"))
                 .andExpect(jsonPath("$.targetId").value("USER-001"))
                 .andExpect(jsonPath("$.cleared").value(true));
+    }
+
+    @Test
+    void shouldRejectConversationMemoryRequestWithoutBearerToken() throws Exception {
+        mockMvc.perform(get("/api/chat/conversations/private-conv/memory")
+                        .header("X-User-Id", "USER-001"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_REQUIRED"))
+                .andExpect(jsonPath("$.message").value("Authentication is required"));
+
+        verify(conversationStore, never()).get(any(ConversationKey.class));
+    }
+
+    @Test
+    void shouldReturnNotFoundInsteadOfReadingAnotherUsersConversation() throws Exception {
+        ConversationKey ownerKey = ConversationKey.defaultTenant("USER-001", "shared-id");
+        ConversationKey attackerKey = ConversationKey.defaultTenant("USER-002", "shared-id");
+        when(conversationStore.get(ownerKey))
+                .thenReturn(new ConversationState("用户一的私有消息", "USER-001"));
+
+        mockMvc.perform(get("/api/chat/conversations/shared-id/memory")
+                        .header("X-User-Id", "USER-002")
+                        .header("Authorization", "Bearer token-lisi"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("NOT_FOUND"))
+                .andExpect(jsonPath("$.message").value("Conversation not found"));
+
+        verify(conversationStore).get(attackerKey);
+        verify(conversationStore, never()).get(ownerKey);
+    }
+
+    @Test
+    void shouldRejectClaimAndTokenMismatch() throws Exception {
+        mockMvc.perform(delete("/api/chat/conversations/private-conv/memory")
+                        .header("X-User-Id", "USER-001")
+                        .header("Authorization", "Bearer token-lisi"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_FAILED"))
+                .andExpect(jsonPath("$.message").value("Authentication failed"));
+
+        verify(conversationStore, never()).clear(any(ConversationKey.class));
+    }
+
+    @Test
+    void shouldRejectReadingAnotherUsersLongTermMemory() throws Exception {
+        mockMvc.perform(get("/api/chat/users/USER-001/memory")
+                        .header("Authorization", "Bearer token-lisi"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_FAILED"));
+
+        verify(userMemoryStore, never()).getSnapshot(any());
     }
 }

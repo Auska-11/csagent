@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.security.AuthenticationException;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.HttpInputMessage;
@@ -38,6 +39,32 @@ class GlobalExceptionHandlerTest {
         assertEquals("INVALID_REQUEST_BODY", body.getErrorCode());
         assertEquals("Request body is not readable", body.getMessage());
         assertTrue(body.getTimestamp() > 0);
+    }
+
+    @Test
+    void shouldHandleAuthenticationFailureAsUnauthorized() {
+        ResponseEntity<ApiErrorResponse> response = handler.handleAuthentication(
+                AuthenticationException.failed()
+        );
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+        ApiErrorResponse body = response.getBody();
+        assertNotNull(body);
+        assertEquals("AUTHENTICATION_FAILED", body.getErrorCode());
+        assertEquals("Authentication failed", body.getMessage());
+    }
+
+    @Test
+    void shouldHandleMissingResourceAsNotFound() {
+        ResponseEntity<ApiErrorResponse> response = handler.handleNotFound(
+                new ApiNotFoundException("Conversation not found")
+        );
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+        ApiErrorResponse body = response.getBody();
+        assertNotNull(body);
+        assertEquals("NOT_FOUND", body.getErrorCode());
+        assertEquals("Conversation not found", body.getMessage());
     }
 
     @Test

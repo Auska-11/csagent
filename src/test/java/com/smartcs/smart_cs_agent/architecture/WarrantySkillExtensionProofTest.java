@@ -4,6 +4,7 @@ import com.smartcs.smart_cs_agent.agent.CustomerServiceAgent;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.skill.registry.AgentSkillPackageRegistry;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRegistry;
@@ -61,7 +62,7 @@ class WarrantySkillExtensionProofTest {
     @Test
     void shouldCompleteWarrantyQuestionThroughRealAgentAndCapabilityChain() {
         String conversationId = "extension-proof-warranty";
-        conversationStore.clear(conversationId);
+        conversationStore.clear(ConversationKey.defaultTenant("USER-001", conversationId));
 
         ChatResponse response = agent.chatWithTrace(new ChatRequest(
                 conversationId,

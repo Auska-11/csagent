@@ -3,6 +3,7 @@ package com.smartcs.smart_cs_agent.agent;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,7 +27,7 @@ class EscalationWorkflowIntegrationTest {
     @Test
     void shouldRouteComplaintToEscalationWorkflowAndCreateTicket() {
         String conversationId = "conv-escalation-integration";
-        conversationStore.clear(conversationId);
+        conversationStore.clear(ConversationKey.defaultTenant("USER-001", conversationId));
 
         ChatResponse response = agent.chatWithTrace(request(
                 conversationId,
@@ -43,7 +44,7 @@ class EscalationWorkflowIntegrationTest {
     @Test
     void shouldKeepHandoffPolicyQuestionInPolicyQaWithoutCreatingTicket() {
         String conversationId = "conv-handoff-policy-integration";
-        conversationStore.clear(conversationId);
+        conversationStore.clear(ConversationKey.defaultTenant("USER-001", conversationId));
 
         ChatResponse response = agent.chatWithTrace(request(
                 conversationId,
@@ -59,7 +60,7 @@ class EscalationWorkflowIntegrationTest {
     @Test
     void shouldInterruptWaitingWorkflowWhenUserRaisesComplaint() {
         String conversationId = "conv-escalation-interrupt";
-        conversationStore.clear(conversationId);
+        conversationStore.clear(ConversationKey.defaultTenant("USER-001", conversationId));
 
         ChatResponse first = agent.chatWithTrace(request(conversationId, "帮我查订单"));
         assertTrue(first.getReply().contains("订单号"), first::getReply);

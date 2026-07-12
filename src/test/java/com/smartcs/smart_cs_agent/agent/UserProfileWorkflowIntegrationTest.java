@@ -3,6 +3,7 @@ package com.smartcs.smart_cs_agent.agent;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import org.junit.jupiter.api.Test;
@@ -30,7 +31,7 @@ class UserProfileWorkflowIntegrationTest {
     @Test
     void shouldReturnOnlyAuthenticatedUsersMaskedProfile() {
         String conversationId = "conv-user-profile-integration";
-        conversationStore.clear(conversationId);
+        conversationStore.clear(ConversationKey.defaultTenant("USER-001", conversationId));
 
         ChatResponse response = agent.chatWithTrace(authenticatedRequest(
                 conversationId,
@@ -49,7 +50,7 @@ class UserProfileWorkflowIntegrationTest {
     @Test
     void shouldRejectUnverifiedProfileRequestBeforeCapabilityCall() {
         String conversationId = "conv-user-profile-unverified";
-        conversationStore.clear(conversationId);
+        conversationStore.clear(ConversationKey.defaultTenant("USER-001", conversationId));
 
         ChatResponse response = agent.chatWithTrace(
                 new ChatRequest(conversationId, "USER-001", "查看我的信息")
@@ -63,7 +64,7 @@ class UserProfileWorkflowIntegrationTest {
     void shouldWritePreferenceInUserWorkflowThenUseItForRecommendation() {
         String conversationId = "conv-user-preference-integration";
         String userId = "USER-002";
-        conversationStore.clear(conversationId);
+        conversationStore.clear(ConversationKey.defaultTenant(userId, conversationId));
         userMemoryStore.clear(userId);
 
         ChatResponse remembered = agent.chatWithTrace(authenticatedRequest(

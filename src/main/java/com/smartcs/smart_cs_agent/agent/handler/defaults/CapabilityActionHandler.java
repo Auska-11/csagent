@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.agent.handler.defaults;
 
 import com.smartcs.smart_cs_agent.agent.action.CapabilityAction;
 import com.smartcs.smart_cs_agent.agent.context.CapabilityObservation;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ExecutionContext;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
@@ -148,12 +149,13 @@ public class CapabilityActionHandler implements ActionHandler<CapabilityAction> 
     private ExecutionContext buildExecutionContext(ActionHandlingContext context, String capability) {
         TurnContext turn = context.getTurnContext();
         String conversationId = turn.getRequest().getConversationId();
+        String conversationScope = ConversationKey.from(turn.getRequest()).toScopedId();
         String workflowId = context.getWorkflow().descriptor().getId();
-        String traceId = conversationId + ":step-" + turn.getStepCount();
+        String traceId = conversationScope + ":step-" + turn.getStepCount();
 
         // 同一 Workflow 会话对同一副作用能力生成稳定 key。
         // Gateway 会用该 key 合并并发请求并回放成功结果，避免副作用重复执行。
-        String idempotencyKey = conversationId
+        String idempotencyKey = conversationScope
                 + ":" + workflowId
                 + ":" + turn.getState().getWorkflowStartedAt()
                 + ":" + capability;
@@ -161,7 +163,7 @@ public class CapabilityActionHandler implements ActionHandler<CapabilityAction> 
         return new ExecutionContext(
                 traceId,
                 turn.getRequest().getPrincipal(),
-                "default",
+                turn.getRequest().getTenantId(),
                 conversationId,
                 idempotencyKey,
                 Instant.now().plus(30, ChronoUnit.SECONDS)

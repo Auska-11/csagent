@@ -40,7 +40,7 @@ public class CustomerServiceAgent {
     /** Skill 管理器：管理所有注册的 Skill */
     private final SkillManager skillManager;
 
-    /** 会话存储：根据 conversationId 保存和读取多轮会话状态 */
+    /** 会话存储：根据 tenantId + userId + conversationId 保存和读取多轮会话状态 */
     private final ConversationStore conversationStore;
 
     /**
@@ -137,7 +137,7 @@ public class CustomerServiceAgent {
      * @return 包含回复和 Trace 的完整响应
      */
     public ChatResponse chatWithTrace(ChatRequest request) {
-        // 一整轮都放在 conversationId 对应的串行锁中。
+        // 一整轮都放在完整 ConversationKey 对应的串行锁中。
         // 这不仅保护 Map 读取，还保护 Workflow 状态转换和有副作用 Capability 的调用。
         return conversationStore.executeSerially(request, state -> {
             // ChatRequest 负责当前输入，ConversationState 负责跨轮状态，

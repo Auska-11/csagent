@@ -3,12 +3,14 @@ package com.smartcs.smart_cs_agent.controller;
 import com.smartcs.smart_cs_agent.agent.CustomerServiceAgent;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationMemorySnapshot;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.memory.UserMemorySnapshot;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
+import com.smartcs.smart_cs_agent.security.AuthenticationException;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -74,9 +76,9 @@ class ChatApiControllerTest {
 
         ChatApiController controller = new ChatApiController(agent, monitorService, new ConversationStore());
 
-        ChatResponse response = controller.sendMessage(
-                new ChatApiRequest("帮我查订单 ORD-001", "USER-001", "conv-1")
-        );
+        ChatApiRequest apiRequest = new ChatApiRequest("帮我查订单 ORD-001", "USER-001", "conv-1");
+        apiRequest.setToken("token-zhangsan");
+        ChatResponse response = controller.sendMessage(apiRequest);
 
         assertInstanceOf(ChatResponse.class, response);
         assertEquals("conv-1", response.getConversationId());
@@ -87,11 +89,12 @@ class ChatApiControllerTest {
         verify(monitorService).recordTurn(response);
         assertEquals("conv-1", captor.getValue().getConversationId());
         assertEquals("USER-001", captor.getValue().getUserId());
+        assertEquals(ConversationKey.DEFAULT_TENANT_ID, captor.getValue().getTenantId());
         assertEquals("帮我查订单 ORD-001", captor.getValue().getMessage());
     }
 
     @Test
-    void shouldFillDefaultUserAndConversationId() {
+    void shouldFillDefaultConversationIdForAuthenticatedUser() {
         CustomerServiceAgent agent = mock(CustomerServiceAgent.class);
         MonitorService monitorService = mock(MonitorService.class);
         when(agent.chatWithTrace(any(ChatRequest.class))).thenAnswer(invocation -> {
@@ -101,10 +104,31 @@ class ChatApiControllerTest {
 
         ChatApiController controller = new ChatApiController(agent, monitorService, new ConversationStore());
 
-        ChatResponse response = controller.sendMessage(new ChatApiRequest("你好", null, null));
+        // 即使请求没有 userId，token 也能恢复真实用户；身份不依赖客户端 claim。
+        ChatApiRequest apiRequest = new ChatApiRequest("你好", null, null);
+        apiRequest.setToken("token-zhangsan");
+        ChatResponse response = controller.sendMessage(apiRequest);
 
-        assertEquals("anonymous", response.getUserId());
-        assertEquals("default-anonymous", response.getConversationId());
+        assertEquals("USER-001", response.getUserId());
+        assertEquals("default-USER-001", response.getConversationId());
+    }
+
+    @Test
+    void shouldRejectClaimedUserIdWithoutToken() {
+        CustomerServiceAgent agent = mock(CustomerServiceAgent.class);
+        MonitorService monitorService = mock(MonitorService.class);
+        ChatApiController controller = new ChatApiController(agent, monitorService, new ConversationStore());
+
+        AuthenticationException error = assertThrows(
+                AuthenticationException.class,
+                () -> controller.sendMessage(
+                        new ChatApiRequest("你好", "USER-001", "claimed-private-conv")
+                )
+        );
+
+        assertEquals("AUTHENTICATION_REQUIRED", error.getErrorCode());
+        verify(agent, never()).chatWithTrace(any(ChatRequest.class));
+        verify(monitorService, never()).recordTurn(any(ChatResponse.class));
     }
 
     @Test
@@ -115,11 +139,15 @@ class ChatApiControllerTest {
         ConversationState state = new ConversationState("我要退货", "USER-001");
         state.setActiveIntent("return_apply");
         state.setPendingSlot("order_id");
-        conversationStore.save("conv-memory", state);
+        conversationStore.save(ConversationKey.defaultTenant("USER-001", "conv-memory"), state);
 
         ChatApiController controller = new ChatApiController(agent, monitorService, conversationStore);
 
-        ConversationMemorySnapshot snapshot = controller.getConversationMemory("conv-memory");
+        ConversationMemorySnapshot snapshot = controller.getConversationMemory(
+                "conv-memory",
+                "USER-001",
+                "Bearer token-zhangsan"
+        );
 
         assertEquals("conv-memory", snapshot.getConversationId());
         assertEquals("USER-001", snapshot.getUserId());
@@ -140,7 +168,7 @@ class ChatApiControllerTest {
                 userMemoryStore
         );
 
-        UserMemorySnapshot snapshot = controller.getUserMemory("USER-001");
+        UserMemorySnapshot snapshot = controller.getUserMemory("USER-001", "Bearer token-zhangsan");
 
         assertEquals("USER-001", snapshot.getUserId());
         assertEquals("蓝牙耳机", snapshot.getProductPreferences().get(0));
@@ -151,15 +179,20 @@ class ChatApiControllerTest {
         CustomerServiceAgent agent = mock(CustomerServiceAgent.class);
         MonitorService monitorService = mock(MonitorService.class);
         ConversationStore conversationStore = new ConversationStore();
-        conversationStore.save("conv-memory", new ConversationState("我要退货", "USER-001"));
+        ConversationKey key = ConversationKey.defaultTenant("USER-001", "conv-memory");
+        conversationStore.save(key, new ConversationState("我要退货", "USER-001"));
         ChatApiController controller = new ChatApiController(agent, monitorService, conversationStore);
 
-        MemoryClearResponse response = controller.clearConversationMemory("conv-memory");
+        MemoryClearResponse response = controller.clearConversationMemory(
+                "conv-memory",
+                "USER-001",
+                "Bearer token-zhangsan"
+        );
 
         assertEquals("conversation", response.getScope());
         assertEquals("conv-memory", response.getTargetId());
         assertEquals(true, response.isCleared());
-        assertEquals(null, conversationStore.get("conv-memory"));
+        assertEquals(null, conversationStore.get(key));
     }
 
     @Test
@@ -175,11 +208,59 @@ class ChatApiControllerTest {
                 userMemoryStore
         );
 
-        MemoryClearResponse response = controller.clearUserMemory("USER-001");
+        MemoryClearResponse response = controller.clearUserMemory("USER-001", "Bearer token-zhangsan");
 
         assertEquals("user", response.getScope());
         assertEquals("USER-001", response.getTargetId());
         assertEquals(true, response.isCleared());
         assertEquals(0, userMemoryStore.getSnapshot("USER-001").getProductPreferences().size());
+    }
+
+    @Test
+    void shouldRequireAuthenticationBeforeReadingConversationMemory() {
+        CustomerServiceAgent agent = mock(CustomerServiceAgent.class);
+        MonitorService monitorService = mock(MonitorService.class);
+        ConversationStore conversationStore = new ConversationStore();
+        ConversationKey ownerKey = ConversationKey.defaultTenant("USER-001", "private-conv");
+        conversationStore.save(ownerKey, new ConversationState("私有消息", "USER-001"));
+        ChatApiController controller = new ChatApiController(agent, monitorService, conversationStore);
+
+        AuthenticationException error = assertThrows(
+                AuthenticationException.class,
+                () -> controller.getConversationMemory("private-conv", "USER-001", null)
+        );
+
+        assertEquals("AUTHENTICATION_REQUIRED", error.getErrorCode());
+        assertEquals("私有消息", conversationStore.get(ownerKey).getMessages().get(0).get("content"));
+    }
+
+    @Test
+    void shouldNotReadOrClearAnotherUsersSameConversationId() {
+        CustomerServiceAgent agent = mock(CustomerServiceAgent.class);
+        MonitorService monitorService = mock(MonitorService.class);
+        ConversationStore conversationStore = new ConversationStore();
+        ConversationKey ownerKey = ConversationKey.defaultTenant("USER-001", "shared-id");
+        conversationStore.save(ownerKey, new ConversationState("用户一的私有消息", "USER-001"));
+        ChatApiController controller = new ChatApiController(agent, monitorService, conversationStore);
+
+        assertThrows(
+                ApiNotFoundException.class,
+                () -> controller.getConversationMemory(
+                        "shared-id",
+                        "USER-002",
+                        "Bearer token-lisi"
+                )
+        );
+
+        MemoryClearResponse clearResponse = controller.clearConversationMemory(
+                "shared-id",
+                "USER-002",
+                "Bearer token-lisi"
+        );
+        assertEquals(false, clearResponse.isCleared());
+        assertEquals(
+                "用户一的私有消息",
+                conversationStore.get(ownerKey).getMessages().get(0).get("content")
+        );
     }
 }

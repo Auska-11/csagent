@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.security.AuthenticationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -26,6 +27,27 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    /**
+     * 认证凭据缺失或无效时统一返回 401。
+     *
+     * <p>401 和 400 的区别是：401 表示调用者还没有证明“自己是谁”；400 表示身份已经不是问题，
+     * 但普通请求参数不合法。前端可以据此决定是否提示重新登录。</p>
+     */
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ApiErrorResponse> handleAuthentication(AuthenticationException exception) {
+        return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
+                .body(new ApiErrorResponse(exception.getErrorCode(), exception.getMessage()));
+    }
+
+    /** 资源不存在时返回稳定 404；越权会话也使用同一响应，避免暴露资源归属。 */
+    @ExceptionHandler(ApiNotFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleNotFound(ApiNotFoundException exception) {
+        return ResponseEntity
+                .status(HttpStatus.NOT_FOUND)
+                .body(new ApiErrorResponse("NOT_FOUND", safeMessage(exception.getMessage(), "Resource not found")));
+    }
 
     /**
      * JSON 请求体无法解析时触发。
