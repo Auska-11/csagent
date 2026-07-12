@@ -18,6 +18,12 @@ public class MonitorTurnSnapshot {
     /** 本轮响应时间戳，直接复用 ChatResponse 的 timestamp */
     private final long timestamp;
 
+    /** 本轮唯一结果分类，避免把业务拒绝和系统故障混成一个 failed 数字 */
+    private final TurnOutcome outcome;
+
+    /** 结果对应的稳定机器码；成功时为空字符串 */
+    private final String errorCode;
+
     /** 本轮完成的工具调用次数 */
     private final long toolCalls;
 
@@ -33,12 +39,19 @@ public class MonitorTurnSnapshot {
     /** 本轮是否触发过人工转接，第一版用次数表示，后续可扩展为转接原因分布 */
     private final long handoffCount;
 
-    /** 本轮 Trace 中记录到的工具和 LLM 耗时总和 */
+    /**
+     * 本轮端到端耗时。
+     *
+     * <p>HTTP Chat 入口会传入从调用 Agent 到生成 ChatResponse 的完整耗时；旧调用方没有该数据时，
+     * MonitorService 才会回退为 Trace 中工具与 LLM 耗时之和。</p>
+     */
     private final long totalDurationMs;
 
     public MonitorTurnSnapshot(String conversationId,
                                String userId,
                                long timestamp,
+                               TurnOutcome outcome,
+                               String errorCode,
                                long toolCalls,
                                long failedToolCalls,
                                long llmCalls,
@@ -48,6 +61,8 @@ public class MonitorTurnSnapshot {
         this.conversationId = conversationId;
         this.userId = userId;
         this.timestamp = timestamp;
+        this.outcome = outcome == null ? TurnOutcome.SUCCESS : outcome;
+        this.errorCode = errorCode == null ? "" : errorCode;
         this.toolCalls = toolCalls;
         this.failedToolCalls = failedToolCalls;
         this.llmCalls = llmCalls;
@@ -66,6 +81,14 @@ public class MonitorTurnSnapshot {
 
     public long getTimestamp() {
         return timestamp;
+    }
+
+    public TurnOutcome getOutcome() {
+        return outcome;
+    }
+
+    public String getErrorCode() {
+        return errorCode;
     }
 
     public long getToolCalls() {

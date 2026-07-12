@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.workflow.productadvisory;
 
 import com.smartcs.smart_cs_agent.agent.action.AskUserAction;
 import com.smartcs.smart_cs_agent.agent.action.CapabilityAction;
+import com.smartcs.smart_cs_agent.agent.action.CancelWorkflowAction;
 import com.smartcs.smart_cs_agent.agent.action.FinalAnswerAction;
 import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
 import com.smartcs.smart_cs_agent.agent.context.CapabilityObservation;
@@ -131,7 +132,7 @@ public class ProductAdvisoryWorkflow implements AgentWorkflow {
                     "商品咨询 Workflow 已完成"
             );
             case CANCELLED -> WorkflowDecision.next(
-                    new FinalAnswerAction("本次商品咨询已取消。"),
+                    new CancelWorkflowAction("本次商品咨询已取消。"),
                     "商品咨询 Workflow 已取消"
             );
             case FAILED -> technicalFailure("商品咨询 Workflow 已失败");
@@ -266,7 +267,7 @@ public class ProductAdvisoryWorkflow implements AgentWorkflow {
         if (interrupt.getType() == GlobalInterruptType.CANCEL) {
             state.transitionTo(ProductAdvisoryStep.CANCELLED);
             return WorkflowDecision.next(
-                    new FinalAnswerAction("本次商品咨询已取消。"),
+                    new CancelWorkflowAction("本次商品咨询已取消。"),
                     interrupt.getReason()
             );
         }

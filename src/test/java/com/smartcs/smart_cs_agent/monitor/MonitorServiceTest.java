@@ -62,6 +62,9 @@ class MonitorServiceTest {
 
         MonitorSummary summary = service.getSummary();
         assertEquals(1, summary.getTotalTurns());
+        assertEquals(0, summary.getSuccessfulTurnCount());
+        assertEquals(1, summary.getTechnicalFailureTurnCount());
+        assertEquals(0.0, summary.getTurnSuccessRate());
         assertEquals(3, summary.getToolCallCount());
         assertEquals(2, summary.getSuccessfulToolCallCount());
         assertEquals(1, summary.getFailedToolCallCount());
@@ -74,6 +77,7 @@ class MonitorServiceTest {
         assertEquals(120, summary.getAverageLlmDurationMs());
         assertEquals(1, summary.getRecentTurns().size());
         assertEquals("conv-1", summary.getRecentTurns().get(0).getConversationId());
+        assertEquals(TurnOutcome.TECHNICAL_FAILURE, summary.getRecentTurns().get(0).getOutcome());
         assertEquals(3, summary.getToolStats().size());
         assertEquals(0, summary.getPendingEvalCandidateCount());
         assertEquals(0, summary.getApprovedEvalCandidateCount());
@@ -94,9 +98,94 @@ class MonitorServiceTest {
 
         MonitorSummary summary = service.getSummary();
         assertEquals(12, summary.getTotalTurns());
+        assertEquals(12, summary.getSuccessfulTurnCount());
+        assertEquals(1.0, summary.getTurnSuccessRate());
         assertEquals(10, summary.getRecentTurns().size());
         assertEquals("conv-11", summary.getRecentTurns().get(0).getConversationId());
         assertEquals("conv-2", summary.getRecentTurns().get(9).getConversationId());
+    }
+
+    @Test
+    void shouldClassifyEachTurnIntoOneOutcomeBucket() {
+        MonitorService service = new MonitorService();
+
+        service.recordTurn(new ChatResponse("conv-success", "USER-001", "ok", List.of()));
+        service.recordTurn(new ChatResponse(
+                "conv-business",
+                "USER-001",
+                "not found",
+                List.of(new TraceEvent("tool_observed", 1, "business rejected", Map.of(
+                        "capability", "order.lookup",
+                        "success", false,
+                        "outcome", "BUSINESS_REJECTED",
+                        "errorCode", "ORDER_NOT_FOUND"
+                )))
+        ));
+        service.recordTurn(new ChatResponse(
+                "conv-technical",
+                "USER-001",
+                "fallback",
+                List.of(new TraceEvent("llm_failed", 1, "llm failed", Map.of()))
+        ));
+        service.recordTurn(new ChatResponse(
+                "conv-guardrail",
+                "USER-001",
+                "denied",
+                List.of(
+                        new TraceEvent("capability_denied", 1, "allowlist denied", Map.of(
+                                "capability", "return.apply"
+                        )),
+                        // 兼容期 Handler 还会产生 TECHNICAL_FAILURE ToolResult；Guardrail 必须优先。
+                        new TraceEvent("tool_observed", 1, "compatibility result", Map.of(
+                                "success", false,
+                                "outcome", "TECHNICAL_FAILURE",
+                                "errorCode", "CAPABILITY_NOT_ALLOWED"
+                        ))
+                )
+        ));
+        service.recordTurn(new ChatResponse(
+                "conv-cancelled",
+                "USER-001",
+                "cancelled",
+                List.of(new TraceEvent("workflow_completed", 1, "workflow terminal", Map.of(
+                        "status", "CANCELLED"
+                )))
+        ));
+
+        MonitorSummary summary = service.getSummary();
+        assertEquals(5, summary.getTotalTurns());
+        assertEquals(1, summary.getSuccessfulTurnCount());
+        assertEquals(1, summary.getBusinessRejectedTurnCount());
+        assertEquals(1, summary.getTechnicalFailureTurnCount());
+        assertEquals(1, summary.getGuardrailRejectedTurnCount());
+        assertEquals(1, summary.getUserCancelledTurnCount());
+        assertEquals(0.2, summary.getTurnSuccessRate());
+        assertEquals(TurnOutcome.USER_CANCELLED, summary.getRecentTurns().get(0).getOutcome());
+        assertEquals(TurnOutcome.GUARDRAIL_REJECTED, summary.getRecentTurns().get(1).getOutcome());
+        assertEquals("CAPABILITY_NOT_ALLOWED", summary.getRecentTurns().get(1).getErrorCode());
+        assertEquals(TurnOutcome.BUSINESS_REJECTED, summary.getRecentTurns().get(3).getOutcome());
+    }
+
+    @Test
+    void shouldRecordTechnicalFailureBeforeChatResponseExists() {
+        MonitorService service = new MonitorService();
+
+        service.recordFailedTurn(
+                "conv-exception",
+                "USER-001",
+                TurnOutcome.TECHNICAL_FAILURE,
+                "SESSION_VERSION_CONFLICT",
+                37
+        );
+
+        MonitorSummary summary = service.getSummary();
+        MonitorTurnSnapshot turn = summary.getRecentTurns().get(0);
+        assertEquals(1, summary.getTotalTurns());
+        assertEquals(1, summary.getTechnicalFailureTurnCount());
+        assertEquals(TurnOutcome.TECHNICAL_FAILURE, turn.getOutcome());
+        assertEquals("SESSION_VERSION_CONFLICT", turn.getErrorCode());
+        assertEquals(37, turn.getTotalDurationMs());
+        assertEquals(0, turn.getToolCalls());
     }
 
     @Test

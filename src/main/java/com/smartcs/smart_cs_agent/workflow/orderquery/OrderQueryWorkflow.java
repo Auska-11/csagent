@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.workflow.orderquery;
 
 import com.smartcs.smart_cs_agent.agent.action.AskUserAction;
 import com.smartcs.smart_cs_agent.agent.action.CapabilityAction;
+import com.smartcs.smart_cs_agent.agent.action.CancelWorkflowAction;
 import com.smartcs.smart_cs_agent.agent.action.FinalAnswerAction;
 import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
 import com.smartcs.smart_cs_agent.agent.context.CapabilityObservation;
@@ -123,7 +124,7 @@ public class OrderQueryWorkflow implements AgentWorkflow {
                     "订单查询 Workflow 已完成"
             );
             case CANCELLED -> WorkflowDecision.next(
-                    new FinalAnswerAction("本次订单查询已取消。"),
+                    new CancelWorkflowAction("本次订单查询已取消。"),
                     "订单查询 Workflow 已取消"
             );
             case FAILED -> WorkflowDecision.next(
@@ -262,7 +263,7 @@ public class OrderQueryWorkflow implements AgentWorkflow {
         if (interrupt.getType() == GlobalInterruptType.CANCEL) {
             state.transitionTo(OrderQueryStep.CANCELLED);
             return WorkflowDecision.next(
-                    new FinalAnswerAction("本次订单查询已取消。"),
+                    new CancelWorkflowAction("本次订单查询已取消。"),
                     interrupt.getReason()
             );
         }

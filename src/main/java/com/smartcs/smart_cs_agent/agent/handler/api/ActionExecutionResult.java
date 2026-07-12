@@ -31,6 +31,10 @@ public final class ActionExecutionResult {
         return new ActionExecutionResult(ActionFlow.COMPLETED, answer);
     }
 
+    public static ActionExecutionResult cancelled(String answer) {
+        return new ActionExecutionResult(ActionFlow.CANCELLED, answer);
+    }
+
     public static ActionExecutionResult handedOff(String answer) {
         return new ActionExecutionResult(ActionFlow.HANDED_OFF, answer);
     }

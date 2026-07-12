@@ -50,6 +50,11 @@ public class MonitorService {
     );
 
     private long totalTurns;
+    private long successfulTurnCount;
+    private long businessRejectedTurnCount;
+    private long technicalFailureTurnCount;
+    private long guardrailRejectedTurnCount;
+    private long userCancelledTurnCount;
     private long toolCallCount;
     private long failedToolCallCount;
     private long llmCallCount;
@@ -89,7 +94,16 @@ public class MonitorService {
      * 注意：这个方法用 synchronized，是因为 Spring 单例 Service 可能被多个请求同时调用。
      * 第一版数据量很小，用 synchronized 足够清晰；后续接真实流量时可以改成 AtomicLong 或指标系统。
      */
-    public synchronized void recordTurn(ChatResponse response) {
+    public void recordTurn(ChatResponse response) {
+        recordTurn(response, -1);
+    }
+
+    /**
+     * 记录成功生成 ChatResponse 的一轮请求，并优先使用 HTTP 边界测得的整轮耗时。
+     *
+     * <p>旧调用方没有整轮耗时时仍可调用单参数方法，此时回退到 Trace 中工具与 LLM 耗时之和。</p>
+     */
+    public synchronized void recordTurn(ChatResponse response, long turnDurationMs) {
         if (response == null) {
             return;
         }
@@ -98,8 +112,10 @@ public class MonitorService {
         for (TraceEvent event : response.getTrace()) {
             collectEvent(event, turn);
         }
+        TurnOutcomeClassifier.Assessment assessment = TurnOutcomeClassifier.classify(response.getTrace());
 
         totalTurns++;
+        recordTurnOutcome(assessment.outcome());
         toolCallCount += turn.toolCalls;
         failedToolCallCount += turn.failedToolCalls;
         llmCallCount += turn.llmCalls;
@@ -111,21 +127,54 @@ public class MonitorService {
         llmDurationSamples += turn.llmDurationSamples;
         lastUpdatedAt = System.currentTimeMillis();
 
-        recentTurns.addFirst(new MonitorTurnSnapshot(
+        long observedDurationMs = turnDurationMs >= 0
+                ? turnDurationMs
+                : turn.toolDurationMs + turn.llmDurationMs;
+        addRecentTurn(new MonitorTurnSnapshot(
                 response.getConversationId(),
                 response.getUserId(),
                 response.getTimestamp(),
+                assessment.outcome(),
+                assessment.errorCode(),
                 turn.toolCalls,
                 turn.failedToolCalls,
                 turn.llmCalls,
                 turn.llmFailures,
                 turn.handoffCount,
-                turn.toolDurationMs + turn.llmDurationMs
+                observedDurationMs
         ));
+    }
 
-        while (recentTurns.size() > RECENT_TURN_LIMIT) {
-            recentTurns.removeLast();
+    /**
+     * Agent 在生成 ChatResponse 之前抛异常时，仍记录一条可聚合的失败 Turn。
+     *
+     * <p>这里故意只接收稳定 errorCode，不接收异常 message 或堆栈，避免 Monitor API 暴露内部信息。</p>
+     */
+    public synchronized void recordFailedTurn(String conversationId,
+                                              String userId,
+                                              TurnOutcome outcome,
+                                              String errorCode,
+                                              long turnDurationMs) {
+        if (outcome == null || outcome == TurnOutcome.SUCCESS) {
+            throw new IllegalArgumentException("Failed turn outcome must not be SUCCESS");
         }
+
+        totalTurns++;
+        recordTurnOutcome(outcome);
+        lastUpdatedAt = System.currentTimeMillis();
+        addRecentTurn(new MonitorTurnSnapshot(
+                normalizeIdentifier(conversationId, "unknown-conversation"),
+                normalizeIdentifier(userId, "unknown-user"),
+                lastUpdatedAt,
+                outcome,
+                normalizeIdentifier(errorCode, "CHAT_TURN_EXECUTION_FAILED"),
+                0,
+                0,
+                0,
+                0,
+                0,
+                Math.max(0, turnDurationMs)
+        ));
     }
 
     /**
@@ -135,6 +184,7 @@ public class MonitorService {
      */
     public synchronized MonitorSummary getSummary() {
         long successfulToolCallCount = Math.max(0, toolCallCount - failedToolCallCount);
+        double turnSuccessRate = rate(successfulTurnCount, totalTurns);
         double toolSuccessRate = rate(successfulToolCallCount, toolCallCount);
         double llmFailureRate = rate(llmFailureCount, llmCallCount);
         double helpfulFeedbackRate = rate(helpfulFeedbackCount, feedbackCount);
@@ -158,6 +208,12 @@ public class MonitorService {
 
         return new MonitorSummary(
                 totalTurns,
+                successfulTurnCount,
+                businessRejectedTurnCount,
+                technicalFailureTurnCount,
+                guardrailRejectedTurnCount,
+                userCancelledTurnCount,
+                turnSuccessRate,
                 toolCallCount,
                 successfulToolCallCount,
                 failedToolCallCount,
@@ -184,6 +240,27 @@ public class MonitorService {
                 candidates,
                 alerts
         );
+    }
+
+    private void recordTurnOutcome(TurnOutcome outcome) {
+        switch (outcome) {
+            case SUCCESS -> successfulTurnCount++;
+            case BUSINESS_REJECTED -> businessRejectedTurnCount++;
+            case TECHNICAL_FAILURE -> technicalFailureTurnCount++;
+            case GUARDRAIL_REJECTED -> guardrailRejectedTurnCount++;
+            case USER_CANCELLED -> userCancelledTurnCount++;
+        }
+    }
+
+    private void addRecentTurn(MonitorTurnSnapshot snapshot) {
+        recentTurns.addFirst(snapshot);
+        while (recentTurns.size() > RECENT_TURN_LIMIT) {
+            recentTurns.removeLast();
+        }
+    }
+
+    private String normalizeIdentifier(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value.trim();
     }
 
     /**

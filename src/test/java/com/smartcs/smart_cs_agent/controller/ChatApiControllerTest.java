@@ -11,6 +11,7 @@ import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.memory.UserMemorySnapshot;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
+import com.smartcs.smart_cs_agent.monitor.TurnOutcome;
 import com.smartcs.smart_cs_agent.security.AuthenticationException;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -19,11 +20,16 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -52,7 +58,7 @@ class ChatApiControllerTest {
 
         // 消息为空时不能进入 Agent，否则会浪费模型调用，也会污染会话状态。
         verify(agent, never()).chatWithTrace(any(ChatRequest.class));
-        verify(monitorService, never()).recordTurn(any(ChatResponse.class));
+        verifyNoInteractions(monitorService);
     }
 
     @Test
@@ -68,7 +74,7 @@ class ChatApiControllerTest {
 
         assertEquals("Message cannot be empty", exception.getMessage());
         verify(agent, never()).chatWithTrace(any(ChatRequest.class));
-        verify(monitorService, never()).recordTurn(any(ChatResponse.class));
+        verifyNoInteractions(monitorService);
     }
 
     @Test
@@ -91,11 +97,83 @@ class ChatApiControllerTest {
 
         ArgumentCaptor<ChatRequest> captor = ArgumentCaptor.forClass(ChatRequest.class);
         verify(agent).chatWithTrace(captor.capture());
-        verify(monitorService).recordTurn(response);
+        verify(monitorService).recordTurn(eq(response), anyLong());
         assertEquals("conv-1", captor.getValue().getConversationId());
         assertEquals("USER-001", captor.getValue().getUserId());
         assertEquals(ConversationKey.DEFAULT_TENANT_ID, captor.getValue().getTenantId());
         assertEquals("帮我查订单 ORD-001", captor.getValue().getMessage());
+    }
+
+    @Test
+    void shouldRecordTechnicalTurnAndRethrowWhenAgentFailsBeforeResponse() {
+        CustomerServiceAgent agent = mock(CustomerServiceAgent.class);
+        MonitorService monitorService = mock(MonitorService.class);
+        when(agent.chatWithTrace(any(ChatRequest.class)))
+                .thenThrow(new IllegalStateException("database password=must-not-enter-monitor"));
+        ChatApiController controller = new ChatApiController(agent, monitorService, new ConversationStore());
+
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class,
+                () -> controller.sendMessage(
+                        new ChatApiRequest("查询订单", "USER-001", "conv-agent-failed"),
+                        customer("USER-001")
+                )
+        );
+
+        assertEquals("database password=must-not-enter-monitor", error.getMessage());
+        verify(monitorService).recordFailedTurn(
+                eq("conv-agent-failed"),
+                eq("USER-001"),
+                eq(TurnOutcome.TECHNICAL_FAILURE),
+                eq("CHAT_TURN_EXECUTION_FAILED"),
+                anyLong()
+        );
+        verify(monitorService, never()).recordTurn(any(ChatResponse.class), anyLong());
+    }
+
+    @Test
+    void shouldKeepSuccessfulChatResponseWhenMonitorRecordingFails() {
+        CustomerServiceAgent agent = mock(CustomerServiceAgent.class);
+        MonitorService monitorService = mock(MonitorService.class);
+        ChatResponse expected = new ChatResponse("conv-monitor-down", "USER-001", "ok", null);
+        when(agent.chatWithTrace(any(ChatRequest.class))).thenReturn(expected);
+        doThrow(new IllegalStateException("metrics backend unavailable"))
+                .when(monitorService).recordTurn(eq(expected), anyLong());
+        ChatApiController controller = new ChatApiController(agent, monitorService, new ConversationStore());
+
+        ChatResponse actual = controller.sendMessage(
+                new ChatApiRequest("你好", "USER-001", "conv-monitor-down"),
+                customer("USER-001")
+        );
+
+        assertSame(expected, actual);
+    }
+
+    @Test
+    void shouldKeepOriginalAgentExceptionWhenFailedTurnRecordingAlsoFails() {
+        CustomerServiceAgent agent = mock(CustomerServiceAgent.class);
+        MonitorService monitorService = mock(MonitorService.class);
+        IllegalStateException agentFailure = new IllegalStateException("original agent failure");
+        when(agent.chatWithTrace(any(ChatRequest.class))).thenThrow(agentFailure);
+        doThrow(new IllegalStateException("metrics backend unavailable"))
+                .when(monitorService).recordFailedTurn(
+                        any(),
+                        any(),
+                        any(TurnOutcome.class),
+                        any(),
+                        anyLong()
+                );
+        ChatApiController controller = new ChatApiController(agent, monitorService, new ConversationStore());
+
+        IllegalStateException actual = assertThrows(
+                IllegalStateException.class,
+                () -> controller.sendMessage(
+                        new ChatApiRequest("触发异常", "USER-001", "conv-monitor-failed"),
+                        customer("USER-001")
+                )
+        );
+
+        assertSame(agentFailure, actual);
     }
 
     @Test
@@ -133,7 +211,7 @@ class ChatApiControllerTest {
 
         assertEquals("AUTHENTICATION_FAILED", error.getErrorCode());
         verify(agent, never()).chatWithTrace(any(ChatRequest.class));
-        verify(monitorService, never()).recordTurn(any(ChatResponse.class));
+        verifyNoInteractions(monitorService);
     }
 
     @Test

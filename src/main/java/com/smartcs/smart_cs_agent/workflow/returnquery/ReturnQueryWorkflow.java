@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.workflow.returnquery;
 
 import com.smartcs.smart_cs_agent.agent.action.AskUserAction;
 import com.smartcs.smart_cs_agent.agent.action.CapabilityAction;
+import com.smartcs.smart_cs_agent.agent.action.CancelWorkflowAction;
 import com.smartcs.smart_cs_agent.agent.action.FinalAnswerAction;
 import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
 import com.smartcs.smart_cs_agent.agent.context.CapabilityObservation;
@@ -105,7 +106,7 @@ public class ReturnQueryWorkflow implements AgentWorkflow {
                     "退货查询 Workflow 已完成"
             );
             case CANCELLED -> WorkflowDecision.next(
-                    new FinalAnswerAction("本次退货进度查询已取消。"),
+                    new CancelWorkflowAction("本次退货进度查询已取消。"),
                     "退货查询 Workflow 已取消"
             );
             case FAILED -> technicalFailure("退货查询 Workflow 已失败");
@@ -194,7 +195,7 @@ public class ReturnQueryWorkflow implements AgentWorkflow {
         if (interrupt.getType() == GlobalInterruptType.CANCEL) {
             state.transitionTo(ReturnQueryStep.CANCELLED);
             return WorkflowDecision.next(
-                    new FinalAnswerAction("本次退货进度查询已取消。"),
+                    new CancelWorkflowAction("本次退货进度查询已取消。"),
                     interrupt.getReason()
             );
         }

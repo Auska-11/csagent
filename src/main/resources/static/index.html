@@ -1788,6 +1788,11 @@
         // Monitor 面板展示的是“在线表现指标”，帮助我们判断 Agent 是否稳定，而不是评测集分数。
         const metrics = [
             ['Turns', summary.totalTurns ?? 0],
+            ['Turn Success', formatPercent(summary.turnSuccessRate || 0)],
+            ['Business Reject', summary.businessRejectedTurnCount ?? 0],
+            ['Technical Fail', summary.technicalFailureTurnCount ?? 0],
+            ['Guardrail', summary.guardrailRejectedTurnCount ?? 0],
+            ['Cancelled', summary.userCancelledTurnCount ?? 0],
             ['Tool Success', formatPercent(summary.toolSuccessRate || 0)],
             ['LLM Fail', formatPercent(summary.llmFailureRate || 0)],
             ['Handoff', summary.handoffCount ?? 0],
@@ -1891,14 +1896,17 @@
                     ? new Date(turn.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})
                     : '-';
             const failed = Number(turn.failedToolCalls || 0) + Number(turn.llmFailures || 0);
-            const badge = failed > 0 ? 'error' : '';
+            // 兼容旧 Monitor 数据：没有 outcome 时继续按工具/LLM 失败数推断。
+            const outcome = turn.outcome || (failed > 0 ? 'TECHNICAL_FAILURE' : 'SUCCESS');
+            const badge = outcome === 'SUCCESS' ? 'tool' : (outcome === 'TECHNICAL_FAILURE' ? 'error' : 'warn');
+            const errorCode = turn.errorCode ? ` · Code: ${escapeHtml(turn.errorCode)}` : '';
             return `
                 <div class="tool-row">
                     <div class="row-head">
                         <div class="row-title">${escapeHtml(turn.conversationId || '-')}</div>
-                        <span class="badge ${badge}">${escapeHtml(failed > 0 ? 'Check' : 'OK')}</span>
+                        <span class="badge ${badge}">${escapeHtml(outcome)}</span>
                     </div>
-                    <div class="row-subtitle">${escapeHtml(turn.userId || '-')} · ${escapeHtml(time)}</div>
+                    <div class="row-subtitle">${escapeHtml(turn.userId || '-')} · ${escapeHtml(time)}${errorCode}</div>
                     <div class="tool-contract">
                         Tool: ${escapeHtml(turn.toolCalls ?? 0)}
                         · Failed Tool: ${escapeHtml(turn.failedToolCalls ?? 0)}

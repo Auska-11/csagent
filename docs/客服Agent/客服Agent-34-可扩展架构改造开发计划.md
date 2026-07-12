@@ -4,7 +4,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成统一 Trace 脱敏等八批收口，指标与故障测试仍在继续 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成统一 Turn 结果分类等九批收口，故障与恢复测试仍在继续 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
@@ -827,8 +827,8 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 - [x] Spring Security Resource Server 为 Chat、Memory、Monitor 和 MCP 接口提供统一 JWT Principal。
 - [x] 管理类接口已增加 ADMIN / CUSTOMER / MCP_CLIENT 角色权限矩阵。
 - [x] Trace 默认不返回原始 Prompt、完整手机号、用户消息全文和工具敏感参数。
-- [ ] Monitor 区分业务拒绝、技术失败、Guardrail 拒绝和用户取消。
-- [ ] 异常路径也记录 Turn 失败指标。
+- [x] Monitor 区分成功、业务拒绝、技术失败、Guardrail 拒绝和用户取消。
+- [x] Agent 在生成 ChatResponse 前抛异常时也记录 Turn 失败指标。
 - [x] 健康检查区分 liveness 和 readiness；JDBC 核心表不可读时 readiness 返回 503。
 - [ ] 增加并发、重启恢复、超时、熔断和故障注入测试。
 
@@ -938,12 +938,36 @@ Map 条目数、集合元素数和递归深度。生成结果是不可变深拷�
 本批完成的是公开 Trace 的统一安全边界，不等于完整 DLP。应用日志、MCP 服务端审计、历史数据库中的
 旧 Trace、最近消息持久化，以及真正发送给第三方 LLM/Provider 的数据最小化仍需后续单独治理。
 
+### Phase 8 第九批进度（2026-07-12）
+
+已新增统一 `TurnOutcome` 和只消费结构化 Trace 的 `TurnOutcomeClassifier`。每轮请求只进入
+`SUCCESS`、`BUSINESS_REJECTED`、`TECHNICAL_FAILURE`、`GUARDRAIL_REJECTED`、`USER_CANCELLED`
+五个互斥桶之一，优先级为 Guardrail > Technical > Cancelled > Business > Success。迁移期旧
+`CapabilityOutcome` 仍把部分安全拒绝表示为 `BUSINESS_REJECTED`，Monitor 通过通用安全错误码词义识别，
+没有加入订单、退货等客服业务特判。
+
+`ChatApiController` 现在从进入 Agent 起测量整轮耗时。Agent 在构造 `ChatResponse` 前抛出的认证、授权、
+Session 冲突和其他运行时异常会先记录稳定 `errorCode`，再原样抛给既有异常处理器，因此 HTTP 状态和
+安全错误响应不变；异常 message 和堆栈不会进入 Monitor。Monitor Summary、最近 Turn 和前端面板已展示
+五类计数、Turn 成功率、结果和错误码。
+
+真实多轮测试发现，原有 Workflow 只把私有步骤写成 `CANCELLED`，Runtime 最终仍会记录 `COMPLETED`。
+本批新增通用 `CancelWorkflowAction` 与 `CANCELLED` ActionFlow，由 Runtime 统一写入 Workflow 终态；
+订单、退货、商品、政策和用户资料 Workflow 不再依赖回复文案表达取消。成功转人工继续记录
+`HANDED_OFF`，不会误算为用户取消。详细设计和测试矩阵见
+`客服Agent-50-Monitor统一Turn结果与异常指标说明.md`。
+
+本批仍保留三个明确边界：Monitor 累计值是单进程内存指标，尚未接 Micrometer/Prometheus；Spring
+Security Filter 和 Bean Validation 在进入 Agent 前拒绝的请求不计作 Agent Turn；跨实例聚合、指标持久化
+和数据库/网络故障注入仍属于后续批次。提交前默认测试套件共 `355` 项，全部通过。
+
 ### 验收标准
 
 - 不能通过猜测 conversationId 读取或清除其他用户会话。
 - 并发调用不会重复执行副作用 Capability。
 - 服务重启后可以恢复等待用户或等待确认的 Workflow。
-- Monitor 指标能区分业务失败和技术失败。
+- Monitor 指标能区分成功、业务拒绝、技术失败、Guardrail 拒绝和用户取消。
+- Agent 异常路径不会丢失 Turn 指标，也不会把异常原文暴露给 Monitor API。
 - 公开 Trace 通过敏感字段与容量边界检查。
 - 日志和 MCP 审计通过敏感字段检查。
 
@@ -1147,7 +1171,7 @@ smartcs:
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 340 个测试）。
+- [x] 旧测试全部保留并通过（当前默认套件共 355 个测试）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。

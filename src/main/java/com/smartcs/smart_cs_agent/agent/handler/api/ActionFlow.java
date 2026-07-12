@@ -11,6 +11,9 @@ public enum ActionFlow {
     /** 当前 Workflow 正常结束。 */
     COMPLETED,
 
+    /** 用户主动取消当前 Workflow；这是正常终态，但不能计入成功完成。 */
+    CANCELLED,
+
     /** 已成功转交人工，当前 Workflow 结束。 */
     HANDED_OFF
 }

@@ -48,6 +48,8 @@ class MonitorControllerTest {
 
         MonitorSummary summary = controller.getSummary();
         assertEquals(1, summary.getTotalTurns());
+        assertEquals(1, summary.getSuccessfulTurnCount());
+        assertEquals(1.0, summary.getTurnSuccessRate());
         assertEquals(1, summary.getToolCallCount());
         assertEquals(1, summary.getSuccessfulToolCallCount());
     }

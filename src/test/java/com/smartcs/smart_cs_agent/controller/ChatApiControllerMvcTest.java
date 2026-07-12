@@ -9,6 +9,7 @@ import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.agent.context.TraceEvent;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
+import com.smartcs.smart_cs_agent.monitor.TurnOutcome;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.security.HttpSecurityConfiguration;
 import com.smartcs.smart_cs_agent.security.SecurityErrorWriter;
@@ -34,8 +35,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -87,7 +91,7 @@ class ChatApiControllerMvcTest {
 
         // 校验失败时，请求不能进入 Agent 主链路。
         verify(agent, never()).chatWithTrace(any(ChatRequest.class));
-        verify(monitorService, never()).recordTurn(any(ChatResponse.class));
+        verifyNoInteractions(monitorService);
     }
 
     @Test
@@ -113,7 +117,7 @@ class ChatApiControllerMvcTest {
 
         ArgumentCaptor<ChatRequest> captor = ArgumentCaptor.forClass(ChatRequest.class);
         verify(agent).chatWithTrace(captor.capture());
-        verify(monitorService).recordTurn(any(ChatResponse.class));
+        verify(monitorService).recordTurn(any(ChatResponse.class), anyLong());
         assertEquals("conv-1", captor.getValue().getConversationId());
         assertEquals("USER-001", captor.getValue().getUserId());
         assertEquals("帮我查订单 ORD-001", captor.getValue().getMessage());
@@ -158,6 +162,35 @@ class ChatApiControllerMvcTest {
     }
 
     @Test
+    void shouldRecordFailedTurnAndKeepSafeHttpErrorWhenAgentThrows() throws Exception {
+        when(agent.chatWithTrace(any(ChatRequest.class)))
+                .thenThrow(new IllegalStateException("database password=must-not-reach-http"));
+
+        mockMvc.perform(post("/api/chat/send")
+                        .with(customer("USER-001"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "message": "触发异常路径",
+                                  "userId": "USER-001",
+                                  "conversationId": "conv-http-failed"
+                                }
+                                """))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.errorCode").value("INTERNAL_ERROR"))
+                .andExpect(jsonPath("$.message").value("Internal server error"));
+
+        verify(monitorService).recordFailedTurn(
+                eq("conv-http-failed"),
+                eq("USER-001"),
+                eq(TurnOutcome.TECHNICAL_FAILURE),
+                eq("CHAT_TURN_EXECUTION_FAILED"),
+                anyLong()
+        );
+        verify(monitorService, never()).recordTurn(any(ChatResponse.class), anyLong());
+    }
+
+    @Test
     void shouldRejectTokenlessClaimBeforeEnteringAgent() throws Exception {
         mockMvc.perform(post("/api/chat/send")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -172,7 +205,7 @@ class ChatApiControllerMvcTest {
                 .andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_REQUIRED"));
 
         verify(agent, never()).chatWithTrace(any(ChatRequest.class));
-        verify(monitorService, never()).recordTurn(any(ChatResponse.class));
+        verifyNoInteractions(monitorService);
     }
 
     @Test

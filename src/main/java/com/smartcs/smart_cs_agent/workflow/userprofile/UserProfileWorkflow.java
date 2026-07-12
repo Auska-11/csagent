@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.workflow.userprofile;
 
 import com.smartcs.smart_cs_agent.agent.action.AskUserAction;
 import com.smartcs.smart_cs_agent.agent.action.CapabilityAction;
+import com.smartcs.smart_cs_agent.agent.action.CancelWorkflowAction;
 import com.smartcs.smart_cs_agent.agent.action.FinalAnswerAction;
 import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
 import com.smartcs.smart_cs_agent.agent.context.CapabilityObservation;
@@ -116,7 +117,7 @@ public class UserProfileWorkflow implements AgentWorkflow {
                     "用户资料 Workflow 已完成"
             );
             case CANCELLED -> WorkflowDecision.next(
-                    new FinalAnswerAction("本次用户资料处理已取消。"),
+                    new CancelWorkflowAction("本次用户资料处理已取消。"),
                     "用户资料 Workflow 已取消"
             );
             case FAILED -> technicalFailure("用户资料 Workflow 已失败");
@@ -243,7 +244,7 @@ public class UserProfileWorkflow implements AgentWorkflow {
         if (interrupt.getType() == GlobalInterruptType.CANCEL) {
             state.transitionTo(UserProfileStep.CANCELLED);
             return WorkflowDecision.next(
-                    new FinalAnswerAction("本次用户资料处理已取消。"),
+                    new CancelWorkflowAction("本次用户资料处理已取消。"),
                     interrupt.getReason()
             );
         }

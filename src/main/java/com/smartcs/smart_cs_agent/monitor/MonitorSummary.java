@@ -17,6 +17,12 @@ import java.util.Map;
 public class MonitorSummary {
 
     private final long totalTurns;
+    private final long successfulTurnCount;
+    private final long businessRejectedTurnCount;
+    private final long technicalFailureTurnCount;
+    private final long guardrailRejectedTurnCount;
+    private final long userCancelledTurnCount;
+    private final double turnSuccessRate;
     private final long toolCallCount;
     private final long successfulToolCallCount;
     private final long failedToolCallCount;
@@ -55,6 +61,12 @@ public class MonitorSummary {
     private final List<MonitorAlert> alerts;
 
     public MonitorSummary(long totalTurns,
+                          long successfulTurnCount,
+                          long businessRejectedTurnCount,
+                          long technicalFailureTurnCount,
+                          long guardrailRejectedTurnCount,
+                          long userCancelledTurnCount,
+                          double turnSuccessRate,
                           long toolCallCount,
                           long successfulToolCallCount,
                           long failedToolCallCount,
@@ -81,6 +93,12 @@ public class MonitorSummary {
                           List<FeedbackEvalCandidate> recentEvalCandidates,
                           List<MonitorAlert> alerts) {
         this.totalTurns = totalTurns;
+        this.successfulTurnCount = successfulTurnCount;
+        this.businessRejectedTurnCount = businessRejectedTurnCount;
+        this.technicalFailureTurnCount = technicalFailureTurnCount;
+        this.guardrailRejectedTurnCount = guardrailRejectedTurnCount;
+        this.userCancelledTurnCount = userCancelledTurnCount;
+        this.turnSuccessRate = turnSuccessRate;
         this.toolCallCount = toolCallCount;
         this.successfulToolCallCount = successfulToolCallCount;
         this.failedToolCallCount = failedToolCallCount;
@@ -110,6 +128,30 @@ public class MonitorSummary {
 
     public long getTotalTurns() {
         return totalTurns;
+    }
+
+    public long getSuccessfulTurnCount() {
+        return successfulTurnCount;
+    }
+
+    public long getBusinessRejectedTurnCount() {
+        return businessRejectedTurnCount;
+    }
+
+    public long getTechnicalFailureTurnCount() {
+        return technicalFailureTurnCount;
+    }
+
+    public long getGuardrailRejectedTurnCount() {
+        return guardrailRejectedTurnCount;
+    }
+
+    public long getUserCancelledTurnCount() {
+        return userCancelledTurnCount;
+    }
+
+    public double getTurnSuccessRate() {
+        return turnSuccessRate;
     }
 
     public long getToolCallCount() {

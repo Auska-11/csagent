@@ -3,6 +3,7 @@ package com.smartcs.smart_cs_agent.workflow.returnapply;
 import com.smartcs.smart_cs_agent.agent.action.AgentAction;
 import com.smartcs.smart_cs_agent.agent.action.AskUserAction;
 import com.smartcs.smart_cs_agent.agent.action.CapabilityAction;
+import com.smartcs.smart_cs_agent.agent.action.CancelWorkflowAction;
 import com.smartcs.smart_cs_agent.agent.action.ConfirmAction;
 import com.smartcs.smart_cs_agent.agent.action.FinalAnswerAction;
 import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
@@ -123,7 +124,7 @@ public class ReturnApplyWorkflow implements AgentWorkflow {
                     "Workflow 已完成"
             );
             case CANCELLED -> WorkflowDecision.next(
-                    new FinalAnswerAction("本次退货申请已取消，没有提交任何退货操作。"),
+                    new CancelWorkflowAction("本次退货申请已取消，没有提交任何退货操作。"),
                     "Workflow 已取消"
             );
         };
@@ -328,16 +329,14 @@ public class ReturnApplyWorkflow implements AgentWorkflow {
         GlobalInterruptDecision interrupt = interruptPolicy.evaluate(context.getMessage());
         if (interrupt.getType() == GlobalInterruptType.CANCEL) {
             state.transitionTo(ReturnApplyStep.CANCELLED);
-            context.getState().markWorkflowCancelled();
             return WorkflowDecision.next(
-                    new FinalAnswerAction("本次退货申请已取消，没有提交任何退货操作。"),
+                    new CancelWorkflowAction("本次退货申请已取消，没有提交任何退货操作。"),
                     interrupt.getReason()
             );
         }
         if (interrupt.getType() == GlobalInterruptType.HANDOFF) {
             Map<String, Object> handoffContext = new LinkedHashMap<>(state.snapshot());
             state.transitionTo(ReturnApplyStep.CANCELLED);
-            context.getState().markWorkflowCancelled();
             return WorkflowDecision.next(
                     new HandoffAction(
                             interrupt.getHandoffReasonCode(),

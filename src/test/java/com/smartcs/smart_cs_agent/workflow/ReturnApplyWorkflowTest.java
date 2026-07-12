@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.workflow;
 
 import com.smartcs.smart_cs_agent.agent.action.AskUserAction;
 import com.smartcs.smart_cs_agent.agent.action.CapabilityAction;
+import com.smartcs.smart_cs_agent.agent.action.CancelWorkflowAction;
 import com.smartcs.smart_cs_agent.agent.action.ConfirmAction;
 import com.smartcs.smart_cs_agent.agent.action.FinalAnswerAction;
 import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
@@ -128,9 +129,11 @@ class ReturnApplyWorkflowTest {
 
         WorkflowDecision decision = workflow.nextAction(turn(state, "取消", "USER-002"));
 
-        FinalAnswerAction answer = assertInstanceOf(FinalAnswerAction.class, decision.getAction());
+        CancelWorkflowAction answer = assertInstanceOf(CancelWorkflowAction.class, decision.getAction());
         assertTrue(answer.getAnswer().contains("没有提交"));
-        assertEquals(WorkflowStatus.CANCELLED, state.getWorkflowStatus());
+        assertEquals(ReturnApplyStep.CANCELLED.name(), state.getWorkflowState(ReturnApplyWorkflow.ID, "step"));
+        // 单测只执行了 Workflow 决策；CANCELLED 生命周期状态要等 Handler + Runtime 执行 Action 后写入。
+        assertEquals(WorkflowStatus.ACTIVE, state.getWorkflowStatus());
     }
 
     @Test
@@ -175,7 +178,9 @@ class ReturnApplyWorkflowTest {
         WorkflowDecision decision = workflow.nextAction(turn(state, "我要人工", "USER-002"));
 
         assertInstanceOf(HandoffAction.class, decision.getAction());
-        assertEquals(WorkflowStatus.CANCELLED, state.getWorkflowStatus());
+        assertEquals(ReturnApplyStep.CANCELLED.name(), state.getWorkflowState(ReturnApplyWorkflow.ID, "step"));
+        // HandoffAction 成功执行后，Runtime 会把全局终态写成 HANDED_OFF，而不是 USER_CANCELLED。
+        assertEquals(WorkflowStatus.ACTIVE, state.getWorkflowStatus());
     }
 
     private ConversationState stateWaitingForConfirmation() {

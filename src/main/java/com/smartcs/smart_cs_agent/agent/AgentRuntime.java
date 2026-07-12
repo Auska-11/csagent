@@ -241,6 +241,12 @@ public class AgentRuntime {
                     "workflow", workflow.descriptor().getId(),
                     "status", workflowStatus(state)
             ));
+        } else if (result.getFlow() == ActionFlow.CANCELLED) {
+            // CancelWorkflowAction 用结构化 flow 表达“用户主动取消”。
+            // Runtime 只处理通用生命周期，不需要识别某个 Workflow 的内部 CANCELLED 枚举或回复文案。
+            state.clearTaskProgress();
+            state.markWorkflowCancelled();
+            recordWorkflowTerminal(context, workflow, state);
         } else if (result.getFlow() == ActionFlow.HANDED_OFF) {
             state.clearTaskProgress();
             state.markWorkflowHandedOff();
