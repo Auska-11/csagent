@@ -64,8 +64,9 @@ SEARCHING
 
 这样可以把迁移拆成两个可回滚步骤：
 
-1. 本批先迁移商品查询和偏好读取。
-2. 后续 `UserProfileWorkflow` 再接管偏好写入和用户画像管理。
+1. 商品咨询批次先迁移商品查询和偏好读取。
+2. `UserProfileWorkflow` 现已接管偏好写入和查看，详见
+   [`客服Agent-39-用户资料Workflow迁移说明.md`](客服Agent-39-用户资料Workflow迁移说明.md)。
 
 ## 5. 稳定商品契约
 
@@ -121,7 +122,7 @@ Spring 会把全部 Override 作为列表注入 `ToolRegistryCapabilityProvider`
 | `蓝牙耳机保修多久` | `WarrantyQueryWorkflow` |
 | `我想退蓝牙耳机` | `ReturnApplyWorkflow` |
 | `订单里的商品到哪了` | `OrderQueryWorkflow` |
-| `我喜欢蓝牙耳机` | Legacy 用户记忆写入，后续由 `UserProfileWorkflow` 接管 |
+| `我喜欢蓝牙耳机` | `UserProfileWorkflow` 写入认证用户长期偏好 |
 | `我要投诉耳机质量` | Legacy 人工升级，后续由 `EscalationWorkflow` 接管 |
 
 这类“主动 noMatch”是职责边界的一部分，不是漏识别。
@@ -131,7 +132,7 @@ Spring 会把全部 Override 作为列表注入 `ToolRegistryCapabilityProvider`
 | 测试 | 主要验证内容 |
 | --- | --- |
 | `ProductAdvisoryWorkflowTest` | 询价、跨轮追问、目录推荐、偏好读取、空结果和人工打断 |
-| `ProductAdvisoryWorkflowIntegrationTest` | 真实 Agent、Router、长期记忆、Gateway 和 Repository 完整链路 |
+| `ProductAdvisoryWorkflowIntegrationTest` | 真实 Agent、Router、用户资料偏好写入、Gateway 和 Repository 完整链路 |
 | `LocalProductCatalogCapabilityProviderTest` | 两个商品 Capability 的元数据、搜索、详情和无结果契约 |
 | `ToolRegistryCapabilityProviderTest` | Override 集合通用过滤与旧商品 DTO 转稳定契约 |
 | `McpCapabilityProviderTest` | 远程商品 JSON 恢复为同一稳定契约 |

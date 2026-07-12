@@ -12,6 +12,7 @@ import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSearchResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSummary;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ReturnStatusSummary;
+import com.smartcs.smart_cs_agent.capability.api.contracts.UserProfileSummary;
 import com.smartcs.smart_cs_agent.capability.core.CapabilityProviderProperties;
 import org.junit.jupiter.api.Test;
 
@@ -200,6 +201,27 @@ class McpCapabilityProviderTest {
         assertEquals("蓝牙耳机 Pro Max", products.getProducts().get(0).getName());
         assertEquals("PROD-001", product.getProductId());
         assertEquals(599, product.getPrice());
+    }
+
+    @Test
+    void shouldRestoreAndMaskUserProfileContractFromRemoteJsonMap() {
+        FakeTransport transport = new FakeTransport(List.of(readOnlyDefinition("user.lookup")));
+        transport.invokeData = Map.of(
+                "user_id", "USER-001",
+                "name", "张三",
+                "phone", "13812341234"
+        );
+
+        CapabilityResult<?> result = provider("mcp-remote", transport).invoke(
+                new CapabilityCall("user.lookup", Map.of()),
+                authenticatedContext()
+        );
+
+        UserProfileSummary profile = (UserProfileSummary) result.getData();
+        assertTrue(result.isSuccess());
+        assertEquals("USER-001", profile.getUserId());
+        assertEquals("张三", profile.getName());
+        assertEquals("138****1234", profile.getPhoneMasked());
     }
 
     @Test

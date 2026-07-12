@@ -11,6 +11,7 @@ import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSearchResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSummary;
+import com.smartcs.smart_cs_agent.capability.api.contracts.UserProfileSummary;
 import com.smartcs.smart_cs_agent.tools.ToolCall;
 import com.smartcs.smart_cs_agent.tools.ToolDefinition;
 import com.smartcs.smart_cs_agent.tools.ToolRegistry;
@@ -225,8 +226,22 @@ public class ToolRegistryCapabilityProvider implements CapabilityProvider {
         if (data instanceof ReturnToolData returnData && !returnData.isFound()) {
             return businessRejected(capabilityId, "RETURN_NOT_FOUND", result);
         }
-        if (data instanceof UserToolData user && !user.isFound()) {
-            return businessRejected(capabilityId, "USER_NOT_FOUND", result);
+        if (data instanceof UserToolData user) {
+            if (!user.isFound()) {
+                return CapabilityResult.businessRejected(
+                        capabilityId,
+                        PROVIDER_ID,
+                        "USER_NOT_FOUND",
+                        result.getMessage(),
+                        null
+                );
+            }
+            return CapabilityResult.success(
+                    capabilityId,
+                    PROVIDER_ID,
+                    result.getMessage(),
+                    new UserProfileSummary(user.getUserId(), user.getName(), user.getPhone())
+            );
         }
         return CapabilityResult.success(capabilityId, PROVIDER_ID, result.getMessage(), data);
     }

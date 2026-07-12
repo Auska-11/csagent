@@ -1,0 +1,19 @@
+# 用户资料与长期偏好 Agent Skill Package。
+id: user-profile
+version: 1.0.0
+description: 查询当前认证用户资料，并管理长期商品偏好
+workflow: user_profile
+priority: 168
+triggers:
+  - 查看我的个人信息
+  - 我喜欢蓝牙耳机
+  - 查看我的商品偏好
+allowed_capabilities:
+  - user.lookup
+  - handoff.request
+risk_level: mixed
+confirmation_policy: authenticated-profile-only
+prompt: SKILL.md
+references:
+  - path: references/privacy-guidance.md
+    always: true

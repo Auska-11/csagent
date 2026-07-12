@@ -10,11 +10,13 @@ import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSearchResult;
+import com.smartcs.smart_cs_agent.capability.api.contracts.UserProfileSummary;
 import com.smartcs.smart_cs_agent.capability.local.LegacyCapabilityOverride;
 import com.smartcs.smart_cs_agent.capability.local.LocalReturnLookupCapabilityProvider;
 import com.smartcs.smart_cs_agent.capability.local.ToolRegistryCapabilityProvider;
 import com.smartcs.smart_cs_agent.model.Order;
 import com.smartcs.smart_cs_agent.model.Product;
+import com.smartcs.smart_cs_agent.model.User;
 import com.smartcs.smart_cs_agent.tools.OrderToolData;
 import com.smartcs.smart_cs_agent.tools.KnowledgeSearchResult;
 import com.smartcs.smart_cs_agent.tools.ProductItemData;
@@ -24,6 +26,7 @@ import com.smartcs.smart_cs_agent.tools.ToolDefinition;
 import com.smartcs.smart_cs_agent.tools.ToolRegistry;
 import com.smartcs.smart_cs_agent.tools.ToolResult;
 import com.smartcs.smart_cs_agent.tools.UserOrdersToolData;
+import com.smartcs.smart_cs_agent.tools.UserToolData;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -71,18 +74,20 @@ class ToolRegistryCapabilityProviderTest {
                 new ToolDefinition("return_query", "查询退货", Map.of(), List.of()),
                 new ToolDefinition("product_search", "搜索商品", Map.of(), List.of()),
                 new ToolDefinition("product_info", "商品详情", Map.of(), List.of()),
-                new ToolDefinition("user_lookup", "查询用户", Map.of(), List.of())
+                new ToolDefinition("user_lookup", "查询用户", Map.of(), List.of()),
+                new ToolDefinition("knowledge_search", "查询知识", Map.of(), List.of())
         ));
         LegacyCapabilityOverride returns = () -> Set.of("return.apply", "return.lookup");
         LegacyCapabilityOverride products = () -> Set.of("product.search", "product.lookup");
+        LegacyCapabilityOverride users = () -> Set.of("user.lookup");
 
         ToolRegistryCapabilityProvider provider = new ToolRegistryCapabilityProvider(
                 toolRegistry,
-                List.of(returns, products)
+                List.of(returns, products, users)
         );
 
         assertEquals(
-                List.of("user.lookup"),
+                List.of("knowledge.search"),
                 provider.definitions().stream().map(CapabilityDefinition::getId).toList()
         );
     }
@@ -199,6 +204,34 @@ class ToolRegistryCapabilityProviderTest {
         assertEquals(1, products.getCount());
         assertEquals("PROD-001", products.getProducts().get(0).getProductId());
         assertEquals(599, products.getProducts().get(0).getPrice());
+    }
+
+    @Test
+    void shouldMapLegacyUserDataToMaskedStableProfileContract() {
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
+        when(toolRegistry.execute(any(ToolCall.class))).thenReturn(
+                ToolResult.success(
+                        "user_lookup",
+                        "found",
+                        UserToolData.found(new User(
+                                "USER-001",
+                                "张三",
+                                "13812341234",
+                                "token-zhangsan"
+                        ))
+                )
+        );
+        ToolRegistryCapabilityProvider provider = new ToolRegistryCapabilityProvider(toolRegistry);
+
+        CapabilityResult<?> result = provider.invoke(
+                new CapabilityCall("user.lookup", Map.of("token", "token-zhangsan")),
+                ExecutionContext.legacy()
+        );
+
+        UserProfileSummary profile = (UserProfileSummary) result.getData();
+        assertTrue(result.isSuccess());
+        assertEquals("USER-001", profile.getUserId());
+        assertEquals("138****1234", profile.getPhoneMasked());
     }
 
     @Test

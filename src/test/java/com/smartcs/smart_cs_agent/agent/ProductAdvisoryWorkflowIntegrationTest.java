@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.agent;
 
+import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
@@ -7,6 +8,8 @@ import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -67,13 +70,13 @@ class ProductAdvisoryWorkflowIntegrationTest {
     }
 
     @Test
-    void shouldPreserveLegacyPreferenceWriteThenUseItInNewWorkflow() {
+    void shouldUsePreferenceWrittenByUserProfileWorkflow() {
         String conversationId = "conv-product-preference-integration";
         String userId = "USER-PRODUCT-C";
         conversationStore.clear(conversationId);
         userMemoryStore.clear(userId);
 
-        // “我喜欢...”仍由 Legacy 用户记忆分支写入，商品 Workflow 主动不抢这类消息。
+        // 偏好写入已由 UserProfileWorkflow 接管，商品 Workflow 只负责读取并推荐。
         ChatResponse remembered = agent.chatWithTrace(request(
                 conversationId,
                 userId,
@@ -93,7 +96,12 @@ class ProductAdvisoryWorkflowIntegrationTest {
     }
 
     private ChatRequest request(String conversationId, String userId, String message) {
-        return new ChatRequest(conversationId, userId, message);
+        return new ChatRequest(
+                conversationId,
+                userId,
+                message,
+                AuthenticatedPrincipal.authenticated(userId, Set.of("CUSTOMER"))
+        );
     }
 
     private boolean hasTraceValue(ChatResponse response,

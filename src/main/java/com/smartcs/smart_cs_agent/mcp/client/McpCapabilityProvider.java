@@ -13,6 +13,7 @@ import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSearchResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSummary;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ReturnStatusSummary;
+import com.smartcs.smart_cs_agent.capability.api.contracts.UserProfileSummary;
 import com.smartcs.smart_cs_agent.capability.core.CapabilityProviderProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Component;
@@ -190,6 +191,9 @@ public class McpCapabilityProvider implements CapabilityProvider {
         }
         if (CapabilityIds.RETURN_LOOKUP.equals(capabilityId)) {
             return data instanceof ReturnStatusSummary status ? status : ReturnStatusSummary.fromMap(data);
+        }
+        if (CapabilityIds.USER_LOOKUP.equals(capabilityId)) {
+            return data instanceof UserProfileSummary profile ? profile : UserProfileSummary.fromMap(data);
         }
         if (CapabilityIds.KNOWLEDGE_SEARCH.equals(capabilityId) && data instanceof List<?> rows) {
             return rows.stream()

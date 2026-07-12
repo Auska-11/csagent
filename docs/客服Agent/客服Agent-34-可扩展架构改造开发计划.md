@@ -747,7 +747,7 @@ CapabilityGateway 第一版内部仍可委托旧 ToolRegistry，逐个能力迁�
 2. [x] `ReturnQueryWorkflow`（2026-07-12 已完成 Package、状态机、退货契约、归属校验与集成测试）
 3. [x] `ProductAdvisoryWorkflow`（2026-07-12 已完成 Package、商品契约、长期偏好读取与集成测试）
 4. [x] `PolicyQaWorkflow`（2026-07-12 已完成 Package、知识归属边界、跨轮主题与集成测试）
-5. [ ] `UserProfileWorkflow`
+5. [x] `UserProfileWorkflow`（2026-07-12 已完成认证 Principal、脱敏契约、偏好读写与集成测试）
 6. [ ] `ComplaintWorkflow`
 7. [ ] `EscalationWorkflow` 或全局升级策略
 
@@ -765,6 +765,9 @@ CapabilityGateway 第一版内部仍可委托旧 ToolRegistry，逐个能力迁�
 
 通用政策问答的任务边界、知识归属和人工规则区分见
 [`客服Agent-38-通用政策问答Workflow迁移说明.md`](客服Agent-38-通用政策问答Workflow迁移说明.md)。
+
+用户资料的 Principal 防伪、手机号脱敏和偏好所有权说明见
+[`客服Agent-39-用户资料Workflow迁移说明.md`](客服Agent-39-用户资料Workflow迁移说明.md)。
 
 ### 共用能力下沉
 
@@ -1192,8 +1195,8 @@ ChatApiController
 
 ## 20. 仍然存在的不足（后续路线图）
 
-1. `CustomerServiceSkill` 仍保留订单、退货查询、商品咨询、政策问答的回滚分支，以及尚未迁移的
-   用户信息和人工升级等 Legacy 分支；应按 Phase 7 逐个迁移，而不是继续往这个大类添加新业务。
+1. `CustomerServiceSkill` 仍保留订单、退货查询、商品咨询、政策问答、用户资料的回滚分支，以及
+   尚未迁移的人工升级 Legacy 分支；应按 Phase 7 逐个迁移，而不是继续往这个大类添加新业务。
 2. `ToolManager`、`ToolRegistry` 和 `LegacySkillWorkflowAdapter` 仍是兼容层；新代码应优先使用
    Workflow/Capability 契约，待回归稳定后再删除旧入口。
 3. Conversation、幂等记录和 Repository 默认都是单进程内存实现；多实例生产部署需要持久化、
