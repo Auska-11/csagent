@@ -1,8 +1,8 @@
 # 客服 Agent 项目简历与面试完整手册
 
-> 整理日期：2026-07-12
-> 代码基线：当前工作区，包含 Phase 8 第十批可靠性改造
-> 验证结果：mvn test 共 364 项，0 失败、0 错误、0 跳过
+> 整理日期：2026-07-13
+> 代码基线：当前工作区，包含 Phase 8 第十一批日志与 MCP 审计安全改造
+> 验证结果：mvn test 共 370 项，0 失败、0 错误、0 跳过
 > 使用原则：只描述代码已经证明的能力；规划中的能力必须明确说“尚未完成”
 
 ## 1. 这份文档怎么用
@@ -47,7 +47,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java 智能 Agent 系统。�
 
 | 指标 | 当前值 | 应怎样理解 |
 | --- | ---: | --- |
-| 默认自动化测试 | 364 项 | 当前工作区全量 mvn test 实测通过 |
+| 默认自动化测试 | 370 项 | 当前工作区全量 mvn test 实测通过 |
 | 测试源码文件 | 96 个 | 包含单元、集成、架构边界和 Eval 测试 |
 | Java 主代码文件 | 260 个 | 反映项目已经超过单文件 Demo 规模 |
 | 离线评测样本 | 36 条 | 路由 16、召回 8、规则回复 6、链路回复 3、Judge 3 |
@@ -95,7 +95,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java 智能 Agent 系统。�
 3. 建立统一 Capability 契约和 Local/MCP Provider 适配层，9 个稳定能力 ID 共用输入输出 Schema、三态结果、身份要求、风险等级和幂等策略，使 Workflow 不感知能力位于本地还是远程。
 4. 实现多轮会话状态、SessionStore 内存/JDBC 双实现、版本 CAS、Workflow 状态迁移链和副作用幂等租约；覆盖会话重建恢复、并发冲突、结果回放及 Session 保存失败后的防重复调用。
 5. 接入 Spring Security JWT Resource Server 和角色权限矩阵，使用 tenantId、userId、conversationId 复合所有权边界，并对公开 Trace 做递归脱敏、限长和不可变快照。
-6. 建立 Trace、Monitor、用户反馈到 Eval 候选样本的质量闭环，维护 36 条离线评测样本和 364 项自动化测试，接入 GitHub Actions 作为持续回归门禁。
+6. 建立 Trace、Monitor、用户反馈到 Eval 候选样本的质量闭环，维护 36 条离线评测样本和 370 项自动化测试，接入 GitHub Actions 作为持续回归门禁。
 
 ### 3.4 四条精简版
 
@@ -104,7 +104,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java 智能 Agent 系统。�
 - 设计可插拔 Agent 架构，按 Runtime、Workflow、Action Handler、Capability 分层，完成 8 个业务 Workflow 和 9 个 Skill Package 的运行时接入。
 - 统一 Local/MCP 能力契约，支持 JSON-RPC tools/list、tools/call、远程发现、有限重试和基础熔断，并通过 Capability allowlist 控制最小权限。
 - 实现会话 JDBC 持久化、版本 CAS、Workflow 状态迁移和副作用幂等租约，验证重建恢复、并发冲突与故障重试不重复调用 Provider。
-- 建立 JWT/RBAC、Trace 脱敏、Monitor 五类 Turn 结果和离线 Eval 体系，当前 364 项测试与 36 条评测样本通过既定断言。
+- 建立 JWT/RBAC、Trace 脱敏、Monitor 五类 Turn 结果和离线 Eval 体系，当前 370 项测试与 36 条评测样本通过既定断言。
 
 ### 3.5 简历关键词
 
@@ -600,11 +600,9 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 3. 人工转接存在 pending 假成功风险
    售后平台失败后只生成内存 REMOTE_HANDOFF_PENDING 工单，没有可靠数据库、Outbox 或后台补建任务，进程重启会丢失。
 
-4. 应用日志仍可能记录模型原文
-   当前 application.yml 的 log-requests 和 log-responses 为 true，可能绕过 Trace 脱敏，应默认关闭并补日志捕获测试。
-
-5. MCP 拒绝路径审计不完整
-   认证拒绝、委托拒绝和身份冲突在提前返回时没有统一审计；外部 requestId、capabilityId 也需要限长和去控制字符。
+4. 完整安全审计平台尚未建设
+   模型原文日志已默认关闭，MCP 普通调用也已完成最小化审计；但 Filter 层安全事件、集中式审计存储、
+   保留期、访问控制、告警和第三方 Prompt 数据最小化仍需继续建设。
 
 ### 9.2 数据与多实例
 
@@ -641,15 +639,15 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 
 建议顺序：
 
-1. 关闭 LLM 原文日志，补齐 MCP 全路径审计和标识清洗。
-2. 为售后、Embedding、Qdrant 配置独立 connect/read timeout。
-3. 为 pending 人工工单建立持久化 Store 或 Outbox。
-4. 补 Capability deadline 传播和“结果未知”语义。
-5. 加入 MySQL Testcontainers 集成测试。
-6. 为退货 order_id 增加唯一约束，替换 COUNT(*) + 1。
-7. 引入 HikariCP 和 Flyway。
-8. 修复 Docker Skill 打包，加入 MySQL 和应用 healthcheck。
-9. 处理 Session generation/ABA。
+1. 为售后、Embedding、Qdrant 配置独立 connect/read timeout。
+2. 为 pending 人工工单建立持久化 Store 或 Outbox。
+3. 补 Capability deadline 传播和“结果未知”语义。
+4. 加入 MySQL Testcontainers 集成测试。
+5. 为退货 order_id 增加唯一约束，替换 COUNT(*) + 1。
+6. 引入 HikariCP 和 Flyway。
+7. 修复 Docker Skill 打包，加入 MySQL 和应用 healthcheck。
+8. 处理 Session generation/ABA。
+9. 建设集中式安全审计、保留期、访问控制和告警。
 10. 逐步删除 Legacy Skill 和 ToolRegistry 兼容路径。
 
 ## 11. 面试中的 STAR 讲法
@@ -675,7 +673,7 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 
 - 形成 9 个 Skill Package、8 个独立业务 Workflow 和 9 个稳定 Capability。
 - 新增 WarrantyQuery 时不需要修改 Runtime、Router 和 Gateway 的业务分支。
-- 默认测试从早期约 115 项增长到 364 项并保持全绿。
+- 默认测试从早期约 115 项增长到 370 项并保持全绿。
 - 建立 36 条离线评测样本、JSON 报告、历史趋势和反馈回归闭环。
 - 同时保留 Legacy 回滚路径，避免一次性重写带来的高风险。
 
@@ -683,7 +681,7 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 
 ### 12.1 30 秒版本
 
-我做了一个基于 Spring Boot 和 LangChain4j 的电商客服 Agent。它不是简单调用大模型，而是把订单、退货、商品、政策问答和人工升级拆成独立 Workflow，再通过 Action Handler 和 Capability Gateway 调用本地或 MCP 远程能力。项目还实现了多轮会话持久化、幂等防重、JWT/RBAC、RAG、Trace/Monitor 和离线评测。目前有 9 个 Skill Package、8 个独立业务 Workflow，默认 364 项测试通过。
+我做了一个基于 Spring Boot 和 LangChain4j 的电商客服 Agent。它不是简单调用大模型，而是把订单、退货、商品、政策问答和人工升级拆成独立 Workflow，再通过 Action Handler 和 Capability Gateway 调用本地或 MCP 远程能力。项目还实现了多轮会话持久化、幂等防重、JWT/RBAC、RAG、Trace/Monitor 和离线评测。目前有 9 个 Skill Package、8 个独立业务 Workflow，默认 370 项测试通过。
 
 ### 12.2 2 分钟版本
 
@@ -693,7 +691,7 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 
 在可靠性方面，我把会话状态拆成 SessionStore 内存和 JDBC 实现，通过版本 CAS 防止丢失更新；对退货这类副作用增加幂等 Store、租约、续租和结果回放，并测试了 Provider 成功但 Session 保存失败后的重试不重复执行。安全上使用 Spring Security 校验 JWT 和角色，同时以 tenant、user、conversation 作为所有权边界，对 Trace 做统一脱敏。
 
-质量方面，项目有 36 条离线评测样本、Monitor 五类 Turn 结果、用户负反馈转 Eval 候选的闭环，以及 364 项默认测试。当前还没有完成真实 MySQL 容器验收、完整 deadline 和 Outbox，所以我会明确把它定位为工程化学习项目，而不是宣称已经完全生产级。
+质量方面，项目有 36 条离线评测样本、Monitor 五类 Turn 结果、用户负反馈转 Eval 候选的闭环，以及 370 项默认测试。当前还没有完成真实 MySQL 容器验收、完整 deadline 和 Outbox，所以我会明确把它定位为工程化学习项目，而不是宣称已经完全生产级。
 
 ### 12.3 5 分钟讲解顺序
 
@@ -766,7 +764,7 @@ LlmActionHandler 捕获异常，记录 llm_failed，并根据工具结构化结�
 
 ### Q15：怎样保护用户数据？
 
-身份只来自已验证 JWT Principal；会话 key 包含 tenant、user 和 conversation；读取不存在或不属于自己的资源时不泄露归属信息；公开 Trace 会统一遮蔽敏感 key、省略自由文本并限制容量。当前应用日志和第三方 Prompt 数据最小化仍需继续治理。
+身份只来自已验证 JWT Principal；会话 key 包含 tenant、user 和 conversation；读取不存在或不属于自己的资源时不泄露归属信息；公开 Trace 会统一遮蔽敏感 key、省略自由文本并限制容量。模型原文日志已默认关闭，MCP 审计也已最小化，但第三方 Prompt 数据最小化仍需继续治理。
 
 ### Q16：如何判断 Agent 质量？
 
@@ -786,7 +784,7 @@ Liveness 只判断 JVM 是否活着；Readiness 判断实例当前是否适合�
 
 ### Q20：如果给你两周继续做，你先做什么？
 
-先关闭 LLM 原文日志并补 MCP 审计，再为所有外部 HTTP 客户端加超时；随后持久化 pending 人工工单，补 Testcontainers MySQL、退货唯一约束和 Docker 健康验收。这些比继续增加新客服意图更能降低生产风险。
+先为所有外部 HTTP 客户端增加超时，再持久化 pending 人工工单；随后补 Testcontainers MySQL、退货唯一约束和 Docker 健康验收。这些比继续增加新客服意图更能降低生产风险。
 
 ## 14. 面试演示路线
 
@@ -794,7 +792,7 @@ Liveness 只判断 JVM 是否活着；Readiness 判断实例当前是否适合�
 
 - 使用本地 memory 模式，减少外部依赖。
 - 准备 CUSTOMER、ADMIN 和 MCP_CLIENT 三种 Demo JWT。
-- 提前运行 mvn test，确认 364 项通过。
+- 提前运行 mvn test，确认 370 项通过。
 - 提前打开首页、Monitor、Eval 和 Trace 面板。
 - 不在现场首次尝试真实模型、Qdrant 或外部售后平台。
 
@@ -822,7 +820,7 @@ Liveness 只判断 JVM 是否活着；Readiness 判断实例当前是否适合�
    展示 Monitor 五类结果和用户负反馈生成 Eval 候选。
 
 8. 测试
-   展示 364 项测试结果和评测 summary，不要只展示聊天页面。
+   展示 370 项测试结果和评测 summary，不要只展示聊天页面。
 
 ### 14.3 演示时不要做
 
@@ -865,7 +863,7 @@ Liveness 只判断 JVM 是否活着；Readiness 判断实例当前是否适合�
 - 8 个独立业务 Workflow。
 - 9 个 Capability ID。
 - 36 条离线评测样本。
-- 364 项默认测试。
+- 370 项默认测试。
 - 5 类 TurnOutcome。
 - memory/JDBC 双持久化模式。
 

@@ -499,7 +499,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 332 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 370 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 

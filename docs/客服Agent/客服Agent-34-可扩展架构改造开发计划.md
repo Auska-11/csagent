@@ -4,25 +4,26 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成失败生命周期与故障恢复等十批收口，外部依赖与真实数据库验收仍在继续 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成日志与 MCP 审计安全等十一批收口，外部依赖与真实数据库验收仍在继续 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 340 个默认离线测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
+| 当前验证规模 | 370 个默认测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
 本文档是客服 Agent 后续架构改造的主执行计划。`docs/开发计划` 中的 v1-v4 保留为项目早期演进记录，不再作为本次架构改造的主要依据。
 
-### 1.1 当前实施结论（2026-07-12）
+### 1.1 当前实施结论（2026-07-13）
 
 本轮设定的“核心可扩展架构目标”已经落地：Skill Package 与 Workflow 已分离，Runtime 的 Action
 执行已插件化，CapabilityGateway 可以接本地或 MCP Provider，多轮退货 Workflow 具备粘性状态、
 身份、确认、并发和幂等保护，并新增 `WarrantyQuery` 作为零核心业务特判的扩展证明。
 
 这里的“核心目标完成”不等于整份长期路线图全部结束。Phase 7 的生产路由迁移已经完成，但旧
-`CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的日志/MCP 审计脱敏、失败指标和故障
-注入测试，以及 Phase 9 的 Legacy 删除仍是后续演进项，不能把它们误写成已完成。
+`CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的应用日志与 MCP 普通审计安全已经
+收口，但外部 HTTP deadline、真实数据库和容器故障注入，以及 Phase 9 的 Legacy 删除仍是后续演进项，
+不能把它们误写成已完成。
 
 ## 2. 为什么需要这次改造（改造前问题）
 
@@ -45,7 +46,7 @@
 5. 每轮只按最新消息选 Skill，不足以支持可靠的多轮 Workflow 粘性状态。
 6. `AgentRuntime` 使用 Action 类型分支执行动作，新增 Action 仍需修改 Runtime。
 7. Tool 契约、Tool 执行、MCP 协议适配之间仍有耦合，未来本地和远程实现容易出现重复定义。
-8. 当前日志/MCP 审计、失败分类、故障注入和部分生产数据库边界仍未完全收口。
+8. 外部 HTTP 超时、pending 人工工单、真实数据库故障注入和部分生产数据一致性边界仍未完全收口。
 
 因此，本次改造的目标不是增加更多目录，而是建立稳定的扩展协议和单向依赖关系。
 
@@ -830,6 +831,7 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 - [x] Monitor 区分成功、业务拒绝、技术失败、Guardrail 拒绝和用户取消。
 - [x] Agent 在生成 ChatResponse 前抛异常时也记录 Turn 失败指标。
 - [x] 健康检查区分 liveness 和 readiness；JDBC 核心表不可读时 readiness 返回 503。
+- [x] 模型完整请求/响应日志默认关闭；MCP 成功、失败和安全拒绝统一写入最小化审计日志。
 - [ ] 完成并发、重启恢复、超时、熔断和故障注入测试：
   - [x] 进程内会话串行、跨 Store CAS、幂等并发合并和租约恢复测试。
   - [x] ConversationStore/CapabilityIdempotencyStore 重建恢复与 Session 保存失败回放测试。
@@ -987,6 +989,26 @@ HTTP MCP Client 新增 JSON-RPC envelope 和 initialize/tools/list/tools/call �
 fail-fast，不能安全强制中止已经开始的副作用；LLM 最坏重试时间、售后/Embedding/Qdrant HTTP 超时、
 pending 人工工单持久化、真实 MySQL/Testcontainers、Session 删除 ABA 和领域数据库唯一约束仍未完成，
 因此上面的 Phase 8 故障测试总项继续保持未勾选。
+
+### Phase 8 第十一批进度（2026-07-13）
+
+LangChain4j 的 `log-requests` 和 `log-responses` 已从默认开启改为默认关闭，避免完整 Prompt、模型回复、
+订单信息和联系方式绕过公开 Trace 的脱敏边界进入普通应用日志。`ApplicationLogSafetyTest` 会直接解析
+生产 `application.yml`，防止以后升级依赖或复制配置时误把两个开关重新打开。
+
+`McpServerAdapter` 的认证拒绝、用户委托拒绝、身份元数据冲突、业务拒绝、技术失败和成功调用现在统一
+经过 `auditResult`。日志只保留 serverId、requestRef、capability、粗粒度 callerType、provider、outcome、
+errorCode、replayed 和 durationMs；arguments、Bearer token、userId、tenantId、conversationId、幂等键及
+结果 message 都不会传给日志方法。
+
+外部 requestId 不再原样记录，而是使用 SHA-256 前 16 位作为不可逆关联引用。其他标识会先脱敏，再限制为
+96 个 Unicode code point，并把空白、换行、控制字符和非协议标点替换为下划线，防止日志注入与日志放大。
+真实 SLF4J 捕获测试覆盖成功、业务拒绝、技术失败和三条安全拒绝路径，详细说明见
+`客服Agent-53-应用日志与MCP审计安全说明.md`。
+
+本批完成后默认测试套件共 `370` 项，0 失败、0 错误、0 跳过。完成的是普通应用日志安全默认值与 MCP
+调用审计，不等于完整安全审计平台；Spring Security Filter 层事件、集中式审计存储、保留期、访问控制、
+告警和第三方 Prompt 数据最小化仍需独立建设。
 
 ### 验收标准
 
@@ -1194,11 +1216,11 @@ smartcs:
 - [ ] 会话、订单、退货、工单和 Monitor 管理操作有所有权/角色校验。
 - [ ] 同一会话并发安全。
 - [x] 公开 Trace 完成统一敏感信息脱敏与容量限制。
-- [ ] 应用日志和 MCP 审计完成敏感信息脱敏。
+- [x] 应用日志和 MCP 审计完成敏感信息脱敏。
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 364 个测试）。
+- [x] 旧测试全部保留并通过（当前默认套件共 370 个测试）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。
@@ -1383,8 +1405,9 @@ Phase 7 的最终验收结论、核心文件 diff 证据和 Legacy 清理条件�
    关闭 Demo 入口，并迁移到独立 IdP 的 RS256/ES256 或等价非对称验证、密钥轮换和撤销策略。
 5. 远程 MCP 工具发现当前主要用于启动期不可变 Catalog。TTL 缓存可刷新 Provider 自身快照，
    但运行中动态增删 Capability 还不能原子替换 Gateway Catalog。
-6. Monitor、Eval、Tool 和 MCP HTTP 接口已经接入 RBAC，公开 Trace 也已统一脱敏；但远程 MCP 的签名
-   用户委托尚未实现，实际 Prompt/Provider 数据最小化、最近消息、应用日志和 MCP 审计仍需系统治理。
+6. Monitor、Eval、Tool 和 MCP HTTP 接口已经接入 RBAC，公开 Trace 和 MCP 普通审计也已统一最小化；
+   但远程 MCP 的签名用户委托尚未实现，实际 Prompt/Provider 数据最小化、最近消息、集中式安全审计
+   存储和告警仍需系统治理。
 7. 项目仍是单 Maven Module。这是当前有意选择；只有包边界稳定且确有独立发布需求时才拆多 Module。
 
 这些不足不影响本轮“可插拔核心接缝 + 扩展证明”的验收，但会影响多实例、动态更新和正式生产安全，

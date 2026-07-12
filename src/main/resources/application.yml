@@ -123,5 +123,7 @@ langchain4j:
       temperature: 0.7
       max-tokens: 2000
       timeout: PT60S
-      log-requests: true
-      log-responses: true
+      # Prompt 和模型回复可能包含订单、联系方式及其他用户数据，普通应用日志默认禁止记录原文。
+      # 需要排障时应优先使用已脱敏的 Trace；不要在生产环境临时打开完整请求/响应日志。
+      log-requests: false
+      log-responses: false
