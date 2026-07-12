@@ -1,8 +1,17 @@
 package com.smartcs.smart_cs_agent.agent;
 
+import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationMemorySnapshot;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
+import com.smartcs.smart_cs_agent.agent.context.ConversationStateSnapshot;
+import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
+import com.smartcs.smart_cs_agent.agent.context.WorkflowStateMigrationRegistry;
+import com.smartcs.smart_cs_agent.memory.MemorySafetyProperties;
+import com.smartcs.smart_cs_agent.session.memory.InMemorySessionStore;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -53,5 +62,88 @@ class ConversationStateMemoryTest {
 
         // Runtime 内部临时字段不应该出现在对外 Memory 面板里。
         assertFalse(snapshot.getTaskMemory().containsKey("last_llm_purpose"));
+    }
+
+    @Test
+    void shouldRedactAndBoundGeneratedSummary() {
+        ConversationState state = new ConversationState(
+                "手机号 13800138000，我喜欢蓝牙耳机",
+                "USER-001",
+                120
+        );
+
+        for (int i = 0; i < 12; i++) {
+            state.addAssistantMessage("请不要记录 buyer@example.com，第 " + i + " 次回复");
+            state.startNewTurn("继续咨询蓝牙耳机，第 " + i + " 轮");
+        }
+
+        String summary = state.getSummaryMemory();
+        assertTrue(summary.contains("[REDACTED]"));
+        assertFalse(summary.contains("13800138000"));
+        assertFalse(summary.contains("buyer@example.com"));
+        assertTrue(summary.codePointCount(0, summary.length()) <= 120);
+        assertEquals(120, state.getSummaryMemoryMaxLength());
+    }
+
+    @Test
+    void shouldSanitizeOversizedLegacySummaryDuringRestore() {
+        ConversationStateSnapshot base = new ConversationState(
+                "hello",
+                "USER-001"
+        ).toPersistenceSnapshot();
+        String legacySummary = "旧摘要手机号 13800138000 " + "很长内容".repeat(30);
+        ConversationStateSnapshot legacy = copyWithSummary(base, legacySummary);
+
+        ConversationState restored = new WorkflowStateMigrationRegistry(List.of()).restore(legacy, 80);
+
+        assertFalse(restored.getSummaryMemory().contains("13800138000"));
+        assertTrue(restored.getSummaryMemory().codePointCount(
+                0,
+                restored.getSummaryMemory().length()
+        ) <= 80);
+    }
+
+    @Test
+    void conversationStoreShouldApplyConfiguredSummaryLimitToNewAndRestoredState() {
+        MemorySafetyProperties properties = new MemorySafetyProperties();
+        properties.setSummaryMaxLength(64);
+        InMemorySessionStore backend = new InMemorySessionStore();
+        ConversationStore store = new ConversationStore(
+                backend,
+                new WorkflowStateMigrationRegistry(List.of()),
+                properties
+        );
+        ChatRequest request = new ChatRequest("summary-config", "USER-001", "hello");
+
+        ConversationState created = store.getOrCreate(request);
+        ConversationState restored = store.get(
+                ConversationKey.defaultTenant("USER-001", "summary-config")
+        );
+
+        assertEquals(64, created.getSummaryMemoryMaxLength());
+        assertEquals(64, restored.getSummaryMemoryMaxLength());
+    }
+
+    private ConversationStateSnapshot copyWithSummary(
+            ConversationStateSnapshot source,
+            String summaryMemory) {
+        return new ConversationStateSnapshot(
+                source.schemaVersion(),
+                source.userId(),
+                source.message(),
+                source.messages(),
+                source.activeIntent(),
+                source.taskState(),
+                summaryMemory,
+                source.totalMessageCount(),
+                source.summaryVersion(),
+                source.summaryUpdatedAt(),
+                source.activeWorkflowId(),
+                source.workflowVersion(),
+                source.workflowStatus(),
+                source.workflowStartedAt(),
+                source.workflowUpdatedAt(),
+                source.workflowStates()
+        );
     }
 }

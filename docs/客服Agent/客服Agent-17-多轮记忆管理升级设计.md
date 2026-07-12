@@ -2,7 +2,8 @@
 
 ## 1. 为什么要升级记忆
 
-前面我们已经完成了多轮会话第一版：`ConversationStore` 可以按 `conversationId` 保存状态，`ConversationState` 可以记录当前意图、槽位和最近消息。
+前面我们已经完成了多轮会话第一版：`ConversationStore` 可以按
+`(tenantId, userId, conversationId)` 保存状态，`ConversationState` 可以记录当前意图、槽位和最近消息。
 
 但如果只把所有历史消息一直塞进 `messages`，长对话会有两个问题：
 
@@ -28,6 +29,8 @@ src/main/java/com/smartcs/smart_cs_agent/agent/context/ConversationState.java
 src/main/java/com/smartcs/smart_cs_agent/agent/context/ConversationMemorySnapshot.java
 src/main/java/com/smartcs/smart_cs_agent/agent/context/ConversationStore.java
 src/main/java/com/smartcs/smart_cs_agent/agent/AgentRuntime.java
+src/main/java/com/smartcs/smart_cs_agent/memory/MemorySafetyProperties.java
+src/main/java/com/smartcs/smart_cs_agent/security/SensitiveTextRedactor.java
 src/main/java/com/smartcs/smart_cs_agent/controller/ChatApiController.java
 src/main/resources/static/index.html
 ```
@@ -106,6 +109,16 @@ last_capability_result
 第 1 次压缩：已归档 1 条较早消息。关键片段：用户：我要退货
 ```
 
+Phase 8 第六批又给摘要增加了安全边界：
+
+- 默认最多保留 2000 个 Unicode 字符，可通过 `smartcs.memory.summary-max-length` 调整。
+- 新摘要生成时，先遮蔽手机号、邮箱、证件号、长数字和常见凭据，再执行长度限制。
+- 超过上限时从旧内容一侧淘汰，优先保留最近压缩出的上下文。
+- 从 SessionStore 恢复旧快照时会再次脱敏和截断，历史数据不能绕过新策略。
+
+这里限制的是 `summaryMemory`，不是最近消息窗口中单条原始消息的长度。最近消息、Trace 和工具参数的
+统一敏感信息治理仍是 Phase 8 后续任务，不能因为摘要已经脱敏就认为整个系统都完成了隐私收口。
+
 后续如果要升级，可以新增 `MemoryCompressor`：
 
 ```text
@@ -156,6 +169,9 @@ LLM 调用时，如果存在摘要记忆，会把摘要作为额外 `SystemMessa
 ```http
 GET /api/chat/conversations/{conversationId}/memory
 ```
+
+当前接口会使用认证 Principal 组装完整 `ConversationKey`，不能只凭一个猜到的 `conversationId`
+读取其他用户的会话。
 
 返回 `ConversationMemorySnapshot`：
 
@@ -224,12 +240,19 @@ GET /api/chat/conversations/{conversationId}/memory
 
 ## 10. 后续优化
 
-后续可以继续做：
+已经完成的后续能力：
 
-- 支持清空当前会话记忆。
-- 支持用户长期偏好，例如喜欢的品类、常用地址。
-- 把 `ConversationStore` 从内存替换成 Redis 或 MySQL。
-- 使用 LLM 生成更自然的摘要。
-- 对摘要质量增加评测。
+- 支持清空当前会话记忆和用户长期偏好。
+- 支持跨会话商品偏好，并增加 TTL、容量、长度和脱敏边界。
+- `ConversationStore` 已通过 `SessionStore` SPI 支持 memory / JDBC 双模式和重启恢复。
+
+仍可继续优化：
+
+- 使用 LLM 生成结构化摘要，并对摘要忠实度、遗漏率和注入风险增加评测。
+- 限制最近消息窗口中单条消息的长度，并统一治理 Trace、Prompt 和工具参数中的敏感内容。
+- 为摘要增加来源、保留期限和用户可见的删除说明。
+- 对姓名、地址等需要业务上下文判断的敏感字段引入更可靠的分类器或 DLP 服务。
+
+长期偏好的本批实现细节见 `客服Agent-47-长期记忆TTL容量与脱敏说明.md`。
 
 当前这一版的目标是先把“三级记忆结构”和“可观测 Memory 面板”做扎实。

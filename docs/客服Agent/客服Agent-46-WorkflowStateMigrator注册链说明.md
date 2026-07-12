@@ -352,7 +352,8 @@ BUILD SUCCESS
 2. 为外层 ConversationStateSnapshot 和 CapabilityResultSnapshot 分别设计迁移注册表。
 3. 增加迁移成功/失败 Monitor 指标，但不记录 payload。
 4. 使用 Testcontainers MySQL 验证旧 JSON 从数据库读取、迁移和 CAS 回写。
-5. 继续 Phase 8 的长期记忆 TTL、容量和脱敏收口。
+5. 长期记忆 TTL、容量和脱敏已在 Phase 8 第六批完成；下一步继续真实 Principal、管理接口权限和
+   Trace / Prompt / MCP 审计统一脱敏。
 
 本批完成后，状态格式演进已经从“修改中心 Codec”变成“由 Workflow 自己注册下一步迁移”，扩展点和
 失败边界都已经明确。

@@ -823,7 +823,7 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 - [x] 同一进程使用 ConversationKey 锁；SessionStore 使用 revision CAS 防止多实例丢失更新。
 - [x] Capability 幂等存储拆为 SPI；JDBC 使用唯一键、租约和结果回放阻止正常并发重复执行。
 - [x] WorkflowState 已建立 stateSchemaVersion 基线、未来版本失败关闭和注册式逐版本迁移链。
-- [ ] 长期记忆增加 TTL、容量上限、摘要上限和脱敏。
+- [x] 长期记忆增加 TTL、容量上限、摘要上限和脱敏。
 - [ ] 认证系统为 Chat、Memory、Monitor 和 MCP 管理接口提供真实 Principal。
 - [ ] 管理类接口增加角色权限。
 - [ ] Trace 默认不返回原始 Prompt、完整手机号、用户消息全文和工具敏感参数。
@@ -883,6 +883,20 @@ idempotencyKey 和事务/outbox 仍是后续生产硬化内容。
 迁移编排只发生在 `ConversationStore` 会话边界。`AgentRuntime`、`WorkflowRouter`、
 `DefaultCapabilityGateway` 和 `ConversationStateCodec` 不包含具体 Workflow 迁移分支。本批没有为了
 演示强行把现有业务状态升级到 v2；当前生产 Workflow 仍写 v1，迁移机制由合成链路和端到端测试验证。
+
+### Phase 8 第六批进度（2026-07-12）
+
+已为进程内 `UserMemoryStore` 增加偏好级 TTL、用户总量上限、每用户偏好上限和单条 Unicode 长度
+上限。重复表达同一偏好会刷新 TTL；用户按访问顺序淘汰，偏好按最后表达顺序淘汰。写入前会遮蔽
+常见凭据、邮箱、中国手机号、身份证号和 12 至 19 位长数字，脱敏后只剩敏感标签和占位符的输入会被拒绝。
+
+会话规则摘要新增配置化长度上限，生成摘要和恢复旧 Session 快照时都会再次脱敏；超长摘要从旧内容
+一侧截断，保留最近上下文。`UserProfileWorkflow` 和 Phase 9 前保留的 Legacy
+`CustomerServiceSkill` 都只使用 `UserMemoryWriteResult` 返回的安全文本，不再把原始偏好写入 Trace、
+Workflow 状态或用户回复。详细说明和测试记录见 `客服Agent-47-长期记忆TTL容量与脱敏说明.md`。
+
+本批仍不是完整隐私治理：长期偏好仍是进程内数据，TTL 采用读写时惰性清理；姓名、地址等上下文型
+字段尚未自动识别，Trace、Prompt、最近消息和 MCP 审计的统一脱敏仍属于后续任务。
 
 ### 验收标准
 

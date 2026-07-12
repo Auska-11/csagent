@@ -6,6 +6,7 @@ import com.smartcs.smart_cs_agent.agent.context.Observation;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.memory.UserMemorySnapshot;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
+import com.smartcs.smart_cs_agent.memory.UserMemoryWriteResult;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -563,19 +564,29 @@ public class CustomerServiceSkill implements Skill {
             return null;
         }
 
-        boolean added = userMemoryStore.rememberProductPreference(state.getUserId(), preference);
+        UserMemoryWriteResult writeResult = userMemoryStore.rememberProductPreferenceSafely(
+                state.getUserId(),
+                preference
+        );
+        if (!writeResult.accepted()) {
+            return new FinalAnswerAction(
+                    "为保护隐私，我不会把手机号、邮箱、证件号或凭据保存为偏好。请只告诉我商品或品类。"
+            );
+        }
+
+        String storedPreference = writeResult.storedPreference();
         UserMemorySnapshot snapshot = userMemoryStore.getSnapshot(state.getUserId());
 
         Map<String, Object> traceData = new LinkedHashMap<>();
         traceData.put("userId", state.getUserId());
-        traceData.put("preference", preference);
-        traceData.put("added", added);
+        traceData.put("preference", storedPreference);
+        traceData.put("added", writeResult.added());
         traceData.put("allProductPreferences", snapshot.getProductPreferences());
         context.addTrace("user_memory_updated", "记录用户长期商品偏好", traceData);
 
-        state.setTaskState("last_user_preference", preference);
+        state.setTaskState("last_user_preference", storedPreference);
         state.setActiveIntent("user_memory_update");
-        return new FinalAnswerAction("好的，我记住了：你比较喜欢“" + preference + "”。之后你让我推荐商品时，我会优先参考这个偏好。");
+        return new FinalAnswerAction("好的，我记住了：你比较喜欢“" + storedPreference + "”。之后你让我推荐商品时，我会优先参考这个偏好。");
     }
 
     /**

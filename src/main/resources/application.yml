@@ -26,6 +26,13 @@ spring:
     name: smart-cs-agent
 
 smartcs:
+  memory:
+    # 长期偏好默认保留 30 天；重复表达同一偏好会刷新 TTL。
+    preference-ttl-ms: ${SMARTCS_MEMORY_PREFERENCE_TTL_MS:2592000000}
+    max-users: ${SMARTCS_MEMORY_MAX_USERS:10000}
+    max-preferences-per-user: ${SMARTCS_MEMORY_MAX_PREFERENCES_PER_USER:20}
+    max-preference-length: ${SMARTCS_MEMORY_MAX_PREFERENCE_LENGTH:80}
+    summary-max-length: ${SMARTCS_MEMORY_SUMMARY_MAX_LENGTH:2000}
   capability:
     # local：直接调用本进程 Provider；mcp-remote：只使用远程 MCP；hybrid：本地为主并额外暴露带命名空间的远程能力。
     provider-mode: ${SMARTCS_CAPABILITY_PROVIDER_MODE:local}

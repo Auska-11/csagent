@@ -1,5 +1,8 @@
 package com.smartcs.smart_cs_agent.agent.context;
 
+import com.smartcs.smart_cs_agent.memory.MemorySafetyProperties;
+import com.smartcs.smart_cs_agent.security.SensitiveTextRedactor;
+
 import java.util.*;
 
 /**
@@ -108,6 +111,9 @@ public class ConversationState {
     /** 摘要记忆：用规则方式压缩过的较早历史消息 */
     private String summaryMemory;
 
+    /** 当前会话摘要的字符上限；由 ConversationStore 从 MemorySafetyProperties 注入。 */
+    private final int summaryMemoryMaxLength;
+
     /** 会话累计消息数，包括用户消息和助手消息 */
     private int totalMessageCount;
 
@@ -151,7 +157,7 @@ public class ConversationState {
      * @param message 用户消息
      */
     public ConversationState(String message) {
-        this(message, "default");
+        this(message, "default", MemorySafetyProperties.DEFAULT_SUMMARY_MAX_LENGTH);
     }
 
     /**
@@ -161,17 +167,30 @@ public class ConversationState {
      * @param userId 用户标识
      */
     public ConversationState(String message, String userId) {
-        this(message, userId, true);
+        this(message, userId, MemorySafetyProperties.DEFAULT_SUMMARY_MAX_LENGTH);
+    }
+
+    /** 允许测试或非 Spring 调用方显式指定摘要上限。 */
+    public ConversationState(String message, String userId, int summaryMemoryMaxLength) {
+        this(message, userId, true, summaryMemoryMaxLength);
     }
 
     /** restore 使用 addInitialMessage=false，避免恢复时把最后一条用户消息再追加一次。 */
-    private ConversationState(String message, String userId, boolean addInitialMessage) {
+    private ConversationState(
+            String message,
+            String userId,
+            boolean addInitialMessage,
+            int summaryMemoryMaxLength) {
+        if (summaryMemoryMaxLength <= 0) {
+            throw new IllegalArgumentException("summaryMemoryMaxLength must be greater than 0");
+        }
         this.message = message;
         this.userId = userId;
         this.messages = new ArrayList<>();
         this.observations = new ArrayList<>();
         this.taskState = new HashMap<>();
         this.summaryMemory = "";
+        this.summaryMemoryMaxLength = summaryMemoryMaxLength;
         this.totalMessageCount = 0;
         this.summaryVersion = 0;
         this.summaryUpdatedAt = 0;
@@ -212,13 +231,20 @@ public class ConversationState {
                 );
             }
         }
-        return restoreMigrated(snapshot);
+        return restoreMigrated(snapshot, MemorySafetyProperties.DEFAULT_SUMMARY_MAX_LENGTH);
     }
 
     /**
      * 只供 WorkflowStateMigrationRegistry 调用：传入快照已经完成逐版本校验和迁移。
      */
     static ConversationState restoreMigrated(ConversationStateSnapshot snapshot) {
+        return restoreMigrated(snapshot, MemorySafetyProperties.DEFAULT_SUMMARY_MAX_LENGTH);
+    }
+
+    /** 恢复时同样执行脱敏和长度限制，旧数据库快照不能绕过新策略。 */
+    static ConversationState restoreMigrated(
+            ConversationStateSnapshot snapshot,
+            int summaryMemoryMaxLength) {
         Objects.requireNonNull(snapshot, "snapshot cannot be null");
         if (snapshot.schemaVersion() != ConversationStateSnapshot.CURRENT_SCHEMA_VERSION) {
             throw new IllegalArgumentException(
@@ -226,11 +252,19 @@ public class ConversationState {
             );
         }
 
-        ConversationState state = new ConversationState(snapshot.message(), snapshot.userId(), false);
+        ConversationState state = new ConversationState(
+                snapshot.message(),
+                snapshot.userId(),
+                false,
+                summaryMemoryMaxLength
+        );
         state.messages.addAll(snapshot.messages());
         state.activeIntent = snapshot.activeIntent();
         state.taskState.putAll(snapshot.taskState());
-        state.summaryMemory = snapshot.summaryMemory();
+        state.summaryMemory = SensitiveTextRedactor.redactAndKeepTail(
+                snapshot.summaryMemory(),
+                summaryMemoryMaxLength
+        );
         state.totalMessageCount = snapshot.totalMessageCount();
         state.summaryVersion = snapshot.summaryVersion();
         state.summaryUpdatedAt = snapshot.summaryUpdatedAt();
@@ -332,11 +366,16 @@ public class ConversationState {
 
         List<Map<String, String>> compressedMessages = new ArrayList<>(messages.subList(0, compressCount));
         String fragment = buildSummaryFragment(compressedMessages);
+        String combinedSummary;
         if (summaryMemory == null || summaryMemory.isBlank()) {
-            summaryMemory = fragment;
+            combinedSummary = fragment;
         } else {
-            summaryMemory = summaryMemory + "\n" + fragment;
+            combinedSummary = summaryMemory + "\n" + fragment;
         }
+        summaryMemory = SensitiveTextRedactor.redactAndKeepTail(
+                combinedSummary,
+                summaryMemoryMaxLength
+        );
 
         summaryVersion++;
         summaryUpdatedAt = System.currentTimeMillis();
@@ -364,7 +403,10 @@ public class ConversationState {
             }
             builder.append(formatRole(message.get("role")))
                     .append("：")
-                    .append(preview(message.get("content"), 42));
+                    .append(SensitiveTextRedactor.sanitizeSingleLine(
+                            message.get("content"),
+                            42
+                    ));
         }
         return builder.toString();
     }
@@ -377,16 +419,6 @@ public class ConversationState {
             return "客服";
         }
         return role == null ? "未知" : role;
-    }
-
-    private String preview(String text, int maxLength) {
-        if (text == null) {
-            return "";
-        }
-        if (text.length() <= maxLength) {
-            return text;
-        }
-        return text.substring(0, maxLength) + "...";
     }
 
     /**
@@ -729,6 +761,10 @@ public class ConversationState {
 
     public int getSummaryVersion() {
         return summaryVersion;
+    }
+
+    public int getSummaryMemoryMaxLength() {
+        return summaryMemoryMaxLength;
     }
 
     public long getSummaryUpdatedAt() {

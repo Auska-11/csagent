@@ -9,8 +9,8 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - 订单查询：支持指定订单查询、查询当前用户全部订单、缺少订单号时主动追问。
 - 商品咨询：支持商品搜索、价格和库存咨询。
 - 退换货：支持退货进度查询，以及“我要退货 -> 追问订单号 -> 追问原因 -> 提交退货申请”的多轮流程。
-- 多轮记忆：支持短期消息窗口、任务记忆快照、规则摘要压缩，Trace 会记录 `memory_loaded` / `memory_compressed`，前端 Memory 面板可查看当前会话记忆。
-- 长期用户偏好：支持记录“我喜欢蓝牙耳机”等商品偏好，后续泛化推荐时可读取用户长期记忆，Trace 会记录 `user_memory_updated` / `user_memory_used`，并支持清空会话记忆和用户长期记忆。
+- 多轮记忆：支持短期消息窗口、任务记忆快照、规则摘要压缩；摘要默认限制为 2000 个 Unicode 字符，生成和旧快照恢复时都会脱敏，超限后优先保留最近内容。Trace 会记录 `memory_loaded` / `memory_compressed`，前端 Memory 面板可查看当前会话记忆。
+- 长期用户偏好：支持记录“我喜欢蓝牙耳机”等商品偏好，默认 30 天 TTL，重复表达会刷新有效期；内存实现限制用户总量、每用户偏好数和单条长度，并按用户访问顺序、偏好最后表达顺序淘汰旧数据。手机号、邮箱、证件号、长数字和常见凭据会在写入前脱敏，敏感信息-only 输入不会保存；同时支持查询和清空长期记忆。
 - 知识库问答：支持退货政策、发票、保修、配送、转人工规则等 Markdown 知识库检索，并已增强查询改写、多路召回、本地轻量向量分、简单 rerank 和 `knowledge_miss` Trace；可选开启真 embedding + Qdrant 向量数据库模式。
 - Multi-Agent 路由：支持把用户消息路由到售前、售后、投诉和通用专家域，并在 Trace 中记录 `agent_routed`。
 - 人工转接：支持用户主动要求人工、投诉、赔偿或维权类表达；默认创建模拟人工工单，开启联调模式后可调用售后工单平台创建真实工单。
@@ -460,7 +460,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 313 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 324 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -502,6 +502,7 @@ docker compose down
 - [Capability 幂等持久化与租约说明](docs/客服Agent/客服Agent-44-Capability幂等持久化与租约说明.md)
 - [Liveness 与 Readiness 健康探针说明](docs/客服Agent/客服Agent-45-Liveness与Readiness健康探针说明.md)
 - [WorkflowStateMigrator 注册链说明](docs/客服Agent/客服Agent-46-WorkflowStateMigrator注册链说明.md)
+- [长期记忆 TTL、容量与脱敏说明](docs/客服Agent/客服Agent-47-长期记忆TTL容量与脱敏说明.md)
 
 ## 简历表达参考
 

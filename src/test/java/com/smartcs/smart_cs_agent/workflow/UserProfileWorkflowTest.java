@@ -13,6 +13,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
 import com.smartcs.smart_cs_agent.capability.api.contracts.UserProfileSummary;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
+import com.smartcs.smart_cs_agent.memory.UserMemoryWriteResult;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
 import com.smartcs.smart_cs_agent.workflow.userprofile.UserProfileStep;
 import com.smartcs.smart_cs_agent.workflow.userprofile.UserProfileWorkflow;
@@ -25,6 +26,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /** UserProfileWorkflow 的资料查询、偏好读写和认证测试。 */
 class UserProfileWorkflowTest {
@@ -127,6 +133,30 @@ class UserProfileWorkflowTest {
                 workflow.nextAction(authenticatedTurn(state, "智能手表", "USER-001")).getAction()
         );
         assertTrue(answer.getAnswer().contains("智能手表"));
+    }
+
+    @Test
+    void shouldRejectSensitiveOnlyPreferenceWithoutWritingOrTracingIt() {
+        UserMemoryStore rejectingStore = mock(UserMemoryStore.class);
+        when(rejectingStore.rememberProductPreferenceSafely(anyString(), anyString()))
+                .thenReturn(UserMemoryWriteResult.rejected());
+        UserProfileWorkflow rejectingWorkflow = new UserProfileWorkflow(
+                new GlobalInterruptPolicy(),
+                rejectingStore
+        );
+        ConversationState state = startedState("我喜欢蓝牙耳机", "USER-001");
+        TurnContext context = authenticatedTurn(state, "我喜欢蓝牙耳机", "USER-001");
+
+        AskUserAction answer = assertInstanceOf(
+                AskUserAction.class,
+                rejectingWorkflow.nextAction(context).getAction()
+        );
+
+        assertTrue(answer.getQuestion().contains("保护隐私"));
+        assertFalse(answer.getQuestion().contains("13800138000"));
+        verify(rejectingStore, never()).getSnapshot(anyString());
+        assertTrue(context.getTraceEvents().stream()
+                .noneMatch(event -> event.toString().contains("13800138000")));
     }
 
     @Test

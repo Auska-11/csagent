@@ -39,6 +39,14 @@ public class WorkflowStateMigrationRegistry {
         return ConversationState.restoreMigrated(migrateSnapshot(snapshot));
     }
 
+    /** Spring ConversationStore 使用配置化摘要上限恢复会话。 */
+    public ConversationState restore(ConversationStateSnapshot snapshot, int summaryMemoryMaxLength) {
+        return ConversationState.restoreMigrated(
+                migrateSnapshot(snapshot),
+                summaryMemoryMaxLength
+        );
+    }
+
     /**
      * 把数据库/内存 Store 中的快照逐步迁移到当前版本。
      *

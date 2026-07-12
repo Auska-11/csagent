@@ -9,9 +9,13 @@ import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
+import com.smartcs.smart_cs_agent.memory.UserMemoryWriteResult;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * CustomerServiceSkill 的单元测试。
@@ -139,6 +143,26 @@ class CustomerServiceSkillTest {
         assertEquals("蓝牙耳机", state.getTaskState("used_user_preference"));
         assertTrue(context.getTraceEvents().stream()
                 .anyMatch(event -> "user_memory_used".equals(event.getEventType())));
+    }
+
+    @Test
+    void legacySkillShouldRejectSensitiveOnlyPreference() {
+        UserMemoryStore rejectingStore = mock(UserMemoryStore.class);
+        when(rejectingStore.rememberProductPreferenceSafely(anyString(), anyString()))
+                .thenReturn(UserMemoryWriteResult.rejected());
+        CustomerServiceSkill rejectingSkill = new CustomerServiceSkill(null, rejectingStore);
+        ConversationState state = new ConversationState("我喜欢蓝牙耳机", "USER-001");
+        TurnContext context = turn("conv-sensitive-memory", state);
+
+        FinalAnswerAction answer = assertInstanceOf(
+                FinalAnswerAction.class,
+                rejectingSkill.nextAction(context)
+        );
+
+        assertTrue(answer.getAnswer().contains("保护隐私"));
+        assertFalse(answer.getAnswer().contains("13800138000"));
+        assertTrue(context.getTraceEvents().stream()
+                .noneMatch(event -> event.toString().contains("13800138000")));
     }
 
     /**

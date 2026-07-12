@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.agent.context;
 
+import com.smartcs.smart_cs_agent.memory.MemorySafetyProperties;
 import com.smartcs.smart_cs_agent.session.api.SessionRecord;
 import com.smartcs.smart_cs_agent.session.api.SessionStore;
 import com.smartcs.smart_cs_agent.session.memory.InMemorySessionStore;
@@ -45,6 +46,9 @@ public class ConversationStore {
     /** Workflow 私有状态的版本校验、逐级迁移和保存版本由这个注册表统一负责。 */
     private final WorkflowStateMigrationRegistry workflowStateMigrationRegistry;
 
+    /** 会话摘要上限由配置注入；ConversationState 不读取全局静态环境。 */
+    private final int summaryMemoryMaxLength;
+
     /**
      * 每个完整 ConversationKey 一把独立锁。
      *
@@ -60,15 +64,27 @@ public class ConversationStore {
     @Autowired
     public ConversationStore(
             SessionStore sessionStore,
-            WorkflowStateMigrationRegistry workflowStateMigrationRegistry) {
+            WorkflowStateMigrationRegistry workflowStateMigrationRegistry,
+            MemorySafetyProperties memorySafetyProperties) {
         if (sessionStore == null) {
             throw new IllegalArgumentException("sessionStore cannot be null");
         }
         if (workflowStateMigrationRegistry == null) {
             throw new IllegalArgumentException("workflowStateMigrationRegistry cannot be null");
         }
+        if (memorySafetyProperties == null) {
+            throw new IllegalArgumentException("memorySafetyProperties cannot be null");
+        }
         this.sessionStore = sessionStore;
         this.workflowStateMigrationRegistry = workflowStateMigrationRegistry;
+        this.summaryMemoryMaxLength = memorySafetyProperties.getSummaryMaxLength();
+    }
+
+    /** 兼容显式传入迁移注册表的非 Spring 测试。 */
+    public ConversationStore(
+            SessionStore sessionStore,
+            WorkflowStateMigrationRegistry workflowStateMigrationRegistry) {
+        this(sessionStore, workflowStateMigrationRegistry, new MemorySafetyProperties());
     }
 
     /** 兼容不启动 Spring、只关心 v1 状态的 SessionStore 单元测试。 */
@@ -206,7 +222,11 @@ public class ConversationStore {
         SessionRecord record = sessionStore.load(key).orElse(null);
         if (record == null) {
             return new LoadedConversation(
-                    new ConversationState(request.getMessage(), request.getUserId()),
+                    new ConversationState(
+                            request.getMessage(),
+                            request.getUserId(),
+                            summaryMemoryMaxLength
+                    ),
                     0L
             );
         }
@@ -228,7 +248,10 @@ public class ConversationStore {
         if (!key.userId().equals(record.snapshot().userId())) {
             throw new IllegalStateException("Session snapshot owner does not match storage key");
         }
-        return workflowStateMigrationRegistry.restore(record.snapshot());
+        return workflowStateMigrationRegistry.restore(
+                record.snapshot(),
+                summaryMemoryMaxLength
+        );
     }
 
     private record LoadedConversation(ConversationState state, long version) {

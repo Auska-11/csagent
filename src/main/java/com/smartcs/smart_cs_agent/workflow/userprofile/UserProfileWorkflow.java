@@ -11,6 +11,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
 import com.smartcs.smart_cs_agent.capability.api.contracts.UserProfileSummary;
 import com.smartcs.smart_cs_agent.memory.UserMemorySnapshot;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
+import com.smartcs.smart_cs_agent.memory.UserMemoryWriteResult;
 import com.smartcs.smart_cs_agent.skill.CustomerServiceIntentRules;
 import com.smartcs.smart_cs_agent.skill.CustomerServiceSlotExtractor;
 import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
@@ -160,21 +161,33 @@ public class UserProfileWorkflow implements AgentWorkflow {
                                                 UserProfileState state,
                                                 String preference) {
         String userId = context.getRequest().getPrincipal().getUserId();
-        boolean added = userMemoryStore.rememberProductPreference(userId, preference);
+        UserMemoryWriteResult writeResult = userMemoryStore.rememberProductPreferenceSafely(
+                userId,
+                preference
+        );
+        if (!writeResult.accepted()) {
+            state.transitionTo(UserProfileStep.WAITING_PREFERENCE);
+            return WorkflowDecision.next(
+                    new AskUserAction("为保护隐私，我不会把手机号、邮箱、证件号或凭据保存为偏好。请只提供商品或品类，例如蓝牙耳机。"),
+                    "长期偏好脱敏后没有可保存的商品信息"
+            );
+        }
+
+        String storedPreference = writeResult.storedPreference();
         UserMemorySnapshot snapshot = userMemoryStore.getSnapshot(userId);
-        state.setPreference(preference);
+        state.setPreference(storedPreference);
         state.transitionTo(UserProfileStep.COMPLETED);
 
         Map<String, Object> traceData = new LinkedHashMap<>();
         traceData.put("userId", userId);
-        traceData.put("preference", preference);
-        traceData.put("added", added);
+        traceData.put("preference", storedPreference);
+        traceData.put("added", writeResult.added());
         traceData.put("allProductPreferences", snapshot.getProductPreferences());
         context.addTrace("user_memory_updated", "记录认证用户长期商品偏好", traceData);
 
-        String answer = added
-                ? "好的，我记住了：您比较喜欢“" + preference + "”。之后推荐商品时会优先参考这个偏好。"
-                : "这个偏好已经记录过：您比较喜欢“" + preference + "”。";
+        String answer = writeResult.added()
+                ? "好的，我记住了：您比较喜欢“" + storedPreference + "”。之后推荐商品时会优先参考这个偏好。"
+                : "这个偏好已经记录过：您比较喜欢“" + storedPreference + "”。";
         return WorkflowDecision.next(new FinalAnswerAction(answer), "长期商品偏好已安全写入");
     }
 
