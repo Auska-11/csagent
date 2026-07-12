@@ -362,7 +362,7 @@ Tests run: 297, Failures: 0, Errors: 0, Skipped: 0
 1. 使用 Testcontainers MySQL 验证真实唯一键、方言和并发行为。
 2. 为退货业务增加数据库唯一约束，并评估与幂等记录共事务。
 3. 为外部 MCP/HTTP Provider 统一透传 idempotencyKey。
-4. 实现 WorkflowStateMigrator 注册链。
+4. WorkflowStateMigrator 已在第五批完成；继续为 CapabilityResult 设计独立迁移链。
 5. 增加幂等完成记录 TTL 与安全清理任务。
 
 本批之后，多实例已经拥有明确的“先抢占、再执行、后回放”边界。下一阶段要继续把学习型 JDBC

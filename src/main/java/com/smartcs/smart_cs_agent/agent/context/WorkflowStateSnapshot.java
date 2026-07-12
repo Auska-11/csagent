@@ -7,8 +7,8 @@ import java.util.Map;
 /** 单个 Workflow 命名空间的持久化格式。 */
 public record WorkflowStateSnapshot(int schemaVersion, Map<String, String> payload) {
 
-    /** 当前所有 Java Workflow State 适配器写出的 payload 结构版本。 */
-    public static final int CURRENT_SCHEMA_VERSION = 1;
+    /** 没有注册迁移器时使用的基线版本；具体 Workflow 的当前版本由迁移注册表计算。 */
+    public static final int BASE_SCHEMA_VERSION = 1;
 
     public WorkflowStateSnapshot {
         if (schemaVersion <= 0) {

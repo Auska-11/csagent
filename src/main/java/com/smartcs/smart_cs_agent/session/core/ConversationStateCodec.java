@@ -3,7 +3,6 @@ package com.smartcs.smart_cs_agent.session.core;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStateSnapshot;
-import com.smartcs.smart_cs_agent.agent.context.WorkflowStateSnapshot;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;
@@ -56,13 +55,7 @@ public class ConversationStateCodec {
                     ConversationStateSnapshot.CURRENT_SCHEMA_VERSION
             );
         }
-        for (var entry : snapshot.workflowStates().entrySet()) {
-            if (entry.getValue().schemaVersion() != WorkflowStateSnapshot.CURRENT_SCHEMA_VERSION) {
-                throw new UnsupportedSessionSchemaException(
-                        entry.getValue().schemaVersion(),
-                        WorkflowStateSnapshot.CURRENT_SCHEMA_VERSION
-                );
-            }
-        }
+        // Workflow 版本是每个业务流程独立演进的，统一交给 WorkflowStateMigrationRegistry。
+        // Codec 只负责 JSON 格式和外层 Conversation schema，避免在这里堆业务迁移分支。
     }
 }

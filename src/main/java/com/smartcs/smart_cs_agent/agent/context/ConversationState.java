@@ -202,6 +202,30 @@ public class ConversationState {
             );
         }
 
+        // 兼容直接调用 restore 的旧测试和工具：没有迁移注册表时，只允许读取基线 v1。
+        for (Map.Entry<String, WorkflowStateSnapshot> entry : snapshot.workflowStates().entrySet()) {
+            if (entry.getValue().schemaVersion() != WorkflowStateSnapshot.BASE_SCHEMA_VERSION) {
+                throw new UnsupportedWorkflowStateSchemaException(
+                        entry.getKey(),
+                        entry.getValue().schemaVersion(),
+                        WorkflowStateSnapshot.BASE_SCHEMA_VERSION
+                );
+            }
+        }
+        return restoreMigrated(snapshot);
+    }
+
+    /**
+     * 只供 WorkflowStateMigrationRegistry 调用：传入快照已经完成逐版本校验和迁移。
+     */
+    static ConversationState restoreMigrated(ConversationStateSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot cannot be null");
+        if (snapshot.schemaVersion() != ConversationStateSnapshot.CURRENT_SCHEMA_VERSION) {
+            throw new IllegalArgumentException(
+                    "Unsupported conversation state schemaVersion: " + snapshot.schemaVersion()
+            );
+        }
+
         ConversationState state = new ConversationState(snapshot.message(), snapshot.userId(), false);
         state.messages.addAll(snapshot.messages());
         state.activeIntent = snapshot.activeIntent();
@@ -219,11 +243,6 @@ public class ConversationState {
         state.workflowUpdatedAt = snapshot.workflowUpdatedAt();
         for (Map.Entry<String, WorkflowStateSnapshot> entry : snapshot.workflowStates().entrySet()) {
             WorkflowStateSnapshot workflowSnapshot = entry.getValue();
-            if (workflowSnapshot.schemaVersion() != WorkflowStateSnapshot.CURRENT_SCHEMA_VERSION) {
-                throw new IllegalArgumentException(
-                        "Unsupported workflow state schemaVersion for " + entry.getKey()
-                );
-            }
             state.workflowStates.put(
                     entry.getKey(),
                     new LinkedHashMap<>(workflowSnapshot.payload())
@@ -748,7 +767,7 @@ public class ConversationState {
             persistedWorkflowStates.put(
                     workflowEntry.getKey(),
                     new WorkflowStateSnapshot(
-                            WorkflowStateSnapshot.CURRENT_SCHEMA_VERSION,
+                            WorkflowStateSnapshot.BASE_SCHEMA_VERSION,
                             namespace
                     )
             );

@@ -6,6 +6,7 @@ import com.smartcs.smart_cs_agent.session.memory.InMemorySessionStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
@@ -41,6 +42,9 @@ public class ConversationStore {
      */
     private final SessionStore sessionStore;
 
+    /** Workflow 私有状态的版本校验、逐级迁移和保存版本由这个注册表统一负责。 */
+    private final WorkflowStateMigrationRegistry workflowStateMigrationRegistry;
+
     /**
      * 每个完整 ConversationKey 一把独立锁。
      *
@@ -54,11 +58,22 @@ public class ConversationStore {
 
     /** Spring 生产构造函数，会注入当前配置选中的 SessionStore 实现。 */
     @Autowired
-    public ConversationStore(SessionStore sessionStore) {
+    public ConversationStore(
+            SessionStore sessionStore,
+            WorkflowStateMigrationRegistry workflowStateMigrationRegistry) {
         if (sessionStore == null) {
             throw new IllegalArgumentException("sessionStore cannot be null");
         }
+        if (workflowStateMigrationRegistry == null) {
+            throw new IllegalArgumentException("workflowStateMigrationRegistry cannot be null");
+        }
         this.sessionStore = sessionStore;
+        this.workflowStateMigrationRegistry = workflowStateMigrationRegistry;
+    }
+
+    /** 兼容不启动 Spring、只关心 v1 状态的 SessionStore 单元测试。 */
+    public ConversationStore(SessionStore sessionStore) {
+        this(sessionStore, new WorkflowStateMigrationRegistry(List.of()));
     }
 
     /**
@@ -104,7 +119,11 @@ public class ConversationStore {
         lock.lock();
         try {
             long expectedVersion = sessionStore.load(key).map(SessionRecord::version).orElse(0L);
-            sessionStore.save(key, expectedVersion, state.toPersistenceSnapshot());
+            sessionStore.save(
+                    key,
+                    expectedVersion,
+                    workflowStateMigrationRegistry.snapshotForPersistence(state)
+            );
         } finally {
             lock.unlock();
         }
@@ -131,7 +150,11 @@ public class ConversationStore {
             LoadedConversation loaded = loadForTurn(key, request);
             ConversationState state = loaded.state();
             T result = operation.apply(state);
-            sessionStore.save(key, loaded.version(), state.toPersistenceSnapshot());
+            sessionStore.save(
+                    key,
+                    loaded.version(),
+                    workflowStateMigrationRegistry.snapshotForPersistence(state)
+            );
             return result;
         } finally {
             lock.unlock();
@@ -205,7 +228,7 @@ public class ConversationStore {
         if (!key.userId().equals(record.snapshot().userId())) {
             throw new IllegalStateException("Session snapshot owner does not match storage key");
         }
-        return ConversationState.restore(record.snapshot());
+        return workflowStateMigrationRegistry.restore(record.snapshot());
     }
 
     private record LoadedConversation(ConversationState state, long version) {

@@ -822,7 +822,7 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 - [x] 增加持久化 SessionStore 实现，内存实现只用于测试和 Demo。
 - [x] 同一进程使用 ConversationKey 锁；SessionStore 使用 revision CAS 防止多实例丢失更新。
 - [x] Capability 幂等存储拆为 SPI；JDBC 使用唯一键、租约和结果回放阻止正常并发重复执行。
-- [ ] WorkflowState 已建立 stateSchemaVersion=1 和未来版本失败关闭；注册式迁移链仍待实现。
+- [x] WorkflowState 已建立 stateSchemaVersion 基线、未来版本失败关闭和注册式逐版本迁移链。
 - [ ] 长期记忆增加 TTL、容量上限、摘要上限和脱敏。
 - [ ] 认证系统为 Chat、Memory、Monitor 和 MCP 管理接口提供真实 Principal。
 - [ ] 管理类接口增加角色权限。
@@ -850,7 +850,7 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 当前可以在 `smartcs.persistence.mode=jdbc` 时把会话写入 MySQL，并在重建 ConversationStore 后
 恢复等待用户或等待确认的 Workflow。CAS 已能阻止旧版本覆盖新状态，但不能单独阻止两个实例在
 保存前重复执行副作用。第二批结束时持久化幂等仍未完成；数据库幂等和租约已在第三批补上，
-事务锁、真实 MySQL Testcontainers 和迁移器仍属于后续工作。
+事务锁和真实 MySQL Testcontainers 仍属于后续工作；WorkflowState 迁移器已在第五批完成。
 
 ### Phase 8 第三批进度（2026-07-12）
 
@@ -872,6 +872,17 @@ idempotencyKey 和事务/outbox 仍是后续生产硬化内容。
 数据库运行期掉线时 readiness 返回 503，而 liveness 保持 200；Actuator 只暴露 health 且隐藏
 详情。公共 JDBC 客户端同时增加连接、Socket 和 SQL 执行三层超时，避免网络黑洞时 readiness
 长期占用请求线程。启动期数据库不可达、真实 MySQL/Testcontainers 和连接池仍属于后续工作。
+
+### Phase 8 第五批进度（2026-07-12）
+
+已新增纯 Java `WorkflowStateMigrator` SPI 和不可变 `WorkflowStateMigrationRegistry`。Spring 会自动
+收集各 Workflow 提供的迁移器；注册表在启动期拒绝重复版本、跳版本和链路缺口，在会话恢复时按
+`1 -> 2 -> 3` 顺序迁移，并在下一次成功保存时写入当前版本。详细说明见
+`客服Agent-46-WorkflowStateMigrator注册链说明.md`。
+
+迁移编排只发生在 `ConversationStore` 会话边界。`AgentRuntime`、`WorkflowRouter`、
+`DefaultCapabilityGateway` 和 `ConversationStateCodec` 不包含具体 Workflow 迁移分支。本批没有为了
+演示强行把现有业务状态升级到 v2；当前生产 Workflow 仍写 v1，迁移机制由合成链路和端到端测试验证。
 
 ### 验收标准
 
@@ -1060,7 +1071,7 @@ smartcs:
 
 - [x] 订单、商品、退货申请、退货查询、政策问答已从大 Skill 拆出。
 - [ ] 活跃 Workflow 支持恢复、取消、完成和失败。
-- [ ] WorkflowState 隔离、可持久化并具备 schemaVersion。
+- [x] WorkflowState 隔离、可持久化并具备 schemaVersion 与注册式迁移链。
 - [ ] 副作用 Workflow 在执行前确认。
 
 ### Capability 与 MCP

@@ -160,8 +160,8 @@ Default Typing 或把 Java 类名写进数据库。
 `workflowVersion=2.0.0` 不等于 `stateSchemaVersion=2`。实现代码可能发布 2.1.0，但状态格式仍是 v1；
 也可能实现版本不变，却需要给状态文档增加字段。
 
-本批次建立 v1 基线，并对未知未来版本失败关闭。注册式 Migrator 尚未实现，所以开发计划中
-“schemaVersion 和迁移策略”仍保留未完成状态。
+第二批建立了 v1 基线，并对未知未来版本失败关闭。Phase 8 第五批已经补充注册式
+`WorkflowStateMigrator` 链，详见 `客服Agent-46-WorkflowStateMigrator注册链说明.md`。
 
 ## 6. SessionStore SPI 契约
 
@@ -356,7 +356,8 @@ BUILD SUCCESS
 2. `JdbcDatabaseClient` 每次操作仍使用 DriverManager 新连接，没有 HikariCP 和事务 API；第四批已增加
    连接、Socket 和 SQL 执行超时，避免数据库异常时无限阻塞。
 3. 表结构仍由代码执行 `CREATE TABLE IF NOT EXISTS`，没有 Flyway/Liquibase 迁移历史。
-4. schemaVersion 已建立，但注册式 Conversation/Workflow Migrator 尚未实现。
+4. WorkflowState 注册式迁移链已在第五批完成；外层 Conversation schema 和 CapabilityResult
+   仍没有对应 Migrator。
 5. CAS 本身只防止丢失更新；Capability 的跨实例重复执行已由下一批 JDBC 幂等 Store 缓解，
    详见 `客服Agent-44-Capability幂等持久化与租约说明.md`。
 6. 部分领域锁仍然是进程内实现，领域表唯一约束和事务一致性尚未补齐。
@@ -370,7 +371,7 @@ BUILD SUCCESS
 后续继续解决持久化幂等完成后仍存在的生产硬化问题：
 
 1. 为退货申请增加数据库唯一业务约束。
-2. 实现 WorkflowStateMigrator 注册表，不在 Codec/Router 中写业务 switch。
+2. 为第一个真实 Workflow v2 制定混合版本发布、写版本启用和回滚策略，再新增业务迁移器。
 3. 增加 Testcontainers MySQL 契约测试，覆盖已实现的数据库 readiness 与真实超时行为。
 4. 评估 Session lease、事务锁、outbox 或队列串行化。
 5. 为幂等记录增加 TTL 清理和真实数据库故障注入测试。

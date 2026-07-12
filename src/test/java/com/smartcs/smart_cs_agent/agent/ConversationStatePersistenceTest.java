@@ -3,6 +3,8 @@ package com.smartcs.smart_cs_agent.agent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStateSnapshot;
+import com.smartcs.smart_cs_agent.agent.context.UnsupportedWorkflowStateSchemaException;
+import com.smartcs.smart_cs_agent.agent.context.WorkflowStateMigrationRegistry;
 import com.smartcs.smart_cs_agent.agent.context.WorkflowStateSnapshot;
 import com.smartcs.smart_cs_agent.agent.context.WorkflowStatus;
 import com.smartcs.smart_cs_agent.session.core.ConversationStateCodec;
@@ -10,6 +12,7 @@ import com.smartcs.smart_cs_agent.session.core.UnsupportedSessionSchemaException
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -22,6 +25,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ConversationStatePersistenceTest {
 
     private final ConversationStateCodec codec = new ConversationStateCodec(new ObjectMapper());
+    private final WorkflowStateMigrationRegistry migrationRegistry =
+            new WorkflowStateMigrationRegistry(List.of());
 
     @Test
     void shouldRoundTripWaitingWorkflowWithoutPersistingRuntimeObjects() {
@@ -88,7 +93,7 @@ class ConversationStatePersistenceTest {
     }
 
     @Test
-    void shouldRejectUnknownWorkflowStateSchemaVersion() {
+    void shouldDecodeWorkflowVersionMetadataAndLetMigrationRegistryRejectUnknownFutureVersion() {
         ConversationState state = new ConversationState("我要退货", "USER-001");
         state.startOrResumeWorkflow("return_apply", "2.0.0");
         state.setWorkflowState("return_apply", "step", "WAITING_ORDER_ID");
@@ -98,7 +103,7 @@ class ConversationStatePersistenceTest {
         workflows.put(
                 "return_apply",
                 new WorkflowStateSnapshot(
-                        WorkflowStateSnapshot.CURRENT_SCHEMA_VERSION + 1,
+                        WorkflowStateSnapshot.BASE_SCHEMA_VERSION + 1,
                         Map.of("step", "WAITING_ORDER_ID")
                 )
         );
@@ -108,7 +113,17 @@ class ConversationStatePersistenceTest {
                 workflows
         );
 
-        assertThrows(UnsupportedSessionSchemaException.class, () -> codec.encode(future));
+        String json = codec.encode(future);
+        ConversationStateSnapshot decoded = codec.decode(
+                json,
+                ConversationStateSnapshot.CURRENT_SCHEMA_VERSION
+        );
+
+        assertEquals(2, decoded.workflowStates().get("return_apply").schemaVersion());
+        assertThrows(
+                UnsupportedWorkflowStateSchemaException.class,
+                () -> migrationRegistry.restore(decoded)
+        );
     }
 
     @Test

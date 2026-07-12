@@ -22,6 +22,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - MCP Adapter：新增 `GET /api/mcp/tools` 和 `POST /api/mcp/tools/call`，把内部工具注册表暴露成更接近 MCP `tools/list`、`tools/call` 的协议边界。
 - 独立 MCP Server 第一版：新增 `POST /mcp` JSON-RPC 风格入口，支持 `initialize`、`tools/list` 和 `tools/call`。
 - 数据库持久化：支持 `memory` / `jdbc` 双模式，默认内存模式保证本地测试和 CI 稳定；JDBC 模式除业务数据外，还持久化会话状态和 Capability 幂等记录，并为连接、网络读取和 SQL 执行设置明确超时。
+- 状态演进：Workflow 私有状态支持按 Workflow ID 注册 `1 -> 2 -> 3` 逐版本迁移链；缺链、重复注册和未来版本都会失败关闭，不在 Runtime、Router 或 Codec 中堆业务分支。
 - 后端联调：`HandoffTools` 支持 `memory` / `after-sales-http` 双模式，可调用桌面 `demo/after-sales-sla-platform` 的 `POST /api/tickets` 创建真实售后工单。
 - Monitor 指标与反馈闭环：支持 `GET /api/monitor/summary`、`POST /api/monitor/feedback`、`GET /api/monitor/feedback/candidates`、候选样本审核接口、Eval case 草稿导出接口和半自动合并正式评测集接口，基于 Trace 聚合整体/按工具成功率、LLM 失败率、转人工次数、平均耗时、用户反馈有用率、候选样本审核状态数量和负反馈问题类型分布，并能把无用反馈沉淀成 Eval 待审核候选样本；候选样本会持久化到本地 JSON 文件，服务重启后仍可继续审核；Monitor Summary 会进一步生成结构化风险告警，前端 Monitor 面板可以直接看到工具失败率、LLM 失败率、低有用反馈率、不安全承诺和内部实现泄露等风险。
 - 接口工程化：聊天接口使用明确 DTO、Spring Validation 和统一 `ApiErrorResponse`。
@@ -459,7 +460,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 306 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 313 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -500,6 +501,7 @@ docker compose down
 - [可扩展架构改造开发计划](docs/客服Agent/客服Agent-34-可扩展架构改造开发计划.md)
 - [Capability 幂等持久化与租约说明](docs/客服Agent/客服Agent-44-Capability幂等持久化与租约说明.md)
 - [Liveness 与 Readiness 健康探针说明](docs/客服Agent/客服Agent-45-Liveness与Readiness健康探针说明.md)
+- [WorkflowStateMigrator 注册链说明](docs/客服Agent/客服Agent-46-WorkflowStateMigrator注册链说明.md)
 
 ## 简历表达参考
 

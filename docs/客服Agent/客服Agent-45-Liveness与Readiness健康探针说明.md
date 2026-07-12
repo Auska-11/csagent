@@ -288,6 +288,7 @@ BUILD SUCCESS
 2. 引入 HikariCP，补充连接池容量、等待、验证和泄漏检测治理；现有直接 JDBC 超时作为第一层保护。
 3. 用 Flyway 管理表结构，移除构造器中的建表逻辑。
 4. 根据部署平台配置 readiness/liveness 探针和优雅下线。
-5. 实现 WorkflowStateMigrator 注册链。
+5. WorkflowStateMigrator 注册链已在下一批完成，详见
+   `客服Agent-46-WorkflowStateMigrator注册链说明.md`。
 
 本批完成后，项目已经能够明确表达“进程还活着”和“实例现在可接流量”是两件不同的事。

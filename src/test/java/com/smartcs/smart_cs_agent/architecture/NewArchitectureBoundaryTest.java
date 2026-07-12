@@ -83,6 +83,8 @@ class NewArchitectureBoundaryTest {
     void coreKernelShouldNotImportConcreteBusinessWorkflows() throws IOException {
         List<Path> coreFiles = List.of(
                 Path.of("com/smartcs/smart_cs_agent/agent/AgentRuntime.java"),
+                Path.of("com/smartcs/smart_cs_agent/agent/context/ConversationStore.java"),
+                Path.of("com/smartcs/smart_cs_agent/agent/context/WorkflowStateMigrationRegistry.java"),
                 Path.of("com/smartcs/smart_cs_agent/workflow/core/WorkflowRouter.java"),
                 Path.of("com/smartcs/smart_cs_agent/workflow/core/WorkflowRegistry.java"),
                 Path.of("com/smartcs/smart_cs_agent/capability/core/DefaultCapabilityGateway.java")
@@ -122,6 +124,25 @@ class NewArchitectureBoundaryTest {
             assertFalse(
                     source.contains("import com.smartcs.smart_cs_agent.workflow.warranty"),
                     () -> sourceFile + " must not import WarrantyQueryWorkflow"
+            );
+        }
+    }
+
+    @Test
+    void workflowMigrationRulesShouldNotLeakIntoRuntimeRouterGatewayOrCodec() throws IOException {
+        List<Path> genericFiles = List.of(
+                Path.of("com/smartcs/smart_cs_agent/agent/AgentRuntime.java"),
+                Path.of("com/smartcs/smart_cs_agent/workflow/core/WorkflowRouter.java"),
+                Path.of("com/smartcs/smart_cs_agent/capability/core/DefaultCapabilityGateway.java"),
+                Path.of("com/smartcs/smart_cs_agent/session/core/ConversationStateCodec.java")
+        );
+
+        for (Path relativeFile : genericFiles) {
+            Path sourceFile = MAIN_JAVA.resolve(relativeFile);
+            String source = Files.readString(sourceFile);
+            assertFalse(
+                    source.contains("WorkflowStateMigrator"),
+                    () -> sourceFile + " must not orchestrate Workflow state migrations"
             );
         }
     }
