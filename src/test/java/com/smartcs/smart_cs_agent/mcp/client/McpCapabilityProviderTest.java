@@ -7,6 +7,8 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
+import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
+import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
 import com.smartcs.smart_cs_agent.capability.core.CapabilityProviderProperties;
 import org.junit.jupiter.api.Test;
 
@@ -121,6 +123,31 @@ class McpCapabilityProviderTest {
     }
 
     @Test
+    void shouldRestoreOrderContractsFromRemoteJsonMaps() {
+        FakeTransport singleTransport = new FakeTransport(List.of(readOnlyDefinition("order.lookup")));
+        singleTransport.invokeData = remoteOrder("ORD-001");
+        CapabilityResult<?> single = provider("mcp-remote", singleTransport).invoke(
+                new CapabilityCall("order.lookup", Map.of("order_id", "ORD-001")),
+                authenticatedContext()
+        );
+
+        FakeTransport listTransport = new FakeTransport(List.of(readOnlyDefinition("order.list-by-user")));
+        listTransport.invokeData = Map.of(
+                "user_id", "USER-001",
+                "orders", List.of(remoteOrder("ORD-001"), remoteOrder("ORD-002"))
+        );
+        CapabilityResult<?> list = provider("mcp-remote", listTransport).invoke(
+                new CapabilityCall("order.list-by-user", Map.of()),
+                authenticatedContext()
+        );
+
+        assertTrue(single.getData() instanceof OrderSummary);
+        assertEquals("ORD-001", ((OrderSummary) single.getData()).getOrderId());
+        assertTrue(list.getData() instanceof OrderListResult);
+        assertEquals(2, ((OrderListResult) list.getData()).getCount());
+    }
+
+    @Test
     void hybridShouldKeepLocalApplicationStartableWhenRemoteDiscoveryFails() {
         FakeTransport transport = new FakeTransport(List.of());
         transport.failDiscovery = true;
@@ -159,6 +186,17 @@ class McpCapabilityProviderTest {
                 "conv-mcp-001",
                 "idem-mcp-001",
                 Instant.now().plusSeconds(10)
+        );
+    }
+
+    private Map<String, Object> remoteOrder(String orderId) {
+        return Map.of(
+                "order_id", orderId,
+                "user_id", "USER-001",
+                "product_id", "PROD-001",
+                "product_name", "蓝牙耳机 Pro Max",
+                "status", "已发货",
+                "tracking_no", "SF1234567890"
         );
     }
 

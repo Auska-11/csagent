@@ -7,6 +7,8 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityProvider;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
+import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
+import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
 import com.smartcs.smart_cs_agent.tools.ToolCall;
 import com.smartcs.smart_cs_agent.tools.ToolDefinition;
 import com.smartcs.smart_cs_agent.tools.ToolRegistry;
@@ -15,13 +17,16 @@ import com.smartcs.smart_cs_agent.tools.OrderToolData;
 import com.smartcs.smart_cs_agent.tools.ProductInfoToolData;
 import com.smartcs.smart_cs_agent.tools.ReturnToolData;
 import com.smartcs.smart_cs_agent.tools.UserToolData;
+import com.smartcs.smart_cs_agent.tools.UserOrdersToolData;
 import com.smartcs.smart_cs_agent.tools.KnowledgeSearchResult;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -74,12 +79,13 @@ public class ToolRegistryCapabilityProvider implements CapabilityProvider {
     @Override
     public CapabilityResult<?> invoke(CapabilityCall call, ExecutionContext context) {
         String canonicalId = CapabilityIds.canonicalize(call.getCapabilityId());
+        CapabilityCall securedCall = injectTrustedArguments(canonicalId, call, context);
         ToolResult legacyResult = toolRegistry.execute(
-                new ToolCall(CapabilityIds.legacyName(canonicalId), call.getArguments())
+                new ToolCall(CapabilityIds.legacyName(canonicalId), securedCall.getArguments())
         );
 
         if (legacyResult.isSuccess()) {
-            return normalizeSuccessfulLegacyResult(canonicalId, legacyResult);
+            return normalizeSuccessfulLegacyResult(canonicalId, legacyResult, context);
         }
 
         String errorCode = legacyResult.getErrorCode() == null
@@ -102,7 +108,9 @@ public class ToolRegistryCapabilityProvider implements CapabilityProvider {
     }
 
     /** 把“成功返回但业务对象不存在”从技术成功纠正为 BUSINESS_REJECTED。 */
-    private CapabilityResult<?> normalizeSuccessfulLegacyResult(String capabilityId, ToolResult result) {
+    private CapabilityResult<?> normalizeSuccessfulLegacyResult(String capabilityId,
+                                                                ToolResult result,
+                                                                ExecutionContext context) {
         Object data = result.getData();
 
         // 这是“旧 Tool 输出 -> 新 Capability 输出契约”的 Anti-Corruption Layer。
@@ -121,8 +129,39 @@ public class ToolRegistryCapabilityProvider implements CapabilityProvider {
                     .toList();
             return CapabilityResult.success(capabilityId, PROVIDER_ID, result.getMessage(), hits);
         }
-        if (data instanceof OrderToolData order && !order.isFound()) {
-            return businessRejected(capabilityId, "ORDER_NOT_FOUND", result);
+        if (data instanceof OrderToolData order) {
+            if (!order.isFound()) {
+                return businessRejected(capabilityId, "ORDER_NOT_FOUND", result);
+            }
+
+            // 订单号不是访问凭证。即使用户猜到了其他人的订单号，也不能返回商品和物流详情。
+            String principalUserId = context.getPrincipal().getUserId();
+            if (!principalUserId.isBlank() && !principalUserId.equals(order.getUserId())) {
+                return CapabilityResult.businessRejected(
+                        capabilityId,
+                        PROVIDER_ID,
+                        "ORDER_OWNERSHIP_MISMATCH",
+                        "The order does not belong to the authenticated user",
+                        null
+                );
+            }
+            return CapabilityResult.success(
+                    capabilityId,
+                    PROVIDER_ID,
+                    result.getMessage(),
+                    toOrderSummary(order)
+            );
+        }
+        if (data instanceof UserOrdersToolData userOrders) {
+            List<OrderSummary> orders = userOrders.getOrders().stream()
+                    .map(this::toOrderSummary)
+                    .toList();
+            return CapabilityResult.success(
+                    capabilityId,
+                    PROVIDER_ID,
+                    result.getMessage(),
+                    new OrderListResult(userOrders.getUserId(), orders)
+            );
         }
         if (data instanceof ProductInfoToolData product && !product.isFound()) {
             return businessRejected(capabilityId, "PRODUCT_NOT_FOUND", result);
@@ -134,6 +173,38 @@ public class ToolRegistryCapabilityProvider implements CapabilityProvider {
             return businessRejected(capabilityId, "USER_NOT_FOUND", result);
         }
         return CapabilityResult.success(capabilityId, PROVIDER_ID, result.getMessage(), data);
+    }
+
+    /**
+     * 对涉及身份的旧工具参数做服务端覆盖。
+     *
+     * <p>order.list-by-user 的 user_id 不能由 LLM 或外部 MCP 参数决定。Gateway 已验证 Principal
+     * 至少包含身份；这里把可信 userId 写入旧 ToolRegistry 需要的兼容参数。</p>
+     */
+    private CapabilityCall injectTrustedArguments(String capabilityId,
+                                                  CapabilityCall call,
+                                                  ExecutionContext context) {
+        if (!CapabilityIds.ORDER_LIST_BY_USER.equals(capabilityId)) {
+            return call;
+        }
+        String principalUserId = context.getPrincipal().getUserId();
+        if (principalUserId.isBlank()) {
+            return call;
+        }
+        Map<String, Object> arguments = new LinkedHashMap<>(call.getArguments());
+        arguments.put("user_id", principalUserId);
+        return new CapabilityCall(capabilityId, arguments);
+    }
+
+    private OrderSummary toOrderSummary(OrderToolData order) {
+        return new OrderSummary(
+                order.getOrderId(),
+                order.getUserId(),
+                order.getProductId(),
+                order.getProductName(),
+                order.getStatus(),
+                order.getTrackingNo()
+        );
     }
 
     private CapabilityResult<?> businessRejected(String capabilityId, String errorCode, ToolResult result) {

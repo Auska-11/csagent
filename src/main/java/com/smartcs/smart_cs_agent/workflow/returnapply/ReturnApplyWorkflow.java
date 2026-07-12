@@ -9,8 +9,8 @@ import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
 import com.smartcs.smart_cs_agent.agent.context.Observation;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
+import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
 import com.smartcs.smart_cs_agent.skill.CustomerServiceSlotExtractor;
-import com.smartcs.smart_cs_agent.tools.OrderToolData;
 import com.smartcs.smart_cs_agent.tools.ReturnToolData;
 import com.smartcs.smart_cs_agent.tools.ToolResult;
 import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
@@ -188,22 +188,13 @@ public class ReturnApplyWorkflow implements AgentWorkflow {
                     "订单查询返回业务拒绝：ORDER_NOT_FOUND"
             );
         }
-        if (!result.isSuccess() || !(result.getData() instanceof OrderToolData order)) {
+        if (!result.isSuccess() || !(result.getData() instanceof OrderSummary order)) {
             state.transitionTo(ReturnApplyStep.RETRYABLE_FAILED);
             return WorkflowDecision.next(
                     new FinalAnswerAction("暂时无法验证订单信息，请稍后重试。"),
                     "订单查询技术失败或返回契约不正确"
             );
         }
-        if (!order.isFound()) {
-            state.setOrderId(null);
-            state.transitionTo(ReturnApplyStep.WAITING_ORDER_ID);
-            return WorkflowDecision.next(
-                    new AskUserAction("没有找到该订单，请检查后提供正确的订单号。"),
-                    "订单不存在，重新收集订单号"
-            );
-        }
-
         String requestUserId = context.getRequest().getUserId();
         if (requestUserId == null
                 || requestUserId.isBlank()

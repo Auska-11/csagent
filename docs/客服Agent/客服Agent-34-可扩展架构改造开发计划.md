@@ -743,7 +743,7 @@ CapabilityGateway 第一版内部仍可委托旧 ToolRegistry，逐个能力迁�
 
 ### 建议拆分顺序
 
-1. [ ] `OrderQueryWorkflow`
+1. [x] `OrderQueryWorkflow`（2026-07-12 已完成 Package、状态机、订单契约、安全与集成测试）
 2. [ ] `ReturnQueryWorkflow`
 3. [ ] `ProductAdvisoryWorkflow`
 4. [ ] `PolicyQaWorkflow`
@@ -753,6 +753,9 @@ CapabilityGateway 第一版内部仍可委托旧 ToolRegistry，逐个能力迁�
 
 本轮另外完成了 `[x] WarrantyQueryWorkflow`，作为“新增 Package + Workflow 时核心内核零业务修改”
 的验收样例。它不代表上述 Legacy 分支已经全部迁移。
+
+订单查询迁移的调用链、状态机和安全说明见
+[`客服Agent-35-订单查询Workflow迁移说明.md`](客服Agent-35-订单查询Workflow迁移说明.md)。
 
 ### 共用能力下沉
 
@@ -1144,13 +1147,14 @@ ChatApiController
 1. `agent/CustomerServiceAgent.java`：先看一次请求如何进入 Runtime。
 2. `agent/AgentRuntime.java`：理解通用执行循环，不必先看所有 Trace 辅助方法。
 3. `workflow/core/WorkflowRouter.java`：重点看“恢复活跃 Workflow”为什么先于重新评分。
-4. `workflow/warranty/WarrantyQueryWorkflow.java`：最小只读 Workflow 示例。
-5. `workflow/returnapply/ReturnApplyWorkflow.java`：带槽位、确认、取消和副作用的多轮示例。
-6. `agent/handler/defaults/CapabilityActionHandler.java`：理解 Workflow 的 Action 如何变成能力调用。
-7. `capability/core/DefaultCapabilityGateway.java`：理解身份、deadline、幂等和 Provider 分发。
-8. `capability/local/LocalReturnApplyCapabilityProvider.java` 与
+4. `workflow/orderquery/OrderQueryWorkflow.java`：带身份校验和多轮追问的只读 Workflow 示例。
+5. `workflow/warranty/WarrantyQueryWorkflow.java`：最小只读 Workflow 示例。
+6. `workflow/returnapply/ReturnApplyWorkflow.java`：带槽位、确认、取消和副作用的多轮示例。
+7. `agent/handler/defaults/CapabilityActionHandler.java`：理解 Workflow 的 Action 如何变成能力调用。
+8. `capability/core/DefaultCapabilityGateway.java`：理解身份、deadline、幂等和 Provider 分发。
+9. `capability/local/LocalReturnApplyCapabilityProvider.java` 与
    `domain/returnservice/ReturnApplicationService.java`：理解 Adapter 和领域规则的边界。
-9. `mcp/server/McpServerAdapter.java`、`mcp/client/McpCapabilityProvider.java`、
+10. `mcp/server/McpServerAdapter.java`、`mcp/client/McpCapabilityProvider.java`、
    `mcp/client/HttpMcpClientTransport.java`：最后再看远程协议层。
 
 ### 18.3 新增业务 Skill 的标准步骤

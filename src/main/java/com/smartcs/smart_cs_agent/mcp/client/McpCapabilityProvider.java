@@ -8,6 +8,8 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityProvider;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
 import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
+import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
+import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
 import com.smartcs.smart_cs_agent.capability.core.CapabilityProviderProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Component;
@@ -170,13 +172,19 @@ public class McpCapabilityProvider implements CapabilityProvider {
      * 这个转换放在 Provider，而不是 Warranty Workflow 中，保证业务流程与传输协议无关。
      */
     private Object normalizeContractData(String remoteCapabilityId, Object data) {
-        if (!CapabilityIds.KNOWLEDGE_SEARCH.equals(CapabilityIds.canonicalize(remoteCapabilityId))
-                || !(data instanceof List<?> rows)) {
-            return data;
+        String capabilityId = CapabilityIds.canonicalize(remoteCapabilityId);
+        if (CapabilityIds.ORDER_LOOKUP.equals(capabilityId)) {
+            return data instanceof OrderSummary order ? order : OrderSummary.fromMap(data);
         }
-        return rows.stream()
-                .map(row -> row instanceof KnowledgeSearchHit hit ? hit : KnowledgeSearchHit.fromMap(row))
-                .filter(java.util.Objects::nonNull)
-                .toList();
+        if (CapabilityIds.ORDER_LIST_BY_USER.equals(capabilityId)) {
+            return data instanceof OrderListResult orders ? orders : OrderListResult.fromMap(data);
+        }
+        if (CapabilityIds.KNOWLEDGE_SEARCH.equals(capabilityId) && data instanceof List<?> rows) {
+            return rows.stream()
+                    .map(row -> row instanceof KnowledgeSearchHit hit ? hit : KnowledgeSearchHit.fromMap(row))
+                    .filter(java.util.Objects::nonNull)
+                    .toList();
+        }
+        return data;
     }
 }

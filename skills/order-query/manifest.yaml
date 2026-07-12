@@ -1,0 +1,22 @@
+# 独立订单查询 Agent Skill Package。
+#
+# 本文件声明 Prompt、Workflow 绑定和最小权限；真正的多轮逻辑位于 OrderQueryWorkflow。
+id: order-query
+version: 1.0.0
+description: 查询单个订单状态、物流，或当前登录用户的全部订单
+workflow: order_query
+priority: 170
+triggers:
+  - 查询订单状态
+  - 查询物流信息
+  - 查看我的全部订单
+allowed_capabilities:
+  - order.lookup
+  - order.list-by-user
+  - handoff.request
+risk_level: mixed
+confirmation_policy: user-requested-handoff
+prompt: SKILL.md
+references:
+  - path: references/response-guidance.md
+    always: true

@@ -79,6 +79,33 @@ class NewArchitectureBoundaryTest {
         );
     }
 
+    @Test
+    void coreKernelShouldNotImportConcreteBusinessWorkflows() throws IOException {
+        List<Path> coreFiles = List.of(
+                Path.of("com/smartcs/smart_cs_agent/agent/AgentRuntime.java"),
+                Path.of("com/smartcs/smart_cs_agent/workflow/core/WorkflowRouter.java"),
+                Path.of("com/smartcs/smart_cs_agent/workflow/core/WorkflowRegistry.java"),
+                Path.of("com/smartcs/smart_cs_agent/capability/core/DefaultCapabilityGateway.java")
+        );
+
+        for (Path relativeFile : coreFiles) {
+            Path sourceFile = MAIN_JAVA.resolve(relativeFile);
+            String source = Files.readString(sourceFile);
+            assertFalse(
+                    source.contains("import com.smartcs.smart_cs_agent.workflow.orderquery"),
+                    () -> sourceFile + " must not import OrderQueryWorkflow"
+            );
+            assertFalse(
+                    source.contains("import com.smartcs.smart_cs_agent.workflow.returnapply"),
+                    () -> sourceFile + " must not import ReturnApplyWorkflow"
+            );
+            assertFalse(
+                    source.contains("import com.smartcs.smart_cs_agent.workflow.warranty"),
+                    () -> sourceFile + " must not import WarrantyQueryWorkflow"
+            );
+        }
+    }
+
     private void assertNoForbiddenImports(Path relativePackage,
                                           List<String> forbiddenPackages) throws IOException {
         Path packagePath = MAIN_JAVA.resolve(relativePackage);

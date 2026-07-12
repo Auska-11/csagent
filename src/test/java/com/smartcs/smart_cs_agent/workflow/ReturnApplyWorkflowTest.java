@@ -9,10 +9,8 @@ import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.agent.context.WorkflowStatus;
-import com.smartcs.smart_cs_agent.model.Order;
-import com.smartcs.smart_cs_agent.model.Product;
+import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
 import com.smartcs.smart_cs_agent.model.ReturnRecord;
-import com.smartcs.smart_cs_agent.tools.OrderToolData;
 import com.smartcs.smart_cs_agent.tools.ReturnToolData;
 import com.smartcs.smart_cs_agent.tools.ToolResult;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowDecision;
@@ -167,10 +165,14 @@ class ReturnApplyWorkflowTest {
         return new TurnContext(new ChatRequest("conv-return", userId, message), state);
     }
 
-    private OrderToolData ownedOrder(String ownerId) {
-        return OrderToolData.found(
-                new Order("ORD-003", ownerId, "PROD-003", "已签收", "YT9876543210"),
-                new Product("PROD-003", "USB-C 数据线", 39, 20, "测试商品")
+    private OrderSummary ownedOrder(String ownerId) {
+        return new OrderSummary(
+                "ORD-003",
+                ownerId,
+                "PROD-003",
+                "USB-C 数据线",
+                "已签收",
+                "YT9876543210"
         );
     }
 
