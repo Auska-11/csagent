@@ -1,0 +1,19 @@
+# 通用客服政策问答 Agent Skill Package。
+id: policy-qa
+version: 1.0.0
+description: 回答退换货、发票、配送和人工转接规则等通用客服政策
+workflow: policy_qa
+priority: 178
+triggers:
+  - 超过七天还能退吗
+  - 发票什么时候开
+  - 偏远地区可以配送吗
+allowed_capabilities:
+  - knowledge.search
+  - handoff.request
+risk_level: mixed
+confirmation_policy: user-requested-handoff
+prompt: SKILL.md
+references:
+  - path: references/answer-boundary.md
+    always: true
