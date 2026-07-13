@@ -49,6 +49,11 @@ smartcs:
   capability:
     # local：直接调用本进程 Provider；mcp-remote：只使用远程 MCP；hybrid：本地为主并额外暴露带命名空间的远程能力。
     provider-mode: ${SMARTCS_CAPABILITY_PROVIDER_MODE:local}
+    execution:
+      # Provider 在线程池中执行，deadline 到期后请求线程不再无限等待。
+      # 工作线程与排队请求都有上限，防止下游卡死时继续无限创建线程或堆积任务。
+      max-threads: ${SMARTCS_CAPABILITY_EXECUTION_MAX_THREADS:16}
+      queue-capacity: ${SMARTCS_CAPABILITY_EXECUTION_QUEUE_CAPACITY:64}
     idempotency:
       # jdbc 模式下，执行者先占有一段租约；实例崩溃后，其他实例只能等租约过期再接管。
       lease-ms: ${SMARTCS_IDEMPOTENCY_LEASE_MS:60000}

@@ -69,6 +69,27 @@ public final class ExecutionContext {
         return deadline;
     }
 
+    /**
+     * 复制当前安全上下文，只替换 deadline。
+     *
+     * <p>CapabilityGateway 会把上游 Turn deadline 与 CapabilityDefinition 的默认超时取较早值。
+     * 其他身份、租户和幂等字段必须原样保留，绝不能让模型或 Provider 在收紧超时时顺便改写它们。</p>
+     */
+    public ExecutionContext withDeadline(Instant newDeadline) {
+        Objects.requireNonNull(newDeadline, "deadline cannot be null");
+        if (newDeadline.equals(deadline)) {
+            return this;
+        }
+        return new ExecutionContext(
+                traceId,
+                principal,
+                tenantId,
+                conversationId,
+                idempotencyKey,
+                newDeadline
+        );
+    }
+
     public boolean isExpired() {
         return deadline != null && Instant.now().isAfter(deadline);
     }

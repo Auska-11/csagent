@@ -14,6 +14,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.idempotency.api.CapabilityIdempotencyStore;
 import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyExecutionInProgressException;
 import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyKeyConflictException;
+import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyWaitDeadlineExceededException;
 import com.smartcs.smart_cs_agent.capability.idempotency.memory.InMemoryCapabilityIdempotencyStore;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,16 +44,34 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
     private final Map<String, CapabilityProvider> providerByCapability;
     private final CapabilityCatalog catalog;
     private final CapabilityIdempotencyStore idempotencyStore;
+    private final CapabilityExecutionGuard executionGuard;
 
     public DefaultCapabilityGateway(List<CapabilityProvider> providers) {
         // 手动 new Gateway 的单元测试默认使用内存实现；Spring 运行时会走下面的注入构造函数，
         // 根据 smartcs.persistence.mode 选择内存或 JDBC Store。
-        this(providers, new InMemoryCapabilityIdempotencyStore());
+        this(
+                providers,
+                new InMemoryCapabilityIdempotencyStore(),
+                CapabilityExecutionGuard.sharedDefault()
+        );
+    }
+
+    public DefaultCapabilityGateway(List<CapabilityProvider> providers,
+                                    CapabilityIdempotencyStore idempotencyStore) {
+        this(providers, idempotencyStore, CapabilityExecutionGuard.sharedDefault());
+    }
+
+    /** 测试可以注入小容量执行器，稳定复现排队和饱和场景。 */
+    public DefaultCapabilityGateway(List<CapabilityProvider> providers,
+                                    CapabilityIdempotencyStore idempotencyStore,
+                                    CapabilityInvocationExecutor invocationExecutor) {
+        this(providers, idempotencyStore, new CapabilityExecutionGuard(invocationExecutor));
     }
 
     @Autowired
     public DefaultCapabilityGateway(List<CapabilityProvider> providers,
-                                    CapabilityIdempotencyStore idempotencyStore) {
+                                    CapabilityIdempotencyStore idempotencyStore,
+                                    CapabilityExecutionGuard executionGuard) {
         List<CapabilityProvider> safeProviders = providers == null ? List.of() : List.copyOf(providers);
         Map<String, CapabilityProvider> providerMap = new LinkedHashMap<>();
         Collection<CapabilityDefinition> allDefinitions = new ArrayList<>();
@@ -74,6 +93,10 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
         this.providerByCapability = Map.copyOf(providerMap);
         this.catalog = new CapabilityCatalog(allDefinitions);
         this.idempotencyStore = Objects.requireNonNull(idempotencyStore, "idempotencyStore cannot be null");
+        this.executionGuard = Objects.requireNonNull(
+                executionGuard,
+                "executionGuard cannot be null"
+        );
     }
 
     @Override
@@ -102,7 +125,10 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
 
         CapabilityDefinition definition = catalog.get(canonicalId);
 
-        if (context.isExpired()) {
+        // 能力自己的默认超时不能突破上游 Turn deadline；反过来，上游给了更长预算时，
+        // 每项能力仍只拿到契约声明的最大执行时间。
+        ExecutionContext boundedContext = executionGuard.boundExecutionContext(definition, context);
+        if (executionGuard.deadlineReached(boundedContext)) {
             return CapabilityResult.technicalFailure(
                     canonicalId,
                     provider.providerId(),
@@ -111,7 +137,11 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
             );
         }
 
-        CapabilityResult<?> denied = validateExecutionContext(definition, context, provider.providerId());
+        CapabilityResult<?> denied = validateExecutionContext(
+                definition,
+                boundedContext,
+                provider.providerId()
+        );
         if (denied != null) {
             return denied;
         }
@@ -122,8 +152,27 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
                 return idempotencyStore.execute(
                         storageKey,
                         fingerprint(canonicalCall),
-                        () -> invokeProvider(provider, canonicalCall, context)
+                        () -> {
+                            CapabilityExecutionGuard.ProviderExecution execution = executionGuard.invoke(
+                                    definition,
+                                    provider,
+                                    canonicalCall,
+                                    boundedContext,
+                                    () -> invokeProvider(provider, canonicalCall, boundedContext)
+                            );
+                            if (!execution.providerStarted()) {
+                                /*
+                                 * Provider 尚未开始，说明没有副作用不确定性。抛出内部异常让 Store 删除
+                                 * IN_PROGRESS 占位；Gateway 随后把原结构化失败返回给调用方。
+                                 */
+                                throw new ProviderNotStartedException(execution.result());
+                            }
+                            return execution.result();
+                        },
+                        boundedContext.getDeadline()
                 );
+            } catch (ProviderNotStartedException e) {
+                return e.result();
             } catch (IdempotencyKeyConflictException e) {
                 return CapabilityResult.technicalFailure(
                         canonicalId,
@@ -138,6 +187,13 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
                         "IDEMPOTENCY_EXECUTION_IN_PROGRESS",
                         "The same side-effect operation is still running"
                 );
+            } catch (IdempotencyWaitDeadlineExceededException e) {
+                return CapabilityResult.technicalFailure(
+                        canonicalId,
+                        provider.providerId(),
+                        "CAPABILITY_DEADLINE_EXCEEDED",
+                        "Capability deadline expired while waiting for the existing operation"
+                );
             } catch (RuntimeException e) {
                 // 幂等数据库本身也是副作用安全边界。它不可用时不能绕过 Store 直接调用 Provider，
                 // 否则一次基础设施故障就可能造成重复写入。
@@ -150,7 +206,13 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
             }
         }
 
-        return invokeProvider(provider, canonicalCall, context);
+        return executionGuard.invoke(
+                definition,
+                provider,
+                canonicalCall,
+                boundedContext,
+                () -> invokeProvider(provider, canonicalCall, boundedContext)
+        ).result();
     }
 
     private CapabilityResult<?> validateExecutionContext(CapabilityDefinition definition,
@@ -243,5 +305,19 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
     private String segment(String value) {
         String safe = value == null ? "" : value;
         return safe.length() + ":" + safe;
+    }
+
+    /** 仅在 Provider 确认尚未开始时穿过 IdempotencyStore，触发安全释放占位。 */
+    private static final class ProviderNotStartedException extends RuntimeException {
+        private final CapabilityResult<?> result;
+
+        private ProviderNotStartedException(CapabilityResult<?> result) {
+            super("Capability provider did not start");
+            this.result = result;
+        }
+
+        private CapabilityResult<?> result() {
+            return result;
+        }
     }
 }

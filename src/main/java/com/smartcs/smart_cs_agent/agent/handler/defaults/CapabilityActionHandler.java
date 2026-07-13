@@ -160,6 +160,8 @@ public class CapabilityActionHandler implements ActionHandler<CapabilityAction> 
                 + ":" + turn.getState().getWorkflowStartedAt()
                 + ":" + capability;
 
+        // 这是普通 Action 给出的上游最大预算。Gateway 还会读取 CapabilityDefinition.defaultTimeoutMs，
+        // 两者取较早值，所以某个默认 2 秒的能力不会因为这里写 30 秒就多执行 28 秒。
         return new ExecutionContext(
                 traceId,
                 turn.getRequest().getPrincipal(),

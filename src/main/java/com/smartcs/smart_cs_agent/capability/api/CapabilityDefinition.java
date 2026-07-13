@@ -23,6 +23,10 @@ public final class CapabilityDefinition {
     private final boolean requiresAuthentication;
     private final boolean sideEffect;
     private final boolean idempotent;
+    /**
+     * 单次 Provider 的默认最大等待时间。Gateway 会通过 CapabilityExecutionGuard 真正执行该边界，
+     * 并与上游 ExecutionContext deadline 取较早值；它不再只是 MCP Catalog 的展示字段。
+     */
     private final long defaultTimeoutMs;
     private final CapabilityRiskLevel riskLevel;
 

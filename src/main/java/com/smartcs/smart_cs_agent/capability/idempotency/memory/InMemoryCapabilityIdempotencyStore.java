@@ -2,14 +2,20 @@ package com.smartcs.smart_cs_agent.capability.idempotency.memory;
 
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.idempotency.api.CapabilityIdempotencyStore;
+import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyWaitDeadlineExceededException;
 import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyKeyConflictException;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 /**
@@ -32,6 +38,14 @@ public class InMemoryCapabilityIdempotencyStore implements CapabilityIdempotency
     public CapabilityResult<?> execute(String storageKey,
                                        String requestFingerprint,
                                        Supplier<CapabilityResult<?>> operation) {
+        return execute(storageKey, requestFingerprint, operation, null);
+    }
+
+    @Override
+    public CapabilityResult<?> execute(String storageKey,
+                                       String requestFingerprint,
+                                       Supplier<CapabilityResult<?>> operation,
+                                       Instant deadline) {
         Entry candidate = new Entry(requestFingerprint);
         Entry existing = entries.putIfAbsent(storageKey, candidate);
 
@@ -39,11 +53,7 @@ public class InMemoryCapabilityIdempotencyStore implements CapabilityIdempotency
             if (!existing.requestFingerprint.equals(requestFingerprint)) {
                 throw new IdempotencyKeyConflictException(storageKey);
             }
-            try {
-                return existing.result.join().asReplayed();
-            } catch (CompletionException e) {
-                throw unwrap(e);
-            }
+            return awaitExisting(existing, storageKey, deadline).asReplayed();
         }
 
         try {
@@ -62,6 +72,36 @@ public class InMemoryCapabilityIdempotencyStore implements CapabilityIdempotency
 
     public int size() {
         return entries.size();
+    }
+
+    private CapabilityResult<?> awaitExisting(Entry existing,
+                                               String storageKey,
+                                               Instant deadline) {
+        if (deadline == null) {
+            try {
+                return existing.result.join();
+            } catch (CompletionException e) {
+                throw unwrap(e);
+            }
+        }
+
+        long remainingNanos = Duration.between(Instant.now(), deadline).toNanos();
+        if (remainingNanos <= 0) {
+            throw new IdempotencyWaitDeadlineExceededException(storageKey);
+        }
+        try {
+            return existing.result.get(remainingNanos, TimeUnit.NANOSECONDS);
+        } catch (TimeoutException e) {
+            throw new IdempotencyWaitDeadlineExceededException(storageKey);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting for idempotent result", e);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            throw cause instanceof RuntimeException runtime
+                    ? runtime
+                    : new IllegalStateException("Idempotent operation failed", cause);
+        }
     }
 
     private RuntimeException unwrap(CompletionException exception) {

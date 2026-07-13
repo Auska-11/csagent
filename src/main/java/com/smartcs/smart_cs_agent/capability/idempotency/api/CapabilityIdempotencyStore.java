@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.capability.idempotency.api;
 
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 
+import java.time.Instant;
 import java.util.function.Supplier;
 
 /**
@@ -18,4 +19,19 @@ public interface CapabilityIdempotencyStore {
             String requestFingerprint,
             Supplier<CapabilityResult<?>> operation
     );
+
+    /**
+     * 带调用方 deadline 的等待入口。
+     *
+     * <p>owner 仍由 operation 自己执行；deadline 主要约束“另一个相同请求正在运行时，本请求最多等多久”。
+     * 默认实现保留第三方 Store 的兼容性，内存和 JDBC 官方实现会真正执行这个时间边界。</p>
+     */
+    default CapabilityResult<?> execute(
+            String storageKey,
+            String requestFingerprint,
+            Supplier<CapabilityResult<?>> operation,
+            Instant deadline
+    ) {
+        return execute(storageKey, requestFingerprint, operation);
+    }
 }

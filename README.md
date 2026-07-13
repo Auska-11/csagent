@@ -21,6 +21,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - Capability 与 MCP：统一 `CapabilityDefinition`、输入/输出 schema、三态结果、Gateway 和 Local/MCP Provider；`GET /api/mcp/tools`、`POST /api/mcp/tools/call` 与 `POST /mcp` 共用同一 Catalog 和 Server Adapter。
 - 独立 MCP Server 第一版：`POST /mcp` 支持 `initialize`、`tools/list` 和 `tools/call`；HTTP Client 每次请求使用 MCP_CLIENT Bearer JWT，JSON-RPC body 不再携带身份凭据。
 - 数据库持久化：支持 `memory` / `jdbc` 双模式，默认内存模式保证本地测试和 CI 稳定；JDBC 模式除业务数据外，还持久化会话状态和 Capability 幂等记录，并为连接、网络读取和 SQL 执行设置明确超时。
+- Capability 执行预算：能力默认超时与上游 deadline 取较早值，Provider 在有界线程池中执行；副作用开始后超时返回并回放 `CAPABILITY_RESULT_UNKNOWN`，不会把“停止等待”误写成“操作肯定失败”。
 - 状态演进：Workflow 私有状态支持按 Workflow ID 注册 `1 -> 2 -> 3` 逐版本迁移链；缺链、重复注册和未来版本都会失败关闭，不在 Runtime、Router 或 Codec 中堆业务分支。
 - 后端联调：`HandoffTools` 支持 `memory` / `after-sales-http` 双模式，可调用桌面 `demo/after-sales-sla-platform` 的 `POST /api/tickets` 创建真实售后工单。
 - Monitor 指标与反馈闭环：支持 `GET /api/monitor/summary`、`POST /api/monitor/feedback`、`GET /api/monitor/feedback/candidates`、候选样本审核接口、Eval case 草稿导出接口和半自动合并正式评测集接口，基于 Trace 聚合整体/按工具成功率、LLM 失败率、转人工次数、平均耗时、用户反馈有用率、候选样本审核状态数量和负反馈问题类型分布，并能把无用反馈沉淀成 Eval 待审核候选样本；候选样本会持久化到本地 JSON 文件，服务重启后仍可继续审核；Monitor Summary 会进一步生成结构化风险告警，前端 Monitor 面板可以直接看到工具失败率、LLM 失败率、低有用反馈率、不安全承诺和内部实现泄露等风险。
@@ -355,7 +356,12 @@ $env:SMARTCS_JDBC_SOCKET_TIMEOUT_MS="10000"
 $env:SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS="5"
 ```
 
-启动后，项目会自动创建四张业务表，以及 `cs_agent_session`、`cs_capability_idempotency` 两张 Agent 基础设施表，并写入演示种子数据。默认连接超时为 3 秒、Socket 读取超时为 10 秒、单条 SQL 超时为 5 秒，避免数据库故障时业务请求和 readiness 长期阻塞。业务表、会话与幂等存储分别见 [数据库持久化设计](docs/客服Agent/客服Agent-28-数据库持久化设计.md)、[SessionStore 持久化与恢复说明](docs/客服Agent/客服Agent-43-SessionStore持久化与恢复说明.md) 和 [Capability 幂等持久化与租约说明](docs/客服Agent/客服Agent-44-Capability幂等持久化与租约说明.md)。
+启动后，项目会自动创建四张业务表、`cs_agent_session`、`cs_capability_idempotency` 和三张人工转接
+Outbox 表，并写入演示种子数据。默认连接超时为 3 秒、Socket 读取超时为 10 秒、单条 SQL 超时为
+5 秒，避免数据库故障时业务请求和 readiness 长期阻塞。业务表、会话与幂等存储分别见
+[数据库持久化设计](docs/客服Agent/客服Agent-28-数据库持久化设计.md)、
+[SessionStore 持久化与恢复说明](docs/客服Agent/客服Agent-43-SessionStore持久化与恢复说明.md) 和
+[Capability 幂等持久化与租约说明](docs/客服Agent/客服Agent-44-Capability幂等持久化与租约说明.md)。
 
 默认 RAG 使用本地检索，不依赖外部向量库。如果要演示真 embedding + Qdrant，可以先启动 Qdrant：
 
@@ -536,7 +542,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 397 个测试用例；另有 1 项显式真实 MySQL IT 通过。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 405 个测试用例；另有 1 项显式真实 MySQL IT 通过。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -591,6 +597,7 @@ docker compose down
 - [Outbox 调用前准备与成功结果回放说明](docs/客服Agent/客服Agent-57-Outbox调用前准备与成功结果回放说明.md)
 - [Outbox 租约与后台有限恢复说明](docs/客服Agent/客服Agent-58-Outbox租约与后台有限恢复说明.md)
 - [真实 MySQL 与 Docker 编排验收说明](docs/客服Agent/客服Agent-59-真实MySQL与Docker编排验收说明.md)
+- [Capability 执行中 Deadline 与结果未知说明](docs/客服Agent/客服Agent-60-Capability执行中Deadline与结果未知说明.md)
 
 ## 简历表达参考
 

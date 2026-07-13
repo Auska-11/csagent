@@ -5,6 +5,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.idempotency.core.CapabilityResultCodec;
 import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyKeyConflictException;
+import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyWaitDeadlineExceededException;
 import com.smartcs.smart_cs_agent.capability.idempotency.jdbc.JdbcCapabilityIdempotencyStore;
 import com.smartcs.smart_cs_agent.persistence.JdbcDatabaseClient;
 import com.smartcs.smart_cs_agent.persistence.JdbcDuplicateKeyException;
@@ -15,6 +16,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.Optional;
@@ -143,6 +145,56 @@ class JdbcCapabilityIdempotencyStoreTest {
                         )
                 )
         );
+    }
+
+    @Test
+    void shouldStopWaitingForExistingOwnerAtRequestDeadline() throws Exception {
+        RecordingJdbcDatabaseClient database = new RecordingJdbcDatabaseClient();
+        CapabilityResultCodec codec = new CapabilityResultCodec(new ObjectMapper());
+        JdbcCapabilityIdempotencyStore firstStore = store(database, codec);
+        JdbcCapabilityIdempotencyStore secondStore = store(database, codec);
+        CountDownLatch providerEntered = new CountDownLatch(1);
+        CountDownLatch releaseProvider = new CountDownLatch(1);
+        AtomicInteger invocations = new AtomicInteger();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try {
+            Future<CapabilityResult<?>> owner = executor.submit(() -> firstStore.execute(
+                    "tenant:return.apply:deadline-wait",
+                    "deadline-fingerprint",
+                    () -> {
+                        invocations.incrementAndGet();
+                        providerEntered.countDown();
+                        await(releaseProvider);
+                        return CapabilityResult.success(
+                                "return.apply", "test-provider", "submitted", Map.of()
+                        );
+                    }
+            ));
+            assertTrue(providerEntered.await(2, TimeUnit.SECONDS));
+
+            assertThrows(
+                    IdempotencyWaitDeadlineExceededException.class,
+                    () -> secondStore.execute(
+                            "tenant:return.apply:deadline-wait",
+                            "deadline-fingerprint",
+                            () -> {
+                                invocations.incrementAndGet();
+                                return CapabilityResult.success(
+                                        "return.apply", "test-provider", "duplicate", Map.of()
+                                );
+                            },
+                            Instant.now().plusMillis(80)
+                    )
+            );
+            assertEquals(1, invocations.get());
+
+            releaseProvider.countDown();
+            assertTrue(owner.get(2, TimeUnit.SECONDS).isSuccess());
+        } finally {
+            releaseProvider.countDown();
+            executor.shutdownNow();
+        }
     }
 
     @Test

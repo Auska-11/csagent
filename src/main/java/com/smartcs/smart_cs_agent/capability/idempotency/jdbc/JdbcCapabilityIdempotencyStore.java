@@ -5,6 +5,7 @@ import com.smartcs.smart_cs_agent.capability.idempotency.api.CapabilityIdempoten
 import com.smartcs.smart_cs_agent.capability.idempotency.core.CapabilityResultCodec;
 import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyExecutionInProgressException;
 import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyKeyConflictException;
+import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyWaitDeadlineExceededException;
 import com.smartcs.smart_cs_agent.persistence.JdbcDatabaseClient;
 import com.smartcs.smart_cs_agent.persistence.JdbcDuplicateKeyException;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
@@ -86,6 +88,14 @@ public class JdbcCapabilityIdempotencyStore implements CapabilityIdempotencyStor
     public CapabilityResult<?> execute(String storageKey,
                                        String requestFingerprint,
                                        Supplier<CapabilityResult<?>> operation) {
+        return execute(storageKey, requestFingerprint, operation, null);
+    }
+
+    @Override
+    public CapabilityResult<?> execute(String storageKey,
+                                       String requestFingerprint,
+                                       Supplier<CapabilityResult<?>> operation,
+                                       Instant requestDeadline) {
         requireText(storageKey, "storageKey cannot be empty");
         requireText(requestFingerprint, "requestFingerprint cannot be empty");
         Objects.requireNonNull(operation, "operation cannot be null");
@@ -93,7 +103,16 @@ public class JdbcCapabilityIdempotencyStore implements CapabilityIdempotencyStor
         String keyHash = sha256(storageKey);
         String fingerprintHash = sha256(requestFingerprint);
         String ownerToken = UUID.randomUUID().toString();
-        long waitDeadline = System.currentTimeMillis() + waitTimeoutMs;
+        long startedAt = System.currentTimeMillis();
+        long configuredWaitDeadline = safeAdd(startedAt, waitTimeoutMs);
+        long requestWaitDeadline = requestDeadline == null
+                ? Long.MAX_VALUE
+                : epochMilliOrBoundary(requestDeadline);
+        long waitDeadline = Math.min(configuredWaitDeadline, requestWaitDeadline);
+
+        if (startedAt >= waitDeadline) {
+            throwWaitLimit(storageKey, requestWaitDeadline, configuredWaitDeadline);
+        }
 
         while (true) {
             long now = System.currentTimeMillis();
@@ -129,7 +148,7 @@ public class JdbcCapabilityIdempotencyStore implements CapabilityIdempotencyStor
             }
 
             if (now >= waitDeadline) {
-                throw new IdempotencyExecutionInProgressException(storageKey);
+                throwWaitLimit(storageKey, requestWaitDeadline, configuredWaitDeadline);
             }
             sleep(Math.min(pollIntervalMs, Math.max(1, waitDeadline - now)));
         }
@@ -333,6 +352,32 @@ public class JdbcCapabilityIdempotencyStore implements CapabilityIdempotencyStor
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while waiting for idempotent result", e);
+        }
+    }
+
+    private void throwWaitLimit(String storageKey,
+                                long requestWaitDeadline,
+                                long configuredWaitDeadline) {
+        if (requestWaitDeadline <= configuredWaitDeadline) {
+            throw new IdempotencyWaitDeadlineExceededException(storageKey);
+        }
+        throw new IdempotencyExecutionInProgressException(storageKey);
+    }
+
+    private long safeAdd(long left, long right) {
+        if (Long.MAX_VALUE - left < right) {
+            return Long.MAX_VALUE;
+        }
+        return left + right;
+    }
+
+    private long epochMilliOrBoundary(Instant instant) {
+        try {
+            return instant.toEpochMilli();
+        } catch (ArithmeticException outOfEpochRange) {
+            // 外部 Store 调用者可能直接传 Instant.MAX/MIN；把它们钳制到 long 边界，避免时间换算异常
+            // 被 Gateway 误报为幂等数据库故障。正常 Capability deadline 都远小于这个范围。
+            return instant.isAfter(Instant.EPOCH) ? Long.MAX_VALUE : Long.MIN_VALUE;
         }
     }
 

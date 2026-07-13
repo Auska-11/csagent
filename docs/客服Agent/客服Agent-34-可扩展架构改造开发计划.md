@@ -8,7 +8,7 @@
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 397 个默认测试及 1 个显式真实 MySQL IT 通过；Agent 镜像与完整 Compose 实际运行通过，容器 JAR 含 9 个 Skill Package |
+| 当前验证规模 | 405 个默认测试及 1 个显式真实 MySQL IT 通过；Capability 执行中 deadline、Agent 镜像与完整 Compose 均已实际验收 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -23,8 +23,8 @@
 这里的“核心目标完成”不等于整份长期路线图全部结束。Phase 7 的生产路由迁移已经完成，但旧
 `CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的应用日志与 MCP 普通审计安全已经
 收口，售后/Embedding/Qdrant 也已有独立 HTTP 超时；人工转接已具备调用前 PREPARED、结果未知持久化、
-成功回放、租约和后台有限补建。但整轮 deadline、售后结果查询与人工复核入口、真实数据库和容器
-故障注入，以及 Phase 9 的 Legacy 删除仍是后续演进项，
+成功回放、租约和后台有限补建；真实 MySQL 与完整容器故障注入、Capability 执行中 deadline 也已完成。
+但 LLM 重试总预算、售后结果查询与人工复核入口，以及 Phase 9 的 Legacy 删除仍是后续演进项，
 不能把它们误写成已完成。
 
 ## 2. 为什么需要这次改造（改造前问题）
@@ -48,7 +48,7 @@
 5. 每轮只按最新消息选 Skill，不足以支持可靠的多轮 Workflow 粘性状态。
 6. `AgentRuntime` 使用 Action 类型分支执行动作，新增 Action 仍需修改 Runtime。
 7. Tool 契约、Tool 执行、MCP 协议适配之间仍有耦合，未来本地和远程实现容易出现重复定义。
-8. pending 人工工单、整轮 deadline、真实数据库故障注入和部分生产数据一致性边界仍未完全收口。
+8. 人工复核入口、LLM 整轮重试预算、多实例进程故障注入和部分生产数据一致性边界仍未完全收口。
 
 因此，本次改造的目标不是增加更多目录，而是建立稳定的扩展协议和单向依赖关系。
 
@@ -839,8 +839,9 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
   - [x] ConversationStore/CapabilityIdempotencyStore 重建恢复与 Session 保存失败回放测试。
   - [x] Agent 步数预算、MCP 真实读取超时、有限重试、协议失败、熔断打开和冷却恢复测试。
   - [x] 售后、Embedding 和 Qdrant 独立连接/读取超时及真实慢 HTTP Server 测试。
-  - [ ] Capability 执行中 deadline 和 LLM 重试上限测试。
-  - [ ] 真实 MySQL 并发、重启、查询超时、readiness 掉线与恢复测试。
+  - [x] Capability 执行中 deadline、结果未知回放和有界执行器饱和测试。
+  - [ ] LLM 重试次数与整轮总预算测试。
+  - [x] 真实 MySQL 并发、重启、查询超时、readiness 掉线与恢复测试。
 
 ### Phase 8 第一批进度（2026-07-12）
 
@@ -1106,6 +1107,20 @@ unhealthy，恢复 MySQL 后自动回到 healthy；重启 Agent 后 Session 快�
 Memory API 也能正常读取会话。验收后已停止容器并保留 MySQL 数据卷。详细记录见
 `客服Agent-59-真实MySQL与Docker编排验收说明.md`。
 
+### Phase 8 第十八批进度（2026-07-13）
+
+`CapabilityDefinition.defaultTimeoutMs` 不再只是展示字段。Gateway 现在把上游 ExecutionContext deadline 与
+能力默认超时取较早值，并把收紧后的上下文传给 Provider；Provider 由最大线程数和排队容量均受限的
+`CapabilityInvocationExecutor` 执行，请求线程到期后停止等待并尝试中断。
+
+超时语义按 Provider 是否真正开始区分：尚未开始时返回 `CAPABILITY_DEADLINE_EXCEEDED` 并释放幂等占位；
+副作用已开始时返回 `CAPABILITY_RESULT_UNKNOWN`，由内存/JDBC 幂等 Store 保存并稳定回放，避免换 key
+自动重试。等待相同幂等 key 的第二个调用也受自身 deadline 约束，但不会破坏原 Owner 的执行和租约。
+
+新增 8 项故障注入，覆盖能力默认超时、上游更早 deadline、deadline 传播、副作用结果未知回放、
+同 key 等待、排队未开始、线程池饱和和 JDBC 跨 Store 等待。默认测试增至 405 项，全部通过。详细说明见
+`客服Agent-60-Capability执行中Deadline与结果未知说明.md`。
+
 ### 验收标准
 
 - 不能通过猜测 conversationId 读取或清除其他用户会话。
@@ -1316,7 +1331,7 @@ smartcs:
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 397 个测试，另有 1 个真实 MySQL IT）。
+- [x] 旧测试全部保留并通过（当前默认套件共 405 个测试，另有 1 个真实 MySQL IT）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。
