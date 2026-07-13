@@ -25,7 +25,8 @@ class HttpAfterSalesTicketClientTest {
 
         server.expect(requestTo("http://ticket-platform/api/tickets"))
                 .andExpect(method(HttpMethod.POST))
-                .andExpect(header("X-Tenant-Id", "demo"))
+                // 请求头必须来自本次可信执行上下文，而不是一份所有请求共用的静态配置。
+                .andExpect(header("X-Tenant-Id", "tenant-from-context"))
                 .andExpect(header("X-User-Id", "agent-service"))
                 .andExpect(header("X-User-Role", "AGENT"))
                 .andExpect(header("Idempotency-Key", "agent:conv-001:handoff:COMPLAINT"))
@@ -44,15 +45,18 @@ class HttpAfterSalesTicketClientTest {
                         }
                         """, MediaType.APPLICATION_JSON));
 
-        AfterSalesTicketCreateResult result = client.createTicket(new AfterSalesTicketCreateRequest(
-                "Agent 转人工：用户投诉蓝牙耳机坏了",
-                "用户ID：USER-001",
-                "USER-001",
-                "bluetooth",
-                "complaint",
-                "URGENT",
-                "agent:conv-001:handoff:COMPLAINT"
-        ));
+        AfterSalesTicketCreateResult result = client.createTicket(
+                "tenant-from-context",
+                new AfterSalesTicketCreateRequest(
+                        "Agent 转人工：用户投诉蓝牙耳机坏了",
+                        "用户ID：USER-001",
+                        "USER-001",
+                        "bluetooth",
+                        "complaint",
+                        "URGENT",
+                        "agent:conv-001:handoff:COMPLAINT"
+                )
+        );
 
         assertEquals("AS-123", result.ticketId());
         assertEquals("PENDING", result.status());
@@ -75,22 +79,24 @@ class HttpAfterSalesTicketClientTest {
                         }
                         """, MediaType.APPLICATION_JSON));
 
-        assertThrows(IllegalStateException.class, () -> client.createTicket(new AfterSalesTicketCreateRequest(
-                "Agent 转人工：用户投诉",
-                "用户ID：USER-001",
-                "USER-001",
-                "general",
-                "complaint",
-                "URGENT",
-                "agent:conv-001:handoff:COMPLAINT"
-        )));
+        assertThrows(IllegalStateException.class, () -> client.createTicket(
+                "tenant-from-context",
+                new AfterSalesTicketCreateRequest(
+                        "Agent 转人工：用户投诉",
+                        "用户ID：USER-001",
+                        "USER-001",
+                        "general",
+                        "complaint",
+                        "URGENT",
+                        "agent:conv-001:handoff:COMPLAINT"
+                )
+        ));
         server.verify();
     }
 
     private HandoffProperties createProperties() {
         HandoffProperties properties = new HandoffProperties();
         properties.getAfterSales().setBaseUrl("http://ticket-platform");
-        properties.getAfterSales().setTenantId("demo");
         properties.getAfterSales().setAgentUserId("agent-service");
         properties.getAfterSales().setAgentUserRole("AGENT");
         return properties;

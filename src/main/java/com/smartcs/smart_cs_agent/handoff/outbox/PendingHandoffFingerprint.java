@@ -15,7 +15,9 @@ final class PendingHandoffFingerprint {
 
     static String of(PendingHandoffCommand command) {
         AfterSalesTicketCreateRequest request = command.request();
-        String canonical = segment(command.userId())
+        // tenantId 也是请求身份的一部分；否则跨租户的相同业务参数会得到相同指纹。
+        String canonical = segment(command.tenantId())
+                + segment(command.userId())
                 + segment(command.conversationId())
                 + segment(command.reason())
                 + segment(command.summary())

@@ -27,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** handoff.request 独立 Provider 的可信上下文、稳定契约和幂等测试。 */
@@ -39,7 +40,7 @@ class LocalHandoffCapabilityProviderTest {
 
         assertEquals(CapabilityIds.HANDOFF_REQUEST, definition.getId());
         assertTrue(definition.isRequiresIdentity());
-        assertFalse(definition.isRequiresAuthentication());
+        assertTrue(definition.isRequiresAuthentication());
         assertTrue(definition.isSideEffect());
         assertTrue(definition.isIdempotent());
         assertEquals(CapabilityRiskLevel.MEDIUM, definition.getRiskLevel());
@@ -49,7 +50,8 @@ class LocalHandoffCapabilityProviderTest {
     @Test
     void shouldIgnoreForgedIdentityArgumentsAndUseExecutionContext() {
         HandoffTools tools = mock(HandoffTools.class);
-        when(tools.createHandoffTicket(
+        when(tools.createHandoffTicketForTenant(
+                "tenant-a",
                 "USER-001",
                 "conv-trusted",
                 "COMPLAINT",
@@ -76,7 +78,9 @@ class LocalHandoffCapabilityProviderTest {
                         "conversation_id", "conv-forged"
                 )),
                 context(
-                        AuthenticatedPrincipal.unverifiedClaim("USER-001"),
+                        AuthenticatedPrincipal.authenticated(
+                                "tenant-a", "USER-001", Set.of("CUSTOMER")
+                        ),
                         "conv-trusted",
                         "idem-trusted"
                 )
@@ -86,13 +90,42 @@ class LocalHandoffCapabilityProviderTest {
         assertTrue(result.isSuccess());
         assertEquals("HD-2001", ticket.getTicketId());
         assertEquals("COMPLAINT", ticket.getReason());
-        verify(tools).createHandoffTicket(
+        verify(tools).createHandoffTicketForTenant(
+                "tenant-a",
                 "USER-001",
                 "conv-trusted",
                 "COMPLAINT",
                 "用户投诉服务问题",
                 "idem-trusted"
         );
+    }
+
+    @Test
+    void shouldRejectAuthenticatedPrincipalFromAnotherTenantWithoutCallingTicketTool() {
+        HandoffTools tools = mock(HandoffTools.class);
+        LocalHandoffCapabilityProvider provider = new LocalHandoffCapabilityProvider(tools);
+
+        CapabilityResult<?> result = provider.invoke(
+                new CapabilityCall(CapabilityIds.HANDOFF_REQUEST, Map.of(
+                        "reason", "COMPLAINT",
+                        "summary", "用户投诉，需要人工处理"
+                )),
+                context(
+                        // Principal 属于 tenant-b，而测试 helper 创建的 ExecutionContext 属于 tenant-a。
+                        // 两份服务端身份上下文不一致时必须失败关闭，不能把工单写入错误租户。
+                        AuthenticatedPrincipal.authenticated(
+                                "tenant-b",
+                                "USER-001",
+                                Set.of("CUSTOMER")
+                        ),
+                        "conv-tenant-mismatch",
+                        "idem-tenant-mismatch"
+                )
+        );
+
+        assertEquals(CapabilityOutcome.BUSINESS_REJECTED, result.getOutcome());
+        assertEquals("TENANT_CONTEXT_MISMATCH", result.getErrorCode());
+        verifyNoInteractions(tools);
     }
 
     @Test
@@ -105,7 +138,7 @@ class LocalHandoffCapabilityProviderTest {
                 "summary", "用户要求人工客服"
         ));
         ExecutionContext context = context(
-                AuthenticatedPrincipal.authenticated("USER-001", Set.of("CUSTOMER")),
+                AuthenticatedPrincipal.authenticated("tenant-a", "USER-001", Set.of("CUSTOMER")),
                 "conv-replay",
                 "idem-replay"
         );
@@ -132,7 +165,9 @@ class LocalHandoffCapabilityProviderTest {
         CapabilityResult<?> result = gateway.invoke(
                 new CapabilityCall(CapabilityIds.HANDOFF_REQUEST, Map.of("reason", "COMPLAINT")),
                 context(
-                        AuthenticatedPrincipal.unverifiedClaim("USER-001"),
+                        AuthenticatedPrincipal.authenticated(
+                                "tenant-a", "USER-001", Set.of("CUSTOMER")
+                        ),
                         "conv-missing",
                         "idem-missing"
                 )
@@ -143,11 +178,35 @@ class LocalHandoffCapabilityProviderTest {
     }
 
     @Test
+    void shouldRejectUnverifiedIdentityBeforeCallingTicketTool() {
+        HandoffTools tools = mock(HandoffTools.class);
+        DefaultCapabilityGateway gateway = new DefaultCapabilityGateway(List.of(
+                new LocalHandoffCapabilityProvider(tools)
+        ));
+
+        CapabilityResult<?> result = gateway.invoke(
+                new CapabilityCall(CapabilityIds.HANDOFF_REQUEST, Map.of(
+                        "reason", "COMPLAINT",
+                        "summary", "未认证身份不能创建外部工单"
+                )),
+                context(
+                        AuthenticatedPrincipal.unverifiedClaim("USER-001"),
+                        "conv-unverified",
+                        "idem-unverified"
+                )
+        );
+
+        assertEquals(CapabilityOutcome.BUSINESS_REJECTED, result.getOutcome());
+        assertEquals("AUTHENTICATION_REQUIRED", result.getErrorCode());
+        verifyNoInteractions(tools);
+    }
+
+    @Test
     void shouldReturnAndReplayTechnicalFailureWhenRemoteTicketResultIsUnknown() {
         HandoffProperties properties = new HandoffProperties();
         properties.setMode("after-sales-http");
         AtomicInteger remoteCalls = new AtomicInteger();
-        HandoffTools tools = new HandoffTools(properties, request -> {
+        HandoffTools tools = new HandoffTools(properties, (tenantId, request) -> {
             remoteCalls.incrementAndGet();
             throw new IllegalStateException("http://internal-ticket password=do-not-leak");
         });
@@ -159,7 +218,7 @@ class LocalHandoffCapabilityProviderTest {
                 "summary", "用户投诉，需要人工处理"
         ));
         ExecutionContext context = context(
-                AuthenticatedPrincipal.authenticated("USER-001", Set.of("CUSTOMER")),
+                AuthenticatedPrincipal.authenticated("tenant-a", "USER-001", Set.of("CUSTOMER")),
                 "conv-remote-unknown",
                 "idem-remote-unknown"
         );

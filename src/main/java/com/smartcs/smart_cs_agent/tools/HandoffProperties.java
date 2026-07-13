@@ -48,9 +48,6 @@ public class HandoffProperties {
         /** 售后工单平台地址，默认对应桌面 demo 项目的 8081 端口 */
         private String baseUrl = "http://localhost:8081";
 
-        /** demo 后端通过 X-Tenant-Id 识别租户 */
-        private String tenantId = "demo";
-
         /** Agent 作为系统用户调用工单平台 */
         private String agentUserId = "agent-service";
 
@@ -69,14 +66,6 @@ public class HandoffProperties {
 
         public void setBaseUrl(String baseUrl) {
             this.baseUrl = baseUrl;
-        }
-
-        public String getTenantId() {
-            return tenantId;
-        }
-
-        public void setTenantId(String tenantId) {
-            this.tenantId = tenantId;
         }
 
         public String getAgentUserId() {

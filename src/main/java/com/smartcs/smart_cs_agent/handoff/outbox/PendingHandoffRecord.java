@@ -11,6 +11,7 @@ import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateResult;
  */
 public record PendingHandoffRecord(
         String outboxId,
+        String tenantId,
         String userId,
         String conversationId,
         String reason,
@@ -25,4 +26,9 @@ public record PendingHandoffRecord(
         long createdAt,
         long updatedAt
 ) {
+
+    /** 返回所有按幂等键读写和领取租约时必须使用的租户复合键。 */
+    public PendingHandoffKey key() {
+        return new PendingHandoffKey(tenantId, request.idempotencyKey());
+    }
 }

@@ -104,7 +104,7 @@ smartcs:
     mode: ${SMARTCS_HANDOFF_MODE:memory}
     after-sales:
       base-url: ${SMARTCS_AFTER_SALES_BASE_URL:http://localhost:8081}
-      tenant-id: ${SMARTCS_AFTER_SALES_TENANT_ID:demo}
+      # X-Tenant-Id 来自当前已认证请求的 ExecutionContext，不允许用一份全局配置覆盖所有租户。
       agent-user-id: ${SMARTCS_AFTER_SALES_AGENT_USER_ID:agent-service}
       agent-user-role: ${SMARTCS_AFTER_SALES_AGENT_USER_ROLE:AGENT}
       connect-timeout-ms: ${SMARTCS_AFTER_SALES_CONNECT_TIMEOUT_MS:3000}

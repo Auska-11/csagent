@@ -73,7 +73,7 @@ public class PendingHandoffRecoveryWorker {
     private void recoverOne(PendingHandoffRecord candidate, long now) {
         String ownerToken = ownerTokenSupplier.get();
         Optional<PendingHandoffClaim> optionalClaim = store.tryClaim(
-                candidate.request().idempotencyKey(),
+                candidate.key(),
                 candidate.version(),
                 ownerToken,
                 now,
@@ -85,9 +85,13 @@ public class PendingHandoffRecoveryWorker {
 
         PendingHandoffClaim claim = optionalClaim.get();
         try {
-            AfterSalesTicketCreateResult result = client.createTicket(claim.record().request());
+            // 使用记录中持久化的可信 tenantId，保证恢复请求仍写入最初那个售后租户。
+            AfterSalesTicketCreateResult result = client.createTicket(
+                    claim.record().tenantId(),
+                    claim.record().request()
+            );
             store.confirm(
-                    claim.record().request().idempotencyKey(),
+                    claim.record().key(),
                     result,
                     claim.record().version()
             );
@@ -99,8 +103,8 @@ public class PendingHandoffRecoveryWorker {
 
     private void handleFailure(PendingHandoffClaim claim, RuntimeException failure, long now) {
         // confirm() 可能已经写入追加式成功结果，只是在后续主表更新时抛错；先重新读取，避免把成功降级。
-        Optional<PendingHandoffRecord> current = store.findByIdempotencyKey(
-                claim.record().request().idempotencyKey()
+        Optional<PendingHandoffRecord> current = store.findByKey(
+                claim.record().key()
         );
         if (current.isPresent() && current.get().status() == PendingHandoffStatus.CONFIRMED) {
             store.releaseClaim(claim);

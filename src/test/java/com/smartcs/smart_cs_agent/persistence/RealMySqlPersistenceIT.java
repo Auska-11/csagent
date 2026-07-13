@@ -15,6 +15,7 @@ import com.smartcs.smart_cs_agent.session.api.SessionVersionConflictException;
 import com.smartcs.smart_cs_agent.session.core.ConversationStateCodec;
 import com.smartcs.smart_cs_agent.session.jdbc.JdbcSessionStore;
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateRequest;
+import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateResult;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -126,6 +127,7 @@ class RealMySqlPersistenceIT {
         JdbcPendingHandoffStore second = new JdbcPendingHandoffStore(database, 1);
         String key = "real-outbox-" + suffix;
         PendingHandoffRecord prepared = first.prepare(new PendingHandoffCommand(
+                "tenant-real",
                 "USER-REAL",
                 "real-conversation-" + suffix,
                 "COMPLAINT",
@@ -140,19 +142,48 @@ class RealMySqlPersistenceIT {
                         key
                 )
         )).record();
-        long due = prepared.nextAttemptAt();
+        // 使用同一个裸幂等键再写入另一个租户，真实验证数据库复合唯一键、结果表和租约表都已隔离。
+        PendingHandoffRecord otherTenant = second.prepare(new PendingHandoffCommand(
+                "tenant-real-other",
+                "USER-REAL",
+                "real-conversation-other-" + suffix,
+                "COMPLAINT",
+                "另一个租户的同名幂等请求",
+                new AfterSalesTicketCreateRequest(
+                        "真实 MySQL 工单 B",
+                        "验证跨租户复合键",
+                        "USER-REAL",
+                        "general",
+                        "complaint",
+                        "HIGH",
+                        key
+                )
+        )).record();
+        long due = Math.max(prepared.nextAttemptAt(), otherTenant.nextAttemptAt());
 
         PendingHandoffClaim owner = first.tryClaim(
-                key, prepared.version(), "real-owner-1", due, 100
+                prepared.key(), prepared.version(), "real-owner-1", due, 100
         ).orElseThrow();
+        PendingHandoffClaim otherOwner = second.tryClaim(
+                otherTenant.key(), otherTenant.version(), "real-owner-other", due, 100
+        ).orElseThrow();
+        PendingHandoffRecord otherConfirmed = second.confirm(
+                otherTenant.key(),
+                new AfterSalesTicketCreateResult("AS-REAL-OTHER", "PENDING", "2026-07-13T00:00:00Z"),
+                otherOwner.record().version()
+        );
+        second.releaseClaim(otherOwner);
+        assertEquals("AS-REAL-OTHER", otherConfirmed.confirmedResult().ticketId());
+
         assertTrue(second.tryClaim(
-                key, owner.record().version(), "real-owner-2", due + 50, 100
+                prepared.key(), owner.record().version(), "real-owner-2", due + 50, 100
         ).isEmpty());
         PendingHandoffClaim takeover = second.tryClaim(
-                key, owner.record().version(), "real-owner-2", due + 100, 100
+                prepared.key(), owner.record().version(), "real-owner-2", due + 100, 100
         ).orElseThrow();
         PendingHandoffRecord manual = second.markNeedsManualReview(takeover, "RealMysqlVerified");
         assertEquals("NEEDS_MANUAL_REVIEW", manual.status().name());
+        assertEquals("CONFIRMED", second.findByKey(otherTenant.key()).orElseThrow().status().name());
     }
 
     private void verifyQueryTimeout(JdbcDatabaseClient database) {

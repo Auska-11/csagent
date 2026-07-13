@@ -3,6 +3,7 @@ package com.smartcs.smart_cs_agent.tools;
 import com.smartcs.smart_cs_agent.handoff.outbox.InMemoryPendingHandoffStore;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffClaim;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffCommand;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffKey;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffPreparation;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffRecord;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStatus;
@@ -15,6 +16,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class HandoffToolsTest {
+
+    private static final String TENANT = "tenant-a";
 
     @Test
     void shouldCreateMemoryTicketByDefault() {
@@ -43,11 +46,13 @@ class HandoffToolsTest {
         InMemoryPendingHandoffStore pendingStore = new InMemoryPendingHandoffStore();
         HandoffTools tools = new HandoffTools(properties, client, pendingStore);
 
-        HandoffTicketData ticket = tools.createHandoffTicket(
+        HandoffTicketData ticket = tools.createHandoffTicketForTenant(
+                TENANT,
                 "USER-001",
                 "conv-001",
                 "COMPLAINT",
-                "用户投诉蓝牙耳机坏了，希望尽快赔偿"
+                "用户投诉蓝牙耳机坏了，希望尽快赔偿",
+                null
         );
 
         assertEquals("AS-123", ticket.getTicketId());
@@ -66,20 +71,73 @@ class HandoffToolsTest {
         assertTrue(request.description().contains("会话ID：conv-001"));
 
         PendingHandoffRecord confirmed = pendingStore
-                .findByIdempotencyKey(request.idempotencyKey())
+                .findByKey(new PendingHandoffKey(TENANT, request.idempotencyKey()))
                 .orElseThrow();
+        assertEquals(TENANT, confirmed.tenantId());
+        assertEquals(TENANT, client.lastTenantId);
         assertEquals(PendingHandoffStatus.CONFIRMED, confirmed.status());
         assertEquals("AS-123", confirmed.confirmedResult().ticketId());
 
         // 模拟 Capability 幂等结果尚未落库后的重试：Outbox 会直接回放，不再调用远端。
-        HandoffTicketData replay = tools.createHandoffTicket(
+        HandoffTicketData replay = tools.createHandoffTicketForTenant(
+                TENANT,
                 "USER-001",
                 "conv-001",
                 "COMPLAINT",
-                "用户投诉蓝牙耳机坏了，希望尽快赔偿"
+                "用户投诉蓝牙耳机坏了，希望尽快赔偿",
+                null
         );
         assertEquals("AS-123", replay.getTicketId());
         assertEquals(1, client.callCount);
+    }
+
+    @Test
+    void shouldRejectLegacyEntryPointInAfterSalesMode() {
+        HandoffProperties properties = new HandoffProperties();
+        properties.setMode("after-sales-http");
+        FakeAfterSalesTicketClient client = new FakeAfterSalesTicketClient(
+                new AfterSalesTicketCreateResult("AS-UNEXPECTED", "PENDING", "2026-07-13T00:00:00Z")
+        );
+        HandoffTools tools = new HandoffTools(properties, client, new InMemoryPendingHandoffStore());
+
+        HandoffTicketCreationException error = assertThrows(
+                HandoffTicketCreationException.class,
+                () -> tools.createHandoffTicket(
+                        "USER-001", "conv-legacy", "COMPLAINT", "旧入口不能猜租户"
+                )
+        );
+
+        assertEquals(
+                "Tenant-aware handoff entry point is required for after-sales HTTP mode",
+                error.getMessage()
+        );
+        assertEquals(0, client.callCount);
+    }
+
+    @Test
+    void shouldNotFallbackToMemoryWhenAfterSalesClientIsMissing() {
+        HandoffProperties properties = new HandoffProperties();
+        properties.setMode("after-sales-http");
+        InMemoryPendingHandoffStore pendingStore = new InMemoryPendingHandoffStore();
+        HandoffTools tools = new HandoffTools(properties, null, pendingStore);
+
+        HandoffTicketCreationException error = assertThrows(
+                HandoffTicketCreationException.class,
+                () -> tools.createHandoffTicketForTenant(
+                        TENANT,
+                        "USER-001",
+                        "conv-missing-client",
+                        "COMPLAINT",
+                        "缺少远端 Client 时不能伪造本地成功",
+                        "operation-missing-client"
+                )
+        );
+
+        assertEquals(
+                "After-sales ticket client is required in after-sales HTTP mode",
+                error.getMessage()
+        );
+        assertEquals(0, pendingStore.size());
     }
 
     @Test
@@ -93,11 +151,13 @@ class HandoffToolsTest {
 
         HandoffTicketCreationException error = assertThrows(
                 HandoffTicketCreationException.class,
-                () -> tools.createHandoffTicket(
+                () -> tools.createHandoffTicketForTenant(
+                        TENANT,
                         "USER-001",
                         "conv-fallback",
                         "COMPLAINT",
-                        "用户投诉，需要人工处理"
+                        "用户投诉，需要人工处理",
+                        null
                 )
         );
 
@@ -105,7 +165,7 @@ class HandoffToolsTest {
         assertFalse(error.getMessage().contains("remote platform unavailable"));
 
         PendingHandoffRecord pending = pendingStore
-                .findByIdempotencyKey(client.lastRequest.idempotencyKey())
+                .findByKey(new PendingHandoffKey(TENANT, client.lastRequest.idempotencyKey()))
                 .orElseThrow();
         assertEquals("conv-fallback", pending.conversationId());
         assertEquals("IllegalStateException", pending.failureType());
@@ -114,11 +174,13 @@ class HandoffToolsTest {
 
         HandoffTicketCreationException replayError = assertThrows(
                 HandoffTicketCreationException.class,
-                () -> tools.createHandoffTicket(
+                () -> tools.createHandoffTicketForTenant(
+                        TENANT,
                         "USER-001",
                         "conv-fallback",
                         "COMPLAINT",
-                        "用户投诉，需要人工处理"
+                        "用户投诉，需要人工处理",
+                        null
                 )
         );
         assertEquals("Remote handoff is awaiting reconciliation", replayError.getMessage());
@@ -138,14 +200,14 @@ class HandoffToolsTest {
             }
 
             @Override
-            public PendingHandoffRecord markResultUnknown(String idempotencyKey,
+            public PendingHandoffRecord markResultUnknown(PendingHandoffKey key,
                                                           String failureType,
                                                           long expectedVersion) {
                 throw new UnsupportedOperationException();
             }
 
             @Override
-            public PendingHandoffRecord confirm(String idempotencyKey,
+            public PendingHandoffRecord confirm(PendingHandoffKey key,
                                                 AfterSalesTicketCreateResult result,
                                                 long expectedVersion) {
                 throw new UnsupportedOperationException();
@@ -157,7 +219,7 @@ class HandoffToolsTest {
             }
 
             @Override
-            public Optional<PendingHandoffClaim> tryClaim(String idempotencyKey,
+            public Optional<PendingHandoffClaim> tryClaim(PendingHandoffKey key,
                                                           long expectedVersion,
                                                           String ownerToken,
                                                           long now,
@@ -183,7 +245,7 @@ class HandoffToolsTest {
             }
 
             @Override
-            public Optional<PendingHandoffRecord> findByIdempotencyKey(String idempotencyKey) {
+            public Optional<PendingHandoffRecord> findByKey(PendingHandoffKey key) {
                 return Optional.empty();
             }
         };
@@ -191,11 +253,13 @@ class HandoffToolsTest {
 
         HandoffTicketCreationException error = assertThrows(
                 HandoffTicketCreationException.class,
-                () -> tools.createHandoffTicket(
+                () -> tools.createHandoffTicketForTenant(
+                        TENANT,
                         "USER-001",
                         "conv-double-failure",
                         "COMPLAINT",
-                        "用户投诉，需要人工处理"
+                        "用户投诉，需要人工处理",
+                        null
                 )
         );
 
@@ -218,12 +282,12 @@ class HandoffToolsTest {
         InMemoryPendingHandoffStore pendingStore = new InMemoryPendingHandoffStore();
         HandoffTools tools = new HandoffTools(properties, client, pendingStore);
 
-        tools.createHandoffTicket(
-                "USER-001", "conv-repeat", "COMPLAINT", "第一次投诉", "operation-1"
+        tools.createHandoffTicketForTenant(
+                TENANT, "USER-001", "conv-repeat", "COMPLAINT", "第一次投诉", "operation-1"
         );
         String firstKey = client.lastRequest.idempotencyKey();
-        tools.createHandoffTicket(
-                "USER-001", "conv-repeat", "COMPLAINT", "第二次投诉", "operation-2"
+        tools.createHandoffTicketForTenant(
+                TENANT, "USER-001", "conv-repeat", "COMPLAINT", "第二次投诉", "operation-2"
         );
         String secondKey = client.lastRequest.idempotencyKey();
 
@@ -234,10 +298,35 @@ class HandoffToolsTest {
         assertEquals(2, pendingStore.size());
     }
 
+    @Test
+    void shouldUseDifferentRemoteKeysForSameOperationInDifferentTenants() {
+        HandoffProperties properties = new HandoffProperties();
+        properties.setMode("after-sales-http");
+        FakeAfterSalesTicketClient client = new FakeAfterSalesTicketClient(
+                new AfterSalesTicketCreateResult("AS-201", "PENDING", "2026-07-13T00:00:00Z")
+        );
+        InMemoryPendingHandoffStore pendingStore = new InMemoryPendingHandoffStore();
+        HandoffTools tools = new HandoffTools(properties, client, pendingStore);
+
+        tools.createHandoffTicketForTenant(
+                "tenant-a", "USER-001", "conv-shared", "COMPLAINT", "相同摘要", "operation-shared"
+        );
+        String tenantAKey = client.lastRequest.idempotencyKey();
+        tools.createHandoffTicketForTenant(
+                "tenant-b", "USER-001", "conv-shared", "COMPLAINT", "相同摘要", "operation-shared"
+        );
+        String tenantBKey = client.lastRequest.idempotencyKey();
+
+        assertNotEquals(tenantAKey, tenantBKey, "租户必须参与远端幂等键哈希");
+        assertEquals("tenant-b", client.lastTenantId);
+        assertEquals(2, pendingStore.size());
+    }
+
     private static class FakeAfterSalesTicketClient implements AfterSalesTicketClient {
 
         private final AfterSalesTicketCreateResult result;
         private AfterSalesTicketCreateRequest lastRequest;
+        private String lastTenantId;
         private boolean fail;
         private int callCount;
 
@@ -246,8 +335,10 @@ class HandoffToolsTest {
         }
 
         @Override
-        public AfterSalesTicketCreateResult createTicket(AfterSalesTicketCreateRequest request) {
+        public AfterSalesTicketCreateResult createTicket(String tenantId,
+                                                          AfterSalesTicketCreateRequest request) {
             callCount++;
+            this.lastTenantId = tenantId;
             this.lastRequest = request;
             if (fail) {
                 throw new IllegalStateException("remote platform unavailable");

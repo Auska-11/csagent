@@ -399,13 +399,15 @@ mvn -s .mvn\settings.xml spring-boot:run
 ```powershell
 $env:SMARTCS_HANDOFF_MODE="after-sales-http"
 $env:SMARTCS_AFTER_SALES_BASE_URL="http://localhost:8081"
-$env:SMARTCS_AFTER_SALES_TENANT_ID="demo"
 $env:SMARTCS_AFTER_SALES_AGENT_USER_ID="agent-service"
 $env:SMARTCS_AFTER_SALES_AGENT_USER_ROLE="AGENT"
 $env:SMARTCS_AFTER_SALES_CONNECT_TIMEOUT_MS="3000"
 $env:SMARTCS_AFTER_SALES_READ_TIMEOUT_MS="10000"
 $env:SMARTCS_HANDOFF_RECOVERY_ENABLED="false"
 ```
+
+售后请求的 `X-Tenant-Id` 来自当前已验证 JWT 的 `tenant_id`，不再由一份全局环境变量指定。
+这样同一个 Agent 实例可以安全服务多个租户，也不会把 A 租户工单写进 B 租户。
 
 后台恢复默认关闭。只有确认售后平台会按 `Idempotency-Key` 返回同一工单后，才将
 `SMARTCS_HANDOFF_RECOVERY_ENABLED` 设为 `true`；恢复执行器会使用调用前保存的原请求、短租约和有限
@@ -546,7 +548,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 418 个测试用例；另有 1 项显式真实 MySQL IT 通过。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 428 个测试用例；另有 1 项显式真实 MySQL IT 通过。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -603,6 +605,7 @@ docker compose down
 - [真实 MySQL 与 Docker 编排验收说明](docs/客服Agent/客服Agent-59-真实MySQL与Docker编排验收说明.md)
 - [Capability 执行中 Deadline 与结果未知说明](docs/客服Agent/客服Agent-60-Capability执行中Deadline与结果未知说明.md)
 - [LLM 重试上限与整轮时间预算说明](docs/客服Agent/客服Agent-61-LLM重试上限与整轮时间预算说明.md)
+- [PendingHandoff 租户隔离与复合键说明](docs/客服Agent/客服Agent-62-PendingHandoff租户隔离与复合键说明.md)
 
 ## 简历表达参考
 

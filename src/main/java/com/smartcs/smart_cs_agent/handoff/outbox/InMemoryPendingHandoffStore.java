@@ -28,8 +28,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 )
 public class InMemoryPendingHandoffStore implements PendingHandoffStore {
 
-    private final Map<String, StoredEntry> records = new ConcurrentHashMap<>();
-    private final Map<String, ClaimEntry> claims = new ConcurrentHashMap<>();
+    /*
+     * Map 的 key 必须同时包含 tenantId 和 idempotencyKey。若仍使用 String，租户 A 的成功结果或
+     * 短租约可能被租户 B 的同名幂等请求误用。
+     */
+    private final Map<PendingHandoffKey, StoredEntry> records = new ConcurrentHashMap<>();
+    private final Map<PendingHandoffKey, ClaimEntry> claims = new ConcurrentHashMap<>();
     private final long preparedGraceMs;
     private static final Set<PendingHandoffStatus> DUE_STATUSES = Set.of(
             PendingHandoffStatus.PREPARED,
@@ -54,7 +58,7 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
 
     @Override
     public PendingHandoffPreparation prepare(PendingHandoffCommand command) {
-        String key = command.request().idempotencyKey();
+        PendingHandoffKey key = command.key();
         String fingerprint = PendingHandoffFingerprint.of(command);
         StoredEntry candidate = new StoredEntry(fingerprint, newRecord(command));
         StoredEntry existing = records.putIfAbsent(key, candidate);
@@ -68,16 +72,17 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
     }
 
     @Override
-    public PendingHandoffRecord markResultUnknown(String idempotencyKey,
+    public PendingHandoffRecord markResultUnknown(PendingHandoffKey key,
                                                   String failureType,
                                                   long expectedVersion) {
-        StoredEntry existing = requireEntry(idempotencyKey);
+        StoredEntry existing = requireEntry(key);
         if (existing.record().status() == PendingHandoffStatus.CONFIRMED) {
             // 成功是不可逆终态。迟到的超时线程不能把已确认结果改回未知。
             return existing.record();
         }
-        return replace(idempotencyKey, expectedVersion, current -> new PendingHandoffRecord(
+        return replace(key, expectedVersion, current -> new PendingHandoffRecord(
                 current.outboxId(),
+                current.tenantId(),
                 current.userId(),
                 current.conversationId(),
                 current.reason(),
@@ -95,21 +100,22 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
     }
 
     @Override
-    public PendingHandoffRecord confirm(String idempotencyKey,
+    public PendingHandoffRecord confirm(PendingHandoffKey key,
                                         AfterSalesTicketCreateResult result,
                                         long expectedVersion) {
         if (result == null) {
             throw new IllegalArgumentException("result cannot be null");
         }
-        StoredEntry existing = requireEntry(idempotencyKey);
+        StoredEntry existing = requireEntry(key);
         if (existing.record().status() == PendingHandoffStatus.CONFIRMED) {
             if (!java.util.Objects.equals(existing.record().confirmedResult(), result)) {
                 throw new PendingHandoffConflictException();
             }
             return existing.record();
         }
-        return replace(idempotencyKey, expectedVersion, current -> new PendingHandoffRecord(
+        return replace(key, expectedVersion, current -> new PendingHandoffRecord(
                 current.outboxId(),
+                current.tenantId(),
                 current.userId(),
                 current.conversationId(),
                 current.reason(),
@@ -140,7 +146,7 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
     }
 
     @Override
-    public Optional<PendingHandoffClaim> tryClaim(String idempotencyKey,
+    public Optional<PendingHandoffClaim> tryClaim(PendingHandoffKey key,
                                                   long expectedVersion,
                                                   String ownerToken,
                                                   long now,
@@ -149,7 +155,11 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
         if (leaseMs <= 0) {
             throw new IllegalArgumentException("leaseMs must be positive");
         }
-        StoredEntry current = requireEntry(idempotencyKey);
+        StoredEntry current = records.get(key);
+        if (current == null) {
+            // 与 JDBC 实现保持一致：扫描结果可能已经被其他实例删除或归档，领取时返回 empty 即可。
+            return Optional.empty();
+        }
         if (current.record().version() != expectedVersion
                 || !DUE_STATUSES.contains(current.record().status())
                 || current.record().nextAttemptAt() > now) {
@@ -158,7 +168,7 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
 
         long leaseUntil = now + leaseMs;
         AtomicBoolean acquired = new AtomicBoolean(false);
-        claims.compute(idempotencyKey, (ignored, existing) -> {
+        claims.compute(key, (ignored, existing) -> {
             if (existing == null || existing.leaseUntil() <= now) {
                 acquired.set(true);
                 return new ClaimEntry(ownerToken, leaseUntil);
@@ -171,7 +181,7 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
 
         try {
             PendingHandoffRecord processing = replace(
-                    idempotencyKey,
+                    key,
                     expectedVersion,
                     record -> copyWithState(
                             record,
@@ -184,7 +194,7 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
             );
             return Optional.of(new PendingHandoffClaim(processing, ownerToken, leaseUntil));
         } catch (PendingHandoffVersionConflictException conflict) {
-            claims.remove(idempotencyKey, new ClaimEntry(ownerToken, leaseUntil));
+            claims.remove(key, new ClaimEntry(ownerToken, leaseUntil));
             return Optional.empty();
         }
     }
@@ -196,7 +206,7 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
         requireClaimOwner(claim);
         try {
             return replace(
-                    claim.record().request().idempotencyKey(),
+                    claim.record().key(),
                     claim.record().version(),
                     record -> copyWithState(
                             record,
@@ -218,7 +228,7 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
         requireClaimOwner(claim);
         try {
             return replace(
-                    claim.record().request().idempotencyKey(),
+                    claim.record().key(),
                     claim.record().version(),
                     record -> copyWithState(
                             record,
@@ -239,15 +249,15 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
         if (claim == null) {
             return;
         }
-        String key = claim.record().request().idempotencyKey();
+        PendingHandoffKey key = claim.record().key();
         claims.computeIfPresent(key, (ignored, existing) ->
                 existing.ownerToken().equals(claim.ownerToken()) ? null : existing
         );
     }
 
     @Override
-    public Optional<PendingHandoffRecord> findByIdempotencyKey(String idempotencyKey) {
-        StoredEntry entry = records.get(idempotencyKey);
+    public Optional<PendingHandoffRecord> findByKey(PendingHandoffKey key) {
+        StoredEntry entry = records.get(key);
         return entry == null ? Optional.empty() : Optional.of(entry.record());
     }
 
@@ -259,6 +269,7 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
         long now = System.currentTimeMillis();
         return new PendingHandoffRecord(
                 UUID.randomUUID().toString(),
+                command.tenantId(),
                 command.userId(),
                 command.conversationId(),
                 command.reason(),
@@ -275,16 +286,16 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
         );
     }
 
-    private PendingHandoffRecord replace(String idempotencyKey,
+    private PendingHandoffRecord replace(PendingHandoffKey key,
                                          long expectedVersion,
                                          java.util.function.Function<PendingHandoffRecord, PendingHandoffRecord> updater) {
-        StoredEntry existing = requireEntry(idempotencyKey);
+        StoredEntry existing = requireEntry(key);
         if (existing.record().version() != expectedVersion) {
             throw new PendingHandoffVersionConflictException();
         }
         PendingHandoffRecord updatedRecord = updater.apply(existing.record());
         StoredEntry updated = new StoredEntry(existing.fingerprint(), updatedRecord);
-        if (!records.replace(idempotencyKey, existing, updated)) {
+        if (!records.replace(key, existing, updated)) {
             throw new PendingHandoffVersionConflictException();
         }
         return updatedRecord;
@@ -298,6 +309,7 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
                                                long nextAttemptAt) {
         return new PendingHandoffRecord(
                 current.outboxId(),
+                current.tenantId(),
                 current.userId(),
                 current.conversationId(),
                 current.reason(),
@@ -318,7 +330,7 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
         if (claim == null) {
             throw new IllegalArgumentException("claim cannot be null");
         }
-        String key = claim.record().request().idempotencyKey();
+        PendingHandoffKey key = claim.record().key();
         ClaimEntry existing = claims.get(key);
         if (existing == null || !existing.ownerToken().equals(claim.ownerToken())) {
             throw new PendingHandoffVersionConflictException();
@@ -341,8 +353,8 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
         return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
     }
 
-    private StoredEntry requireEntry(String idempotencyKey) {
-        StoredEntry entry = records.get(idempotencyKey);
+    private StoredEntry requireEntry(PendingHandoffKey key) {
+        StoredEntry entry = records.get(key);
         if (entry == null) {
             throw new IllegalArgumentException("Pending handoff record does not exist");
         }

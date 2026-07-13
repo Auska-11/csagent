@@ -11,6 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InMemoryPendingHandoffStoreTest {
 
+    private static final String TENANT = "tenant-a";
+
     @Test
     void shouldPrepareRequestBeforeRemoteCall() {
         InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore();
@@ -59,7 +61,7 @@ class InMemoryPendingHandoffStoreTest {
         PendingHandoffRecord prepared = store.prepare(command("idem-unknown", "待核对")).record();
 
         PendingHandoffRecord unknown = store.markResultUnknown(
-                "idem-unknown",
+                prepared.key(),
                 "SocketTimeoutException",
                 prepared.version()
         );
@@ -70,7 +72,7 @@ class InMemoryPendingHandoffStoreTest {
         assertEquals(2, unknown.version());
         assertThrows(
                 PendingHandoffVersionConflictException.class,
-                () -> store.markResultUnknown("idem-unknown", "Again", prepared.version())
+                () -> store.markResultUnknown(prepared.key(), "Again", prepared.version())
         );
     }
 
@@ -83,9 +85,9 @@ class InMemoryPendingHandoffStoreTest {
                 "AS-100", "PENDING", "2026-07-13T00:00:00Z"
         );
 
-        PendingHandoffRecord confirmed = store.confirm("idem-success", result, prepared.version());
+        PendingHandoffRecord confirmed = store.confirm(prepared.key(), result, prepared.version());
         PendingHandoffRecord lateTimeout = store.markResultUnknown(
-                "idem-success", "SocketTimeoutException", confirmed.version()
+                prepared.key(), "SocketTimeoutException", confirmed.version()
         );
         PendingHandoffPreparation replay = store.prepare(command);
 
@@ -107,15 +109,15 @@ class InMemoryPendingHandoffStoreTest {
         assertTrue(store.findDue(now - 1, 10).isEmpty(), "PREPARED 宽限期内后台不能抢占同步调用");
         assertEquals(1, store.findDue(now, 10).size());
         PendingHandoffClaim first = store.tryClaim(
-                "idem-lease", prepared.version(), "owner-1", now, 1_000
+                prepared.key(), prepared.version(), "owner-1", now, 1_000
         ).orElseThrow();
         assertEquals(PendingHandoffStatus.PROCESSING, first.record().status());
         assertTrue(store.tryClaim(
-                "idem-lease", first.record().version(), "owner-2", now + 500, 1_000
+                prepared.key(), first.record().version(), "owner-2", now + 500, 1_000
         ).isEmpty());
 
         PendingHandoffClaim takeover = store.tryClaim(
-                "idem-lease", first.record().version(), "owner-2", now + 1_000, 1_000
+                prepared.key(), first.record().version(), "owner-2", now + 1_000, 1_000
         ).orElseThrow();
         assertEquals("owner-2", takeover.ownerToken());
         assertThrows(
@@ -132,8 +134,72 @@ class InMemoryPendingHandoffStoreTest {
         assertEquals(1, store.findDue(now + 3_000, 10).size());
     }
 
+    @Test
+    void shouldIsolateSameIdempotencyKeyBetweenTenants() {
+        InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore();
+        PendingHandoffCommand tenantA = command("tenant-a", "same-key", "A 租户摘要");
+        PendingHandoffCommand tenantB = command("tenant-b", "same-key", "B 租户摘要");
+
+        PendingHandoffRecord savedA = store.prepare(tenantA).record();
+        PendingHandoffRecord savedB = store.prepare(tenantB).record();
+
+        assertEquals(2, store.size());
+        assertEquals("tenant-a", savedA.tenantId());
+        assertEquals("tenant-b", savedB.tenantId());
+        assertEquals("A 租户摘要", store.findByKey(tenantA.key()).orElseThrow().summary());
+        assertEquals("B 租户摘要", store.findByKey(tenantB.key()).orElseThrow().summary());
+
+        // tenant A 的 key 不能读取或更新 tenant B 的记录；复合键让两条记录完全独立。
+        AfterSalesTicketCreateResult result = new AfterSalesTicketCreateResult(
+                "AS-TENANT-A", "PENDING", "2026-07-13T00:00:00Z"
+        );
+        store.confirm(tenantA.key(), result, savedA.version());
+        assertEquals(PendingHandoffStatus.PREPARED, store.findByKey(tenantB.key()).orElseThrow().status());
+
+        AfterSalesTicketCreateResult tenantBResult = new AfterSalesTicketCreateResult(
+                "AS-TENANT-B", "PENDING", "2026-07-13T00:00:01Z"
+        );
+        store.confirm(tenantB.key(), tenantBResult, savedB.version());
+        assertEquals("AS-TENANT-A", store.findByKey(tenantA.key()).orElseThrow().confirmedResult().ticketId());
+        assertEquals("AS-TENANT-B", store.findByKey(tenantB.key()).orElseThrow().confirmedResult().ticketId());
+    }
+
+    @Test
+    void shouldKeepClaimsIndependentAndHideUnknownTenant() {
+        InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore();
+        PendingHandoffRecord tenantA = store.prepare(command("tenant-a", "claim-key", "A")).record();
+        PendingHandoffRecord tenantB = store.prepare(command("tenant-b", "claim-key", "B")).record();
+        long now = Math.max(tenantA.nextAttemptAt(), tenantB.nextAttemptAt());
+
+        PendingHandoffClaim claimA = store.tryClaim(
+                tenantA.key(), tenantA.version(), "owner-a", now, 1_000
+        ).orElseThrow();
+        PendingHandoffClaim claimB = store.tryClaim(
+                tenantB.key(), tenantB.version(), "owner-b", now, 1_000
+        ).orElseThrow();
+
+        assertEquals("owner-a", claimA.ownerToken());
+        assertEquals("owner-b", claimB.ownerToken());
+        assertTrue(store.tryClaim(
+                new PendingHandoffKey("tenant-c", "claim-key"), 1, "owner-c", now, 1_000
+        ).isEmpty());
+    }
+
+    @Test
+    void shouldRejectIdempotencyKeyWithSurroundingWhitespace() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> command(TENANT, " idem-with-space ", "摘要")
+        );
+    }
+
     private PendingHandoffCommand command(String idempotencyKey, String summary) {
+        return command(TENANT, idempotencyKey, summary);
+    }
+
+    private PendingHandoffCommand command(String tenantId, String idempotencyKey, String summary) {
         return new PendingHandoffCommand(
+                tenantId,
                 "USER-001",
                 "conv-outbox",
                 "COMPLAINT",

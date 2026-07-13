@@ -44,10 +44,12 @@ smartcs:
     mode: ${SMARTCS_HANDOFF_MODE:memory}
     after-sales:
       base-url: ${SMARTCS_AFTER_SALES_BASE_URL:http://localhost:8081}
-      tenant-id: ${SMARTCS_AFTER_SALES_TENANT_ID:demo}
       agent-user-id: ${SMARTCS_AFTER_SALES_AGENT_USER_ID:agent-service}
       agent-user-role: ${SMARTCS_AFTER_SALES_AGENT_USER_ROLE:AGENT}
 ```
+
+> 第二十批更新：租户不再使用全局 `SMARTCS_AFTER_SALES_TENANT_ID`。HTTP Client 会从当前
+> `ExecutionContext` 接收可信 tenantId，并写入 `X-Tenant-Id`，从而支持同一 Agent 实例安全服务多租户。
 
 两种模式：
 
@@ -193,4 +195,3 @@ mvn "-Dmaven.repo.local=.m2\repository" "-Dtest=HandoffToolsTest,HttpAfterSalesT
 继续补充设计取舍：
 
 > 我保留了 `memory` 和 `after-sales-http` 两种模式。默认 memory 保证 Agent 单项目可运行和测试稳定；联调时打开 HTTP 模式即可创建真实售后工单。如果后端不可用，Agent 会生成 `REMOTE_HANDOFF_PENDING` 本地工单，后续可以接 MQ 异步补建。
-

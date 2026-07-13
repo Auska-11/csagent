@@ -8,7 +8,7 @@
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 418 个默认测试及 1 个显式真实 MySQL IT 通过；Capability/LLM deadline、Agent 镜像与完整 Compose 均已实际验收 |
+| 当前验证规模 | 428 个默认测试及 1 个显式真实 MySQL IT 通过；PendingHandoff 租户迁移、Capability/LLM deadline、Agent 镜像与完整 Compose 均已实际验收 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -1139,6 +1139,26 @@ Demo 旁路和 LangChain4j 0.35“max-retries 实为总尝试次数”的依赖�
 增至 418 项，0 失败、0 错误、0 跳过。详细说明见
 `客服Agent-61-LLM重试上限与整轮时间预算说明.md`。
 
+### Phase 8 第二十批进度（2026-07-13，20.1 已完成）
+
+人工转接复核入口不能建立在“记录没有租户归属”的数据模型上。因此第二十批先完成租户安全地基：
+`ExecutionContext.tenantId` 已贯通 `LocalHandoffCapabilityProvider`、`HandoffTools`、
+`PendingHandoffCommand/Record`、memory/JDBC Store、Recovery Worker 和售后 HTTP Header。
+
+新增不可变 `PendingHandoffKey(tenantId, idempotencyKey)`，所有单条查询、CAS 更新、成功结果与租约操作
+不再接收裸 key。JDBC 主表、结果表和 Claim 表统一使用租户复合约束；远端幂等哈希也纳入 tenantId。
+全局 `SMARTCS_AFTER_SALES_TENANT_ID` 已删除，售后租户改为当前可信执行上下文动态传递。
+
+新增跨租户同 key 隔离、不同租户远端 key、HTTP 动态租户头和上下文租户不一致 fail-closed 测试。
+默认测试增至 428 项，0 失败、0 错误、0 跳过。已有 MySQL 卷不能自动推断历史租户，本批提供显式、
+可审核的停机迁移脚本，不在多实例 Store 构造器中竞争执行 DDL。脚本已在临时 MySQL 8.4 容器中以
+旧表和历史数据实际执行两次，复合键、跨租户同 key、结果与租约隔离均通过；扩展后的真实 MySQL IT
+也已通过。详细说明见
+`客服Agent-62-PendingHandoff租户隔离与复合键说明.md`。
+
+第二十批仍在继续：下一小批将实现租户内游标查询、详情读取和人工 retry/confirm/close 的 CAS 状态机，
+之后再增加追加式审计、ROLE_ADMIN HTTP API 与可替换的售后结果查询 Port。
+
 ### 验收标准
 
 - 不能通过猜测 conversationId 读取或清除其他用户会话。
@@ -1349,7 +1369,7 @@ smartcs:
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 418 个测试，另有 1 个真实 MySQL IT）。
+- [x] 旧测试全部保留并通过（当前默认套件共 428 个测试，另有 1 个真实 MySQL IT）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。

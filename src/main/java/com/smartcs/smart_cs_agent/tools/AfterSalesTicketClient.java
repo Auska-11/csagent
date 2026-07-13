@@ -9,5 +9,12 @@ package com.smartcs.smart_cs_agent.tools;
  */
 public interface AfterSalesTicketClient {
 
-    AfterSalesTicketCreateResult createTicket(AfterSalesTicketCreateRequest request);
+    /**
+     * 在指定租户中创建或幂等取得工单。
+     *
+     * <p>tenantId 必须来自服务端执行上下文，不能来自 LLM 参数或请求正文。把它放进 Port 方法签名，
+     * 可以防止 HTTP 适配器长期使用一份全局固定租户配置，造成工单写入错误租户。</p>
+     */
+    AfterSalesTicketCreateResult createTicket(String tenantId,
+                                               AfterSalesTicketCreateRequest request);
 }

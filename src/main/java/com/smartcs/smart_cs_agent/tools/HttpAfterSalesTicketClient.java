@@ -54,11 +54,16 @@ public class HttpAfterSalesTicketClient implements AfterSalesTicketClient {
     }
 
     @Override
-    public AfterSalesTicketCreateResult createTicket(AfterSalesTicketCreateRequest request) {
+    public AfterSalesTicketCreateResult createTicket(String tenantId,
+                                                      AfterSalesTicketCreateRequest request) {
+        if (tenantId == null || tenantId.isBlank()) {
+            throw new IllegalArgumentException("tenantId cannot be blank");
+        }
         try {
             TicketApiResponse response = restClient.post()
                     .uri("/api/tickets")
-                    .header("X-Tenant-Id", properties.getAfterSales().getTenantId())
+                    // 租户来自当前可信执行上下文，而不是一份所有请求共用的静态配置。
+                    .header("X-Tenant-Id", tenantId.trim())
                     .header("X-User-Id", properties.getAfterSales().getAgentUserId())
                     .header("X-User-Role", properties.getAfterSales().getAgentUserRole())
                     .header("Idempotency-Key", request.idempotencyKey())

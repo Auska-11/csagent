@@ -72,7 +72,29 @@ public class LocalHandoffCapabilityProvider
         }
 
         String userId = context.getPrincipal().getUserId();
+        String tenantId = context.getTenantId();
         String conversationId = context.getConversationId();
+        if (tenantId == null || tenantId.isBlank()) {
+            return CapabilityResult.businessRejected(
+                    CapabilityIds.HANDOFF_REQUEST,
+                    PROVIDER_ID,
+                    "TENANT_ID_REQUIRED",
+                    "A server-side tenant id is required",
+                    null
+            );
+        }
+        if (context.getPrincipal().isAuthenticated()
+                && !tenantId.equals(context.getPrincipal().getTenantId())) {
+            // 正常 HTTP 链路中二者都由服务端构造，必须一致。fail-closed 可以防止未来某个新入口
+            // 只替换了 ExecutionContext.tenantId，却仍携带另一个租户的认证 Principal。
+            return CapabilityResult.businessRejected(
+                    CapabilityIds.HANDOFF_REQUEST,
+                    PROVIDER_ID,
+                    "TENANT_CONTEXT_MISMATCH",
+                    "Authenticated principal and execution tenant do not match",
+                    null
+            );
+        }
         if (conversationId == null || conversationId.isBlank()) {
             return CapabilityResult.businessRejected(
                     CapabilityIds.HANDOFF_REQUEST,
@@ -83,7 +105,8 @@ public class LocalHandoffCapabilityProvider
             );
         }
 
-        HandoffTicketData ticket = handoffTools.createHandoffTicket(
+        HandoffTicketData ticket = handoffTools.createHandoffTicketForTenant(
+                tenantId,
                 userId,
                 conversationId,
                 reason,
@@ -134,7 +157,7 @@ public class LocalHandoffCapabilityProvider
                 inputSchema,
                 outputSchema,
                 true,
-                false,
+                true,
                 true,
                 true,
                 30_000,

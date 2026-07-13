@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.tools;
 
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.handoff.outbox.InMemoryPendingHandoffStore;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffCommand;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffPreparation;
@@ -97,8 +98,45 @@ public class HandoffTools {
                                                  String reason,
                                                  String summary,
                                                  String operationIdempotencyKey) {
-        if (properties.isAfterSalesHttpMode() && afterSalesTicketClient != null) {
+        // 这是尚未携带 ExecutionContext 的旧 ToolRegistry 兼容入口。memory 模式没有外部租户副作用，
+        // 可以继续使用默认演示租户；HTTP 模式必须 fail-closed，不能猜一个租户后写入真实售后平台。
+        if (properties.isAfterSalesHttpMode()) {
+            throw new HandoffTicketCreationException(
+                    "Tenant-aware handoff entry point is required for after-sales HTTP mode"
+            );
+        }
+        return createHandoffTicketForTenant(
+                ConversationKey.DEFAULT_TENANT_ID,
+                userId,
+                conversationId,
+                reason,
+                summary,
+                operationIdempotencyKey
+        );
+    }
+
+    /**
+     * 创建人工转接工单的生产入口。
+     *
+     * <p>tenantId、userId 和 conversationId 都由服务端执行上下文提供，不允许模型在工具参数中
+     * 自由指定。完整参数看起来稍多，但它明确展示了外部副作用所依赖的安全上下文。</p>
+     */
+    public HandoffTicketData createHandoffTicketForTenant(String tenantId,
+                                                          String userId,
+                                                          String conversationId,
+                                                          String reason,
+                                                          String summary,
+                                                          String operationIdempotencyKey) {
+        requireText(tenantId, "tenantId");
+        if (properties.isAfterSalesHttpMode()) {
+            if (afterSalesTicketClient == null) {
+                // 配置明确要求真实售后平台时，缺少 Client 必须失败，不能悄悄伪造一张 memory 工单。
+                throw new HandoffTicketCreationException(
+                        "After-sales ticket client is required in after-sales HTTP mode"
+                );
+            }
             return createAfterSalesTicket(
+                    tenantId.trim(),
                     userId,
                     conversationId,
                     reason,
@@ -110,7 +148,8 @@ public class HandoffTools {
         return createMemoryTicket(userId, conversationId, reason, summary, "WAITING_HUMAN_AGENT");
     }
 
-    private HandoffTicketData createAfterSalesTicket(String userId,
+    private HandoffTicketData createAfterSalesTicket(String tenantId,
+                                                     String userId,
                                                      String conversationId,
                                                      String reason,
                                                      String summary,
@@ -123,6 +162,7 @@ public class HandoffTools {
                 inferIssueType(reason, summary),
                 inferPriority(reason, summary),
                 buildIdempotencyKey(
+                        tenantId,
                         userId,
                         conversationId,
                         reason,
@@ -136,6 +176,7 @@ public class HandoffTools {
             // Outbox 必须先于外部副作用写入。即使进程在下一行之前退出，重启后也能看到 PREPARED，
             // 而不是在没有任何证据的情况下重新创建一张工单。
             preparation = pendingHandoffStore.prepare(new PendingHandoffCommand(
+                    tenantId,
                     userId,
                     conversationId,
                     reason,
@@ -171,11 +212,11 @@ public class HandoffTools {
         }
 
         try {
-            AfterSalesTicketCreateResult result = afterSalesTicketClient.createTicket(request);
+            AfterSalesTicketCreateResult result = afterSalesTicketClient.createTicket(tenantId, request);
             PendingHandoffRecord confirmed;
             try {
                 confirmed = pendingHandoffStore.confirm(
-                        request.idempotencyKey(),
+                        preparedRecord.key(),
                         result,
                         preparedRecord.version()
                 );
@@ -202,7 +243,7 @@ public class HandoffTools {
             // PREPARED 已在调用前写入，这里只需要把记录推进为 RESULT_UNKNOWN。
             try {
                 PendingHandoffRecord unknown = pendingHandoffStore.markResultUnknown(
-                        request.idempotencyKey(),
+                        preparedRecord.key(),
                         e.getClass().getSimpleName(),
                         preparedRecord.version()
                 );
@@ -352,7 +393,8 @@ public class HandoffTools {
         return "handoff";
     }
 
-    private String buildIdempotencyKey(String userId,
+    private String buildIdempotencyKey(String tenantId,
+                                       String userId,
                                        String conversationId,
                                        String reason,
                                        String summary,
@@ -360,7 +402,8 @@ public class HandoffTools {
         // 外部 Header 不直接暴露 userId/conversationId。完整 SHA-256 仍能稳定关联同一逻辑操作，
         // 并避免不同用户恰好使用相同客户端 key 时在售后平台发生碰撞。
         String operation = firstNonBlank(operationIdempotencyKey, summary, "handoff");
-        String source = hashSegment(userId)
+        String source = hashSegment(tenantId)
+                + hashSegment(userId)
                 + hashSegment(conversationId)
                 + hashSegment(reason)
                 + hashSegment(operation);
@@ -378,6 +421,12 @@ public class HandoffTools {
     private String hashSegment(String value) {
         String safe = value == null ? "" : value;
         return safe.length() + ":" + safe;
+    }
+
+    private void requireText(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(field + " cannot be blank");
+        }
     }
 
     private boolean containsAny(String text, String... keywords) {

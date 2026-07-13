@@ -8,8 +8,9 @@ import java.util.Optional;
 /**
  * 人工转接结果未知记录的持久化端口。
  *
- * <p>接口放在 Outbox 边界，上层不感知记录最终保存在 Map 还是 MySQL。相同 idempotencyKey 和相同
- * 请求必须返回同一条记录；相同 key 对应不同请求则必须拒绝，不能悄悄覆盖待核对证据。</p>
+ * <p>接口放在 Outbox 边界，上层不感知记录最终保存在 Map 还是 MySQL。同一租户内，相同
+ * idempotencyKey 和相同请求必须返回同一条记录；相同 key 对应不同请求则必须拒绝，不能悄悄覆盖
+ * 待核对证据。所有单条读写都接收 {@link PendingHandoffKey}，防止漏掉租户条件。</p>
  */
 public interface PendingHandoffStore {
 
@@ -17,12 +18,12 @@ public interface PendingHandoffStore {
     PendingHandoffPreparation prepare(PendingHandoffCommand command);
 
     /** 远端响应未知时推进状态。expectedVersion 防止旧执行者覆盖更新状态。 */
-    PendingHandoffRecord markResultUnknown(String idempotencyKey,
+    PendingHandoffRecord markResultUnknown(PendingHandoffKey key,
                                            String failureType,
                                            long expectedVersion);
 
     /** 保存已确认成功的远端结果；之后相同请求必须直接回放，不能再次调用远端。 */
-    PendingHandoffRecord confirm(String idempotencyKey,
+    PendingHandoffRecord confirm(PendingHandoffKey key,
                                  AfterSalesTicketCreateResult result,
                                  long expectedVersion);
 
@@ -30,7 +31,7 @@ public interface PendingHandoffStore {
     List<PendingHandoffRecord> findDue(long now, int limit);
 
     /** 使用短租约原子领取；其他实例已经持有未过期租约时返回 empty。 */
-    Optional<PendingHandoffClaim> tryClaim(String idempotencyKey,
+    Optional<PendingHandoffClaim> tryClaim(PendingHandoffKey key,
                                            long expectedVersion,
                                            String ownerToken,
                                            long now,
@@ -48,5 +49,5 @@ public interface PendingHandoffStore {
     /** Worker 已成功确认或主动放弃本次处理时释放自己的租约。 */
     void releaseClaim(PendingHandoffClaim claim);
 
-    Optional<PendingHandoffRecord> findByIdempotencyKey(String idempotencyKey);
+    Optional<PendingHandoffRecord> findByKey(PendingHandoffKey key);
 }

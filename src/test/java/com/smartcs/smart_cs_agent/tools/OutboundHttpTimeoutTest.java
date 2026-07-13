@@ -37,6 +37,7 @@ class OutboundHttpTimeoutTest {
 
         assertTimeout(Duration.ofSeconds(2), () ->
                 assertThrows(IllegalStateException.class, () -> client.createTicket(
+                        "tenant-timeout-test",
                         new AfterSalesTicketCreateRequest(
                                 "转人工",
                                 "故障注入",

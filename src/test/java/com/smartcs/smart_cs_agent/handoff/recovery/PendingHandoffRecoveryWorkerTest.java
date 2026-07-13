@@ -23,7 +23,8 @@ class PendingHandoffRecoveryWorkerTest {
         PendingHandoffRecord prepared = store.prepare(command("idem-worker-success")).record();
         AtomicLong clock = new AtomicLong(prepared.nextAttemptAt());
         AtomicInteger remoteCalls = new AtomicInteger();
-        AfterSalesTicketClient client = request -> {
+        AfterSalesTicketClient client = (tenantId, request) -> {
+            assertEquals("tenant-a", tenantId);
             remoteCalls.incrementAndGet();
             return new AfterSalesTicketCreateResult("AS-RECOVERED", "PENDING", "2026-07-13T00:00:00Z");
         };
@@ -31,7 +32,7 @@ class PendingHandoffRecoveryWorkerTest {
 
         worker.recoverDue();
         PendingHandoffRecord confirmed = store
-                .findByIdempotencyKey("idem-worker-success")
+                .findByKey(prepared.key())
                 .orElseThrow();
 
         assertEquals(1, remoteCalls.get());
@@ -45,7 +46,8 @@ class PendingHandoffRecoveryWorkerTest {
         PendingHandoffRecord prepared = store.prepare(command("idem-worker-failure")).record();
         AtomicLong clock = new AtomicLong(prepared.nextAttemptAt());
         AtomicInteger remoteCalls = new AtomicInteger();
-        AfterSalesTicketClient client = request -> {
+        AfterSalesTicketClient client = (tenantId, request) -> {
+            assertEquals("tenant-a", tenantId);
             remoteCalls.incrementAndGet();
             throw new IllegalStateException("internal endpoint must not be logged");
         };
@@ -54,7 +56,7 @@ class PendingHandoffRecoveryWorkerTest {
 
         worker.recoverDue();
         PendingHandoffRecord retry = store
-                .findByIdempotencyKey("idem-worker-failure")
+                .findByKey(prepared.key())
                 .orElseThrow();
         assertEquals(PendingHandoffStatus.RETRY_SCHEDULED, retry.status());
         assertEquals(clock.get() + properties.getRetryDelayMs(), retry.nextAttemptAt());
@@ -66,7 +68,7 @@ class PendingHandoffRecoveryWorkerTest {
         clock.set(retry.nextAttemptAt());
         worker.recoverDue();
         PendingHandoffRecord manual = store
-                .findByIdempotencyKey("idem-worker-failure")
+                .findByKey(prepared.key())
                 .orElseThrow();
         assertEquals(2, remoteCalls.get());
         assertEquals(PendingHandoffStatus.NEEDS_MANUAL_REVIEW, manual.status());
@@ -111,6 +113,7 @@ class PendingHandoffRecoveryWorkerTest {
 
     private PendingHandoffCommand command(String key) {
         return new PendingHandoffCommand(
+                "tenant-a",
                 "USER-001",
                 "conv-worker",
                 "COMPLAINT",
