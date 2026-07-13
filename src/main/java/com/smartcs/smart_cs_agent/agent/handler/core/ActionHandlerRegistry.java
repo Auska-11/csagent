@@ -4,15 +4,6 @@ import com.smartcs.smart_cs_agent.agent.action.AgentAction;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionExecutionResult;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandler;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandlingContext;
-import com.smartcs.smart_cs_agent.agent.handler.defaults.AskUserActionHandler;
-import com.smartcs.smart_cs_agent.agent.handler.defaults.CapabilityActionHandler;
-import com.smartcs.smart_cs_agent.agent.handler.defaults.ConfirmActionHandler;
-import com.smartcs.smart_cs_agent.agent.handler.defaults.FinalAnswerActionHandler;
-import com.smartcs.smart_cs_agent.agent.handler.defaults.HandoffActionHandler;
-import com.smartcs.smart_cs_agent.agent.handler.defaults.LlmActionHandler;
-import com.smartcs.smart_cs_agent.skill.SkillManager;
-import com.smartcs.smart_cs_agent.tools.ToolManager;
-import dev.langchain4j.model.chat.ChatLanguageModel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -69,25 +60,6 @@ public class ActionHandlerRegistry {
     /** 返回将处理该 Action 的稳定 Handler 标识，供 Trace 使用。 */
     public String handlerId(AgentAction action) {
         return requireHandler(action).getClass().getSimpleName();
-    }
-
-    /**
-     * 兼容不启动 Spring 的旧单元测试。
-     *
-     * <p>生产环境绝不会调用本方法，而是让 Spring 自动收集 Handler Bean。等旧测试全部改为使用
-     * 测试装配器后可以删除这个过渡工厂。</p>
-     */
-    public static ActionHandlerRegistry legacyTestRegistry(SkillManager skillManager,
-                                                            ChatLanguageModel chatModel,
-                                                            ToolManager toolManager) {
-        return new ActionHandlerRegistry(List.of(
-                new FinalAnswerActionHandler(),
-                new AskUserActionHandler(),
-                new ConfirmActionHandler(),
-                new LlmActionHandler(skillManager, chatModel),
-                new CapabilityActionHandler(toolManager, skillManager),
-                new HandoffActionHandler(toolManager, skillManager)
-        ));
     }
 
     private ActionHandler<? extends AgentAction> requireHandler(AgentAction action) {

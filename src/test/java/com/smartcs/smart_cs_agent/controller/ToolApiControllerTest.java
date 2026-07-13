@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
 import com.smartcs.smart_cs_agent.repository.OrderRepository;
 import com.smartcs.smart_cs_agent.repository.ProductRepository;
 import com.smartcs.smart_cs_agent.repository.ReturnRepository;
@@ -10,10 +11,9 @@ import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
 import com.smartcs.smart_cs_agent.tools.OrderTools;
 import com.smartcs.smart_cs_agent.tools.ProductTools;
 import com.smartcs.smart_cs_agent.tools.ReturnTools;
-import com.smartcs.smart_cs_agent.tools.ToolDefinition;
-import com.smartcs.smart_cs_agent.tools.ToolManager;
 import com.smartcs.smart_cs_agent.tools.ToolRegistry;
 import com.smartcs.smart_cs_agent.tools.UserTools;
+import com.smartcs.smart_cs_agent.testing.WorkflowTestSupport;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -33,16 +33,18 @@ class ToolApiControllerTest {
 
     @Test
     void shouldListToolsWithInputSchema() {
-        ToolApiController controller = new ToolApiController(new ToolManager(createRegistry()));
+        ToolApiController controller = new ToolApiController(
+                WorkflowTestSupport.toolRegistryGateway(createRegistry())
+        );
 
         Map<String, Object> response = controller.listTools();
 
         assertEquals(9, response.get("count"));
 
         List<?> tools = assertInstanceOf(List.class, response.get("tools"));
-        ToolDefinition orderLookup = tools.stream()
-                .map(ToolDefinition.class::cast)
-                .filter(tool -> "order_lookup".equals(tool.getName()))
+        CapabilityDefinition orderLookup = tools.stream()
+                .map(CapabilityDefinition.class::cast)
+                .filter(tool -> "order.lookup".equals(tool.getId()))
                 .findFirst()
                 .orElseThrow();
 
@@ -53,7 +55,6 @@ class ToolApiControllerTest {
         assertTrue(properties.containsKey("order_id"));
         assertEquals(List.of("order_id"), inputSchema.get("required"));
 
-        assertEquals("OrderToolData", orderLookup.getOutputType());
         Map<?, ?> outputSchema = orderLookup.getOutputSchema();
         assertEquals("object", outputSchema.get("type"));
         assertEquals("OrderToolData", outputSchema.get("dto"));

@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.agent.handler.defaults;
 
 import com.smartcs.smart_cs_agent.agent.action.LLMAction;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
+import com.smartcs.smart_cs_agent.agent.context.CapabilityObservation;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionExecutionResult;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandler;
@@ -10,7 +11,6 @@ import com.smartcs.smart_cs_agent.agent.handler.core.HandlerTraceSupport;
 import com.smartcs.smart_cs_agent.agent.llm.LlmExecutionGuard;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.skill.api.ResolvedSkillPrompt;
-import com.smartcs.smart_cs_agent.tools.ToolResult;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
@@ -153,15 +153,15 @@ public class LlmActionHandler implements ActionHandler<LLMAction> {
 
         if ("response_generation".equals(purpose)) {
             Object lastCapabilityResult = context.getState().getTaskState("last_capability_result");
-            if (lastCapabilityResult instanceof ToolResult result) {
-                return buildToolResultFallbackAnswer(result);
+            if (lastCapabilityResult instanceof CapabilityObservation result) {
+                return buildCapabilityFallbackAnswer(result);
             }
             return "您好，我是智能客服。当前大模型服务暂时不可用，但我仍可以帮您查询订单、商品、退货进度或转人工客服。";
         }
         return "当前大模型服务暂时不可用，请稍后再试。";
     }
 
-    private String buildToolResultFallbackAnswer(ToolResult result) {
+    private String buildCapabilityFallbackAnswer(CapabilityObservation result) {
         if (!result.isSuccess()) {
             return "抱歉，当前工具查询失败：" + result.getMessage()
                     + "。请核对信息后再试，或发送“我要找人工客服”。";
@@ -170,14 +170,14 @@ public class LlmActionHandler implements ActionHandler<LLMAction> {
         String message = result.getMessage() == null || result.getMessage().isBlank()
                 ? "工具已成功返回结果。"
                 : result.getMessage();
-        return switch (result.getToolName()) {
-            case "order_lookup" -> "我已为您查询到订单信息：\n" + message;
-            case "user_orders" -> "我已为您查询到当前用户的订单列表：\n" + message;
-            case "product_search", "product_info" -> "我已为您查询到商品信息：\n" + message;
-            case "return_apply" -> "退货申请处理结果如下：\n" + message;
-            case "return_query" -> "我已为您查询到退货进度：\n" + message;
-            case "user_lookup" -> "我已为您查询到用户信息：\n" + message;
-            case "knowledge_search" -> "我根据客服知识库查到以下信息：\n" + message;
+        return switch (result.getCapabilityId()) {
+            case "order.lookup" -> "我已为您查询到订单信息：\n" + message;
+            case "order.list-by-user" -> "我已为您查询到当前用户的订单列表：\n" + message;
+            case "product.search", "product.lookup" -> "我已为您查询到商品信息：\n" + message;
+            case "return.apply" -> "退货申请处理结果如下：\n" + message;
+            case "return.lookup" -> "我已为您查询到退货进度：\n" + message;
+            case "user.lookup" -> "我已为您查询到用户信息：\n" + message;
+            case "knowledge.search" -> "我根据客服知识库查到以下信息：\n" + message;
             default -> "我已处理完成：\n" + message;
         };
     }

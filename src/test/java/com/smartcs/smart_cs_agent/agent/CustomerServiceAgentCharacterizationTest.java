@@ -20,7 +20,6 @@ import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
 import com.smartcs.smart_cs_agent.tools.OrderTools;
 import com.smartcs.smart_cs_agent.tools.ProductTools;
 import com.smartcs.smart_cs_agent.tools.ReturnTools;
-import com.smartcs.smart_cs_agent.tools.ToolManager;
 import com.smartcs.smart_cs_agent.tools.ToolRegistry;
 import com.smartcs.smart_cs_agent.tools.UserTools;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
@@ -50,7 +49,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 用户可见的退货流程与真实 Repository 副作用。</p>
  *
  * <p>调用链：CustomerServiceAgent -> ConversationStore -> AgentRuntime ->
- * ReturnApplyWorkflow -> ToolManager -> ToolRegistry -> ReturnTools。</p>
+ * ReturnApplyWorkflow -> CapabilityGateway -> ToolRegistryCapabilityProvider -> ReturnTools。</p>
  *
  * <p>测试使用 Fake LLM 和内存 Repository，不访问网络或真实数据库，因此可以稳定地加入默认
  * {@code mvn test}。</p>
@@ -160,8 +159,11 @@ class CustomerServiceAgentCharacterizationTest {
         );
         AgentRuntime runtime = new AgentRuntime(
                 skillManager,
-                new FixedReplyChatLanguageModel("退货申请已提交，请留意后续审核进度。"),
-                new ToolManager(toolRegistry)
+                WorkflowTestSupport.actionHandlerRegistry(
+                        skillManager,
+                        new FixedReplyChatLanguageModel("专业退货 Workflow 不应调用 Fake LLM"),
+                        WorkflowTestSupport.toolRegistryGateway(toolRegistry)
+                )
         );
         ConversationStore conversationStore = new ConversationStore();
         CustomerServiceAgent agent = new CustomerServiceAgent(

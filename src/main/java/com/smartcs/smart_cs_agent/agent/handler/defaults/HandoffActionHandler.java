@@ -1,6 +1,7 @@
 package com.smartcs.smart_cs_agent.agent.handler.defaults;
 
 import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
+import com.smartcs.smart_cs_agent.agent.context.CapabilityObservation;
 import com.smartcs.smart_cs_agent.agent.context.ExecutionContext;
 import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
@@ -9,12 +10,13 @@ import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandler;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandlingContext;
 import com.smartcs.smart_cs_agent.agent.handler.core.HandlerTraceSupport;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityCall;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityGateway;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.HandoffTicketSummary;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.skill.api.AgentSkillPackage;
-import com.smartcs.smart_cs_agent.tools.ToolCall;
-import com.smartcs.smart_cs_agent.tools.ToolManager;
-import com.smartcs.smart_cs_agent.tools.ToolResult;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -29,11 +31,11 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
     private static final String HANDOFF_CAPABILITY = CapabilityIds.HANDOFF_REQUEST;
     private static final long DEFAULT_UPSTREAM_TIMEOUT_MS = 30_000;
 
-    private final ToolManager toolManager;
+    private final CapabilityGateway capabilityGateway;
     private final SkillManager skillManager;
 
-    public HandoffActionHandler(ToolManager toolManager, SkillManager skillManager) {
-        this.toolManager = toolManager;
+    public HandoffActionHandler(CapabilityGateway capabilityGateway, SkillManager skillManager) {
+        this.capabilityGateway = capabilityGateway;
         this.skillManager = skillManager;
     }
 
@@ -54,10 +56,14 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
         context.addTrace("handoff_requested", "Workflow 判断需要转人工", handoffData);
 
         if (!skillManager.isCapabilityAllowed(skillPackage, HANDOFF_CAPABILITY)) {
-            ToolResult denied = ToolResult.failure(
+            CapabilityObservation denied = new CapabilityObservation(
                     HANDOFF_CAPABILITY,
+                    CapabilityOutcome.BUSINESS_REJECTED,
+                    "当前 Skill 未授权创建人工转接工单",
+                    null,
                     "CAPABILITY_NOT_ALLOWED",
-                    "当前 Skill 未授权创建人工转接工单"
+                    "skill-allowlist",
+                    false
             );
             observe(context, denied);
 
@@ -76,12 +82,13 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
         arguments.put("summary", action.getSummary());
 
         long startedAtNanos = System.nanoTime();
-        ToolResult result;
+        CapabilityObservation result;
         try {
-            result = toolManager.execute(
-                    new ToolCall(HANDOFF_CAPABILITY, arguments),
+            CapabilityResult<?> gatewayResult = capabilityGateway.invoke(
+                    new CapabilityCall(HANDOFF_CAPABILITY, arguments),
                     executionContext(handlingContext)
             );
+            result = CapabilityObservation.from(gatewayResult);
         } catch (RuntimeException e) {
             Map<String, Object> failedData = new LinkedHashMap<>();
             failedData.put("durationMs", HandlerTraceSupport.elapsedMillis(startedAtNanos));
@@ -120,8 +127,8 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
         return data;
     }
 
-    private void observe(TurnContext context, ToolResult result) {
-        context.addObservation("capability", result);
+    private void observe(TurnContext context, CapabilityObservation result) {
+        context.addObservation("capability_result", result);
         context.getState().setTaskState("last_capability", HANDOFF_CAPABILITY);
         context.getState().setTaskState("last_capability_result", result);
     }
@@ -147,7 +154,7 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
         );
     }
 
-    private String buildHandoffAnswer(ToolResult result) {
+    private String buildHandoffAnswer(CapabilityObservation result) {
         String ticketId = extractTicketId(result.getData());
         if (ticketId == null) {
             ticketId = "人工工单已创建";

@@ -1655,7 +1655,8 @@ Phase 8 已在 20.6 完成最终架构验收。Phase 9 不再扩充业务面，�
 - [x] 9.1 冻结八类独立 Workflow 与 `customer_service` 通用兜底的路由行为。
 - [x] 9.1 通过 517 个默认测试与 Spring Boot JAR 构建。
 - [x] 9.2 用真正的通用客服 Workflow 替代 Legacy Skill/Adapter，收紧为零 Capability，并通过 508 项干净构建默认测试。
-- [ ] 9.3 让 Handler/API 直接依赖 Capability 契约，并删除旧 Tool 兼容入口。
+- [ ] 9.3（进行中）Handler/API 已直连 Capability 契约并删除 `ToolManager`；待补齐 Order、Knowledge
+  Provider 后删除 `ToolRegistry` 兼容链和重复 Schema。
 - [ ] 9.4 更新 Eval、README、架构与面试材料，完成 Maven Modules 决策。
 - [ ] 9.5 完成默认测试、真实 MySQL、JAR、Docker/Compose 最终验收。
 
@@ -1667,3 +1668,6 @@ Workflow ID，并负责闲聊和模糊意图。Phase 9.2 将保持 ID 不变，�
 
 详细依赖表、分批删除顺序、测试证据和完成定义见
 [`客服Agent-68-Phase9兼容层清理实施计划与基线审计.md`](客服Agent-68-Phase9兼容层清理实施计划与基线审计.md)。
+
+9.3 第一批 `ToolManager` 删除、统一 Observation 和 508 项干净测试证据见
+[`客服Agent-70-Phase9Capability主链路与ToolManager删除说明.md`](客服Agent-70-Phase9Capability主链路与ToolManager删除说明.md)。

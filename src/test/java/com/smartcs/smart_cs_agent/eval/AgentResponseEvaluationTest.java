@@ -21,7 +21,6 @@ import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
 import com.smartcs.smart_cs_agent.tools.OrderTools;
 import com.smartcs.smart_cs_agent.tools.ProductTools;
 import com.smartcs.smart_cs_agent.tools.ReturnTools;
-import com.smartcs.smart_cs_agent.tools.ToolManager;
 import com.smartcs.smart_cs_agent.tools.ToolRegistry;
 import com.smartcs.smart_cs_agent.tools.UserTools;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
@@ -152,8 +151,11 @@ class AgentResponseEvaluationTest {
 
         AgentRuntime runtime = new AgentRuntime(
                 skillManager,
-                new FakeChatLanguageModel("专业 Workflow 不应调用 Fake LLM"),
-                new ToolManager(toolRegistry)
+                WorkflowTestSupport.actionHandlerRegistry(
+                        skillManager,
+                        new FakeChatLanguageModel("专业 Workflow 不应调用 Fake LLM"),
+                        WorkflowTestSupport.toolRegistryGateway(toolRegistry)
+                )
         );
 
         return new CustomerServiceAgent(

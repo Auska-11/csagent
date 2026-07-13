@@ -4,19 +4,19 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartcs.smart_cs_agent.agent.action.CapabilityAction;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
+import com.smartcs.smart_cs_agent.agent.context.CapabilityObservation;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ExecutionContext;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandlingContext;
 import com.smartcs.smart_cs_agent.agent.handler.defaults.CapabilityActionHandler;
-import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityCall;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityGateway;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.skill.api.AgentSkillDefinition;
 import com.smartcs.smart_cs_agent.skill.api.AgentSkillPackage;
 import com.smartcs.smart_cs_agent.skill.api.RiskLevel;
-import com.smartcs.smart_cs_agent.tools.ToolCall;
-import com.smartcs.smart_cs_agent.tools.ToolManager;
-import com.smartcs.smart_cs_agent.tools.ToolResult;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
 import com.smartcs.smart_cs_agent.workflow.escalation.EscalationWorkflow;
 import org.junit.jupiter.api.Test;
@@ -31,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -40,22 +41,18 @@ class CapabilityActionHandlerTenantTest {
 
     @Test
     void shouldPropagateTenantAndOwnerScopeToExecutionContext() throws Exception {
-        ToolManager toolManager = mock(ToolManager.class);
+        CapabilityGateway capabilityGateway = mock(CapabilityGateway.class);
         SkillManager skillManager = mock(SkillManager.class);
         AgentSkillPackage skillPackage = packageAllowing("knowledge.search");
         when(skillManager.isCapabilityAllowed(skillPackage, "knowledge.search")).thenReturn(true);
-        when(toolManager.execute(any(ToolCall.class), any(ExecutionContext.class))).thenReturn(
-                ToolResult.fromCapability(
-                        true,
+        // invoke 返回 CapabilityResult<?>；doReturn 可避免 Mockito 对通配符做错误的捕获推断。
+        doReturn(CapabilityResult.success(
                         "knowledge.search",
-                        "provider-result-canary private@example.com",
-                        List.of(),
-                        null,
-                        CapabilityOutcome.SUCCESS,
                         "test-provider",
-                        false
-                )
-        );
+                        "provider-result-canary private@example.com",
+                        List.of()
+                ))
+                .when(capabilityGateway).invoke(any(CapabilityCall.class), any(ExecutionContext.class));
 
         ChatRequest request = new ChatRequest(
                 "tenant-a",
@@ -76,16 +73,16 @@ class CapabilityActionHandlerTenantTest {
                 skillPackage
         );
 
-        CapabilityActionHandler handler = new CapabilityActionHandler(toolManager, skillManager);
+        CapabilityActionHandler handler = new CapabilityActionHandler(capabilityGateway, skillManager);
         Map<String, Object> rawArguments = Map.of(
                 "query", "TRACE-QUERY-CANARY token=provider-secret",
                 "order_id", "ORD-001"
         );
         handler.handle(new CapabilityAction("knowledge.search", rawArguments), handlingContext);
 
-        ArgumentCaptor<ToolCall> callCaptor = ArgumentCaptor.forClass(ToolCall.class);
+        ArgumentCaptor<CapabilityCall> callCaptor = ArgumentCaptor.forClass(CapabilityCall.class);
         ArgumentCaptor<ExecutionContext> contextCaptor = ArgumentCaptor.forClass(ExecutionContext.class);
-        verify(toolManager).execute(callCaptor.capture(), contextCaptor.capture());
+        verify(capabilityGateway).invoke(callCaptor.capture(), contextCaptor.capture());
         ExecutionContext executionContext = contextCaptor.getValue();
         assertEquals("tenant-a", executionContext.getTenantId());
         assertEquals("USER-001", executionContext.getPrincipal().getUserId());
@@ -104,6 +101,10 @@ class CapabilityActionHandlerTenantTest {
         assertFalse(traceJson.contains("provider-result-canary"));
         assertFalse(traceJson.contains("private@example.com"));
         assertTrue(traceJson.contains("ORD-001"));
+
+        // Handler 只向 Workflow 暴露传输无关的 Observation，不能把 Provider 结果对象直接泄漏出去。
+        assertTrue(turnContext.getLatestObservationByType("capability_result").getData()
+                instanceof CapabilityObservation);
     }
 
     private AgentSkillPackage packageAllowing(String capability) {

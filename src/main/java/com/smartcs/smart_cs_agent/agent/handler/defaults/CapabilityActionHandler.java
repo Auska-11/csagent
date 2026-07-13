@@ -11,11 +11,12 @@ import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandler;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandlingContext;
 import com.smartcs.smart_cs_agent.agent.handler.core.HandlerTraceSupport;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityCall;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityGateway;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.skill.api.AgentSkillPackage;
-import com.smartcs.smart_cs_agent.tools.ToolCall;
-import com.smartcs.smart_cs_agent.tools.ToolManager;
-import com.smartcs.smart_cs_agent.tools.ToolResult;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -27,7 +28,7 @@ import java.util.Map;
 /**
  * 执行 CapabilityAction 的默认插件。
  *
- * <p>所有普通能力调用统一经过：Skill allowlist -> ExecutionContext -> ToolManager/Gateway -> Observation。
+ * <p>所有普通能力调用统一经过：Skill allowlist -> ExecutionContext -> CapabilityGateway -> Observation。
  * Workflow 不接触 Provider，本 Handler 也不包含订单、商品等具体领域判断。</p>
  */
 @Component
@@ -35,11 +36,11 @@ public class CapabilityActionHandler implements ActionHandler<CapabilityAction> 
 
     private static final long DEFAULT_UPSTREAM_TIMEOUT_MS = 30_000;
 
-    private final ToolManager toolManager;
+    private final CapabilityGateway capabilityGateway;
     private final SkillManager skillManager;
 
-    public CapabilityActionHandler(ToolManager toolManager, SkillManager skillManager) {
-        this.toolManager = toolManager;
+    public CapabilityActionHandler(CapabilityGateway capabilityGateway, SkillManager skillManager) {
+        this.capabilityGateway = capabilityGateway;
         this.skillManager = skillManager;
     }
 
@@ -59,7 +60,7 @@ public class CapabilityActionHandler implements ActionHandler<CapabilityAction> 
         String canonicalCapabilityId = CapabilityIds.canonicalize(capability);
         Map<String, Object> arguments = action.getArguments();
         long startedAtNanos = System.nanoTime();
-        ToolResult result;
+        CapabilityObservation result;
 
         // Provider 中“存在”某项能力，不等于当前 Skill 被“授权”调用它。
         if (!skillManager.isCapabilityAllowed(skillPackage, capability)) {
@@ -68,10 +69,14 @@ public class CapabilityActionHandler implements ActionHandler<CapabilityAction> 
             deniedData.put("skillId", skillPackage.getDefinition().getId());
             deniedData.put("allowedCapabilities", skillPackage.getDefinition().getAllowedCapabilities());
             context.addTrace("capability_denied", "Skill Package 未授权此 Capability", deniedData);
-            result = ToolResult.failure(
-                    capability,
+            result = new CapabilityObservation(
+                    canonicalCapabilityId,
+                    CapabilityOutcome.BUSINESS_REJECTED,
+                    "当前 Skill 未授权调用 Capability: " + capability,
+                    null,
                     "CAPABILITY_NOT_ALLOWED",
-                    "当前 Skill 未授权调用 Capability: " + capability
+                    "skill-allowlist",
+                    false
             );
         } else {
             context.addTrace("tool_called", "调用工具：" + capability, Map.of(
@@ -80,10 +85,11 @@ public class CapabilityActionHandler implements ActionHandler<CapabilityAction> 
             ));
 
             try {
-                result = toolManager.execute(
-                        new ToolCall(capability, arguments),
-                        buildExecutionContext(handlingContext, capability)
+                CapabilityResult<?> gatewayResult = capabilityGateway.invoke(
+                        new CapabilityCall(canonicalCapabilityId, arguments),
+                        buildExecutionContext(handlingContext, canonicalCapabilityId)
                 );
+                result = CapabilityObservation.from(gatewayResult);
             } catch (RuntimeException e) {
                 Map<String, Object> failedData = new LinkedHashMap<>();
                 failedData.put("capability", capability);
@@ -95,22 +101,9 @@ public class CapabilityActionHandler implements ActionHandler<CapabilityAction> 
         }
 
         long durationMs = HandlerTraceSupport.elapsedMillis(startedAtNanos);
-        // capability Observation 仍供 ReturnApplyWorkflow 等读取稳定 ToolResult；
-        // capability_result 则提供新版强类型 CapabilityObservation。Phase 9.3 会继续收口重复 Schema。
-        context.addObservation("capability", result);
-
-        // 新 Workflow 只读取 capability_result。这里把 Provider 差异压平，
-        // 因此从 local 切到 mcp-remote 时不需要修改 Workflow。
-        context.addObservation("capability_result", new CapabilityObservation(
-                canonicalCapabilityId,
-                result.getOutcome(),
-                result.getMessage(),
-                result.getData(),
-                result.getErrorCode(),
-                result.getProviderId(),
-                result.isReplayed()
-        ));
-        state.setTaskState("last_capability", capability);
+        // Workflow 只读取这一种强类型结果。Provider 从 local 切到 MCP 时，Workflow 无需修改。
+        context.addObservation("capability_result", result);
+        state.setTaskState("last_capability", canonicalCapabilityId);
         state.setTaskState("last_capability_result", result);
 
         Map<String, Object> observedData = new LinkedHashMap<>();

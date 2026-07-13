@@ -19,7 +19,6 @@ import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
 import com.smartcs.smart_cs_agent.tools.OrderTools;
 import com.smartcs.smart_cs_agent.tools.ProductTools;
 import com.smartcs.smart_cs_agent.tools.ReturnTools;
-import com.smartcs.smart_cs_agent.tools.ToolManager;
 import com.smartcs.smart_cs_agent.tools.ToolRegistry;
 import com.smartcs.smart_cs_agent.tools.UserTools;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
@@ -208,12 +207,13 @@ class AgentRuntimeTraceTest {
                 createKnowledgeTools(),
                 new HandoffTools()
         );
-        ToolManager toolManager = new ToolManager(toolRegistry);
-
         return new AgentRuntime(
                 skillManager,
-                chatModel,
-                toolManager
+                WorkflowTestSupport.actionHandlerRegistry(
+                        skillManager,
+                        chatModel,
+                        WorkflowTestSupport.toolRegistryGateway(toolRegistry)
+                )
         );
     }
 

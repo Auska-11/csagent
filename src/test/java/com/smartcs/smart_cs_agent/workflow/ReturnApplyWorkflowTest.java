@@ -7,14 +7,14 @@ import com.smartcs.smart_cs_agent.agent.action.ConfirmAction;
 import com.smartcs.smart_cs_agent.agent.action.FinalAnswerAction;
 import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
+import com.smartcs.smart_cs_agent.agent.context.CapabilityObservation;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.agent.context.WorkflowStatus;
-import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
 import com.smartcs.smart_cs_agent.model.ReturnRecord;
 import com.smartcs.smart_cs_agent.tools.ReturnToolData;
-import com.smartcs.smart_cs_agent.tools.ToolResult;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowDecision;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
 import com.smartcs.smart_cs_agent.workflow.returnapply.ReturnApplyStep;
@@ -55,11 +55,11 @@ class ReturnApplyWorkflowTest {
         CapabilityAction orderLookup = assertInstanceOf(CapabilityAction.class, orderDecision.getAction());
         assertEquals("order.lookup", orderLookup.getCapability());
 
-        orderTurn.addObservation("capability", ToolResult.success(
+        observeSuccess(orderTurn,
                 "order.lookup",
                 "found",
                 ownedOrder("USER-002")
-        ));
+        );
         WorkflowDecision reasonDecision = workflow.nextAction(orderTurn);
         assertInstanceOf(AskUserAction.class, reasonDecision.getAction());
         assertStep(state, ReturnApplyStep.WAITING_REASON);
@@ -85,7 +85,7 @@ class ReturnApplyWorkflowTest {
         assertEquals("ORD-003", submit.getArguments().get("order_id"));
         assertEquals("质量问题", submit.getArguments().get("reason"));
 
-        submitTurn.addObservation("capability", ToolResult.success(
+        observeSuccess(submitTurn,
                 "return.apply",
                 "submitted",
                 ReturnToolData.submitted(
@@ -93,7 +93,7 @@ class ReturnApplyWorkflowTest {
                         "USB-C 数据线",
                         "1-2 business days"
                 )
-        ));
+        );
         FinalAnswerAction completed = assertInstanceOf(
                 FinalAnswerAction.class,
                 workflow.nextAction(submitTurn).getAction()
@@ -108,11 +108,11 @@ class ReturnApplyWorkflowTest {
         TurnContext context = turn(state, "我要退货 ORD-003，质量问题", "USER-001");
 
         assertInstanceOf(CapabilityAction.class, workflow.nextAction(context).getAction());
-        context.addObservation("capability", ToolResult.success(
+        observeSuccess(context,
                 "order.lookup",
                 "found",
                 ownedOrder("USER-002")
-        ));
+        );
 
         FinalAnswerAction denied = assertInstanceOf(
                 FinalAnswerAction.class,
@@ -144,22 +144,19 @@ class ReturnApplyWorkflowTest {
         assertInstanceOf(CapabilityAction.class, workflow.nextAction(submitTurn).getAction());
 
         // JDBC 幂等记录不会保存 Java 类名，重启后的 data 是普通 Map。
-        submitTurn.addObservation("capability", ToolResult.fromCapability(
-                true,
+        CapabilityResult<Map<String, Object>> replayed = CapabilityResult.success(
                 "return.apply",
-                "submitted",
-                Map.of(
-                        "found", true,
-                        "submitted", true,
-                        "return_id", "RET-MAP-001",
-                        "order_id", "ORD-003",
-                        "status", "Under Review"
-                ),
-                null,
-                CapabilityOutcome.SUCCESS,
                 "local-return-domain",
-                true
-        ));
+                "submitted",
+                Map.<String, Object>of(
+                    "found", true,
+                    "submitted", true,
+                    "return_id", "RET-MAP-001",
+                    "order_id", "ORD-003",
+                    "status", "Under Review"
+                )
+        ).asReplayed();
+        submitTurn.addObservation("capability_result", CapabilityObservation.from(replayed));
 
         FinalAnswerAction completed = assertInstanceOf(
                 FinalAnswerAction.class,
@@ -187,11 +184,11 @@ class ReturnApplyWorkflowTest {
         ConversationState state = startedState("我要退货 ORD-003，质量问题", "USER-002");
         TurnContext context = turn(state, "我要退货 ORD-003，质量问题", "USER-002");
         workflow.nextAction(context);
-        context.addObservation("capability", ToolResult.success(
+        observeSuccess(context,
                 "order.lookup",
                 "found",
                 ownedOrder("USER-002")
-        ));
+        );
         assertInstanceOf(ConfirmAction.class, workflow.nextAction(context).getAction());
         return state;
     }
@@ -215,6 +212,20 @@ class ReturnApplyWorkflowTest {
                 "已签收",
                 "YT9876543210"
         );
+    }
+
+    /**
+     * Workflow 单测模拟的是 Handler 写入的稳定观察结果，而不是旧 ToolRegistry 的返回对象。
+     * 这样测试会在有人重新引入旧 {@code ToolResult} 依赖时立即暴露问题。
+     */
+    private void observeSuccess(TurnContext context, String capabilityId, String message, Object data) {
+        CapabilityResult<Object> result = CapabilityResult.success(
+                capabilityId,
+                "workflow-test-provider",
+                message,
+                data
+        );
+        context.addObservation("capability_result", CapabilityObservation.from(result));
     }
 
     private void assertStep(ConversationState state, ReturnApplyStep expected) {

@@ -1,7 +1,7 @@
 package com.smartcs.smart_cs_agent.controller;
 
-import com.smartcs.smart_cs_agent.tools.ToolDefinition;
-import com.smartcs.smart_cs_agent.tools.ToolManager;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityGateway;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -24,10 +24,10 @@ import java.util.Map;
 @RequestMapping("/api/tools")
 public class ToolApiController {
 
-    private final ToolManager toolManager;
+    private final CapabilityGateway capabilityGateway;
 
-    public ToolApiController(ToolManager toolManager) {
-        this.toolManager = toolManager;
+    public ToolApiController(CapabilityGateway capabilityGateway) {
+        this.capabilityGateway = capabilityGateway;
     }
 
     /**
@@ -40,7 +40,8 @@ public class ToolApiController {
      */
     @GetMapping
     public Map<String, Object> listTools() {
-        List<ToolDefinition> tools = toolManager.listTools();
+        // 调试接口和 MCP tools/list 读取同一份 Capability Catalog，避免维护第二套 ToolDefinition Schema。
+        List<CapabilityDefinition> tools = List.copyOf(capabilityGateway.catalog().list());
         return Map.of(
                 "count", tools.size(),
                 "tools", tools

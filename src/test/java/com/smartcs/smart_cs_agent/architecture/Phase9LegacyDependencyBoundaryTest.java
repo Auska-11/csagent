@@ -13,9 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 /**
  * Phase 9 兼容层依赖门禁。
  *
- * <p>这一阶段不能在第一步就删除所有旧类，因为通用客服兜底和部分 HTTP 兼容接口仍在使用它们。
- * 本测试先记录“当前允许依赖旧类型的生产文件”，并禁止依赖继续扩散。后续每迁移一批调用方，
- * 就从允许清单中删除对应文件；当清单变为空时，兼容类型本身才具备可证明的删除条件。</p>
+ * <p>本测试记录“当前允许依赖旧类型的生产文件”，并禁止依赖继续扩散。每迁移一批调用方，
+ * 都要同步缩小允许清单；空清单可以证明已删除的入口不会被悄悄引回生产代码。</p>
  *
  * <p>这里检查的是生产源码，不限制历史测试。历史测试会在对应兼容入口删除时一起迁移，
  * 这样每一批改造都能保持改动范围清晰。</p>
@@ -44,13 +43,7 @@ class Phase9LegacyDependencyBoundaryTest {
     void toolManagerShouldNotGainNewProductionCallers() throws IOException {
         assertOnlyExpectedFilesImport(
                 "com.smartcs.smart_cs_agent.tools.ToolManager",
-                Set.of(
-                        "com/smartcs/smart_cs_agent/agent/AgentRuntime.java",
-                        "com/smartcs/smart_cs_agent/agent/handler/core/ActionHandlerRegistry.java",
-                        "com/smartcs/smart_cs_agent/agent/handler/defaults/CapabilityActionHandler.java",
-                        "com/smartcs/smart_cs_agent/agent/handler/defaults/HandoffActionHandler.java",
-                        "com/smartcs/smart_cs_agent/controller/ToolApiController.java"
-                )
+                Set.of()
         );
     }
 
@@ -62,7 +55,7 @@ class Phase9LegacyDependencyBoundaryTest {
         );
         assertOnlyExpectedFilesImport(
                 "com.smartcs.smart_cs_agent.capability.local.ToolRegistryCapabilityProvider",
-                Set.of("com/smartcs/smart_cs_agent/tools/ToolManager.java")
+                Set.of()
         );
     }
 
@@ -70,14 +63,11 @@ class Phase9LegacyDependencyBoundaryTest {
     void methodLevelCompatibilityEntrypointsShouldNotSpread() throws IOException {
         assertOnlyExpectedFilesContain(
                 "ExecutionContext.legacy()",
-                Set.of("com/smartcs/smart_cs_agent/tools/ToolManager.java")
+                Set.of()
         );
         assertOnlyExpectedFilesContain(
                 "legacyTestRegistry",
-                Set.of(
-                        "com/smartcs/smart_cs_agent/agent/AgentRuntime.java",
-                        "com/smartcs/smart_cs_agent/agent/handler/core/ActionHandlerRegistry.java"
-                )
+                Set.of()
         );
     }
 

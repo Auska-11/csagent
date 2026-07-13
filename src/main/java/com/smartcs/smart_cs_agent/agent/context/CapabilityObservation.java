@@ -1,6 +1,7 @@
 package com.smartcs.smart_cs_agent.agent.context;
 
 import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 
 /**
  * Workflow 可读取的标准化 Capability 执行结果。
@@ -41,6 +42,25 @@ public final class CapabilityObservation {
         this.errorCode = errorCode;
         this.providerId = providerId;
         this.replayed = replayed;
+    }
+
+    /**
+     * 在 Handler 边界把 Gateway 结果复制为 Workflow 可读取的 Observation。
+     * 复制后 Workflow 不会持有 Provider 层结果对象，也不需要知道结果来自本地还是 MCP。
+     */
+    public static CapabilityObservation from(CapabilityResult<?> result) {
+        if (result == null) {
+            throw new IllegalArgumentException("CapabilityResult cannot be null");
+        }
+        return new CapabilityObservation(
+                result.getCapabilityId(),
+                result.getOutcome(),
+                result.getMessage(),
+                result.getData(),
+                result.getErrorCode(),
+                result.getProviderId(),
+                result.isReplayed()
+        );
     }
 
     public String getCapabilityId() {

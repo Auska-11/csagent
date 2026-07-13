@@ -41,9 +41,9 @@ import java.util.stream.Collectors;
 /**
  * 将现有 ToolRegistry 暂时包装成本地 CapabilityProvider。
  *
- * <p>调用链过渡为：AgentRuntime -> ToolManager -> CapabilityGateway ->
- * ToolRegistryCapabilityProvider -> ToolRegistry。这样可以先让新 Gateway 真实进入生产链路，
- * 再逐步把具体 Tool 迁移为独立 Capability Handler。</p>
+ * <p>当前过渡调用链为：ActionHandler -> CapabilityGateway ->
+ * ToolRegistryCapabilityProvider -> ToolRegistry。Handler 已不再认识旧 Tool 类型；本适配器只在
+ * Order 与 Knowledge 的独立 Provider 补齐前继续承接尚未迁移的能力。</p>
  *
  * <p>该 Adapter 不新增业务规则。它已把订单/商品/退货/用户不存在以及缺参数映射为业务拒绝；
  * 其余无法识别的旧失败仍保守映射为 TECHNICAL_FAILURE。</p>

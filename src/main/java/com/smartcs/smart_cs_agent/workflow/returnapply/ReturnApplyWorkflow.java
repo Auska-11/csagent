@@ -8,12 +8,12 @@ import com.smartcs.smart_cs_agent.agent.action.ConfirmAction;
 import com.smartcs.smart_cs_agent.agent.action.FinalAnswerAction;
 import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
 import com.smartcs.smart_cs_agent.agent.context.Observation;
+import com.smartcs.smart_cs_agent.agent.context.CapabilityObservation;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
 import com.smartcs.smart_cs_agent.skill.CustomerServiceSlotExtractor;
 import com.smartcs.smart_cs_agent.tools.ReturnToolData;
-import com.smartcs.smart_cs_agent.tools.ToolResult;
 import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
 import com.smartcs.smart_cs_agent.workflow.api.RoutingContext;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowDecision;
@@ -175,8 +175,8 @@ public class ReturnApplyWorkflow implements AgentWorkflow {
     }
 
     private WorkflowDecision validateOrderOwnership(TurnContext context, ReturnApplyState state) {
-        ToolResult result = latestToolResult(context);
-        if (result == null || !CapabilityIds.ORDER_LOOKUP.equals(result.getToolName())) {
+        CapabilityObservation result = latestCapabilityResult(context);
+        if (result == null || !CapabilityIds.ORDER_LOOKUP.equals(result.getCapabilityId())) {
             state.transitionTo(ReturnApplyStep.RETRYABLE_FAILED);
             return WorkflowDecision.next(
                     new FinalAnswerAction("暂时无法验证订单信息，请稍后重试。"),
@@ -273,8 +273,8 @@ public class ReturnApplyWorkflow implements AgentWorkflow {
     }
 
     private WorkflowDecision handleReturnApplyResult(TurnContext context, ReturnApplyState state) {
-        ToolResult result = latestToolResult(context);
-        if (result == null || !CapabilityIds.RETURN_APPLY.equals(result.getToolName())) {
+        CapabilityObservation result = latestCapabilityResult(context);
+        if (result == null || !CapabilityIds.RETURN_APPLY.equals(result.getCapabilityId())) {
             state.transitionTo(ReturnApplyStep.RETRYABLE_FAILED);
             return WorkflowDecision.next(
                     new FinalAnswerAction("退货申请没有得到可靠处理结果，为避免重复提交，请稍后查询或联系人工。"),
@@ -350,9 +350,9 @@ public class ReturnApplyWorkflow implements AgentWorkflow {
         return null;
     }
 
-    private ToolResult latestToolResult(TurnContext context) {
-        Observation observation = context.getLatestObservationByType("capability");
-        return observation != null && observation.getData() instanceof ToolResult result ? result : null;
+    private CapabilityObservation latestCapabilityResult(TurnContext context) {
+        Observation observation = context.getLatestObservationByType("capability_result");
+        return observation != null && observation.getData() instanceof CapabilityObservation result ? result : null;
     }
 
     private boolean isAffirmative(String text) {

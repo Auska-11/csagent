@@ -10,15 +10,14 @@ import com.smartcs.smart_cs_agent.agent.handler.api.ActionExecutionResult;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionFlow;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandlingContext;
 import com.smartcs.smart_cs_agent.agent.handler.defaults.HandoffActionHandler;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityCall;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityGateway;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
-import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.skill.api.AgentSkillDefinition;
 import com.smartcs.smart_cs_agent.skill.api.AgentSkillPackage;
 import com.smartcs.smart_cs_agent.skill.api.RiskLevel;
-import com.smartcs.smart_cs_agent.tools.ToolCall;
-import com.smartcs.smart_cs_agent.tools.ToolManager;
-import com.smartcs.smart_cs_agent.tools.ToolResult;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
 import com.smartcs.smart_cs_agent.workflow.escalation.EscalationWorkflow;
 import org.junit.jupiter.api.Test;
@@ -33,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -43,29 +43,28 @@ class HandoffActionHandlerTest {
 
     @Test
     void shouldDenyHandoffWhenSelectedSkillDidNotDeclareCapability() {
-        ToolManager toolManager = mock(ToolManager.class);
+        CapabilityGateway capabilityGateway = mock(CapabilityGateway.class);
         SkillManager skillManager = mock(SkillManager.class);
         AgentSkillPackage skillPackage = packageAllowing(Set.of("order.lookup"));
         when(skillManager.isCapabilityAllowed(skillPackage, CapabilityIds.HANDOFF_REQUEST)).thenReturn(false);
-        HandoffActionHandler handler = new HandoffActionHandler(toolManager, skillManager);
+        HandoffActionHandler handler = new HandoffActionHandler(capabilityGateway, skillManager);
 
         ActionExecutionResult result = handler.handle(action(), handlingContext(skillPackage));
 
         assertEquals(ActionFlow.COMPLETED, result.getFlow());
         assertTrue(result.getAnswer().contains("没有创建人工工单的权限"));
-        verifyNoInteractions(toolManager);
+        verifyNoInteractions(capabilityGateway);
     }
 
     @Test
     void shouldCallCapabilityWithOnlyBusinessArgumentsAndTrustedContext() {
-        ToolManager toolManager = mock(ToolManager.class);
+        CapabilityGateway capabilityGateway = mock(CapabilityGateway.class);
         SkillManager skillManager = mock(SkillManager.class);
         AgentSkillPackage skillPackage = packageAllowing(Set.of(CapabilityIds.HANDOFF_REQUEST));
         when(skillManager.isCapabilityAllowed(skillPackage, CapabilityIds.HANDOFF_REQUEST)).thenReturn(true);
-        when(toolManager.execute(any(ToolCall.class), any(ExecutionContext.class))).thenReturn(
-                ToolResult.fromCapability(
-                        true,
+        doReturn(CapabilityResult.success(
                         CapabilityIds.HANDOFF_REQUEST,
+                        "local-handoff",
                         "created",
                         // 持久化回放后的 JSON 对象使用 Java getter 生成的 camelCase key。
                         Map.of(
@@ -73,14 +72,10 @@ class HandoffActionHandlerTest {
                                 "reason", "COMPLAINT",
                                 "status", "WAITING_HUMAN_AGENT",
                                 "createdAt", "2026-07-12T12:00:00"
-                        ),
-                        null,
-                        CapabilityOutcome.SUCCESS,
-                        "local-handoff",
-                        true
-                )
-        );
-        HandoffActionHandler handler = new HandoffActionHandler(toolManager, skillManager);
+                        )
+                ).asReplayed())
+                .when(capabilityGateway).invoke(any(CapabilityCall.class), any(ExecutionContext.class));
+        HandoffActionHandler handler = new HandoffActionHandler(capabilityGateway, skillManager);
         ActionHandlingContext handlingContext = handlingContext(skillPackage);
         Instant budgetStartedAt = Instant.now();
         handlingContext.getTurnContext().startTurnBudget(2_000);
@@ -90,9 +85,9 @@ class HandoffActionHandlerTest {
         assertEquals(ActionFlow.HANDED_OFF, result.getFlow());
         assertTrue(result.getAnswer().contains("HD-3001"));
 
-        ArgumentCaptor<ToolCall> callCaptor = ArgumentCaptor.forClass(ToolCall.class);
+        ArgumentCaptor<CapabilityCall> callCaptor = ArgumentCaptor.forClass(CapabilityCall.class);
         ArgumentCaptor<ExecutionContext> contextCaptor = ArgumentCaptor.forClass(ExecutionContext.class);
-        verify(toolManager).execute(callCaptor.capture(), contextCaptor.capture());
+        verify(capabilityGateway).invoke(callCaptor.capture(), contextCaptor.capture());
         assertEquals(Set.of("reason", "summary"), callCaptor.getValue().getArguments().keySet());
         assertFalse(callCaptor.getValue().getArguments().containsKey("user_id"));
         assertEquals("USER-001", contextCaptor.getValue().getPrincipal().getUserId());
@@ -107,23 +102,18 @@ class HandoffActionHandlerTest {
 
     @Test
     void shouldNotTellUserHandoffSucceededWhenCapabilityReturnsTechnicalFailure() {
-        ToolManager toolManager = mock(ToolManager.class);
+        CapabilityGateway capabilityGateway = mock(CapabilityGateway.class);
         SkillManager skillManager = mock(SkillManager.class);
         AgentSkillPackage skillPackage = packageAllowing(Set.of(CapabilityIds.HANDOFF_REQUEST));
         when(skillManager.isCapabilityAllowed(skillPackage, CapabilityIds.HANDOFF_REQUEST)).thenReturn(true);
-        when(toolManager.execute(any(ToolCall.class), any(ExecutionContext.class))).thenReturn(
-                ToolResult.fromCapability(
-                        false,
+        doReturn(CapabilityResult.technicalFailure(
                         CapabilityIds.HANDOFF_REQUEST,
-                        "The remote result could not be confirmed",
-                        null,
-                        "CAPABILITY_PROVIDER_ERROR",
-                        CapabilityOutcome.TECHNICAL_FAILURE,
                         "local-handoff",
-                        true
-                )
-        );
-        HandoffActionHandler handler = new HandoffActionHandler(toolManager, skillManager);
+                        "CAPABILITY_PROVIDER_ERROR",
+                        "The remote result could not be confirmed"
+                ).asReplayed())
+                .when(capabilityGateway).invoke(any(CapabilityCall.class), any(ExecutionContext.class));
+        HandoffActionHandler handler = new HandoffActionHandler(capabilityGateway, skillManager);
         ActionHandlingContext handlingContext = handlingContext(skillPackage);
 
         ActionExecutionResult result = handler.handle(action(), handlingContext);

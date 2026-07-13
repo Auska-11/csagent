@@ -11,7 +11,7 @@ import java.util.Objects;
  * LLM 可自由生成的工具参数。</p>
  *
  * <p>Chat 入口、Action Handler、CapabilityGateway 与 MCP Client/Server 现在都传递这份上下文；
- * {@link #legacy()} 仅为尚未迁移的旧测试和兼容入口保留。</p>
+ * {@link #legacy()} 只为不启动完整认证链的纯 Java 单元测试提供匿名上下文。</p>
  */
 public final class ExecutionContext {
 
@@ -37,9 +37,10 @@ public final class ExecutionContext {
     }
 
     /**
-     * 旧 ToolManager 调用没有认证和 traceId 时使用的显式迁移上下文。
+     * 不启动 HTTP 认证与 TurnContext 的纯 Java 测试使用的匿名上下文。
      *
-     * <p>它不能通过“需要认证”的 Guardrail；后续 Runtime 接入真实身份后会逐步减少调用。</p>
+     * <p>它不能通过“需要认证”的 Guardrail，也不应出现在生产调用链中。架构门禁会检查生产源码
+     * 没有调用本方法，避免测试便利入口变成绕过身份和租户信息的后门。</p>
      */
     public static ExecutionContext legacy() {
         return new ExecutionContext("", AuthenticatedPrincipal.anonymous(), "", "", "", null);

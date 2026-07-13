@@ -7,7 +7,7 @@ import java.util.Map;
  * MCP Adapter 工具调用请求。
  *
  * 【为什么不直接复用 ToolCall？】
- * ToolCall 是项目内部工具协议对象，主要给 Runtime 和 ToolManager 使用。
+ * ToolCall 是早期工具协议对象，目前只由仍在迁移的 ToolRegistry 兼容层使用。
  * McpToolCallRequest 是 HTTP 接口入参，属于外部协议边界。
  *
  * 两者字段目前很像，但职责不同：

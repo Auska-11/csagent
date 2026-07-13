@@ -7,13 +7,13 @@ import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityCatalog;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
+import com.smartcs.smart_cs_agent.capability.api.CapabilityGateway;
 import com.smartcs.smart_cs_agent.config.SkillConfig;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.skill.api.AgentSkillDefinition;
 import com.smartcs.smart_cs_agent.skill.api.AgentSkillPackage;
 import com.smartcs.smart_cs_agent.skill.api.RiskLevel;
 import com.smartcs.smart_cs_agent.skill.registry.AgentSkillPackageRegistry;
-import com.smartcs.smart_cs_agent.tools.ToolManager;
 import com.smartcs.smart_cs_agent.testing.WorkflowTestSupport;
 import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
 import com.smartcs.smart_cs_agent.workflow.api.RoutingContext;
@@ -52,8 +52,15 @@ class SkillCapabilityAllowlistTest {
                 new UnauthorizedCapabilityWorkflow()
         );
 
-        ToolManager toolManager = mock(ToolManager.class);
-        AgentRuntime runtime = new AgentRuntime(skillManager, mock(ChatLanguageModel.class), toolManager);
+        CapabilityGateway capabilityGateway = mock(CapabilityGateway.class);
+        AgentRuntime runtime = new AgentRuntime(
+                skillManager,
+                WorkflowTestSupport.actionHandlerRegistry(
+                        skillManager,
+                        mock(ChatLanguageModel.class),
+                        capabilityGateway
+                )
+        );
         ConversationState state = new ConversationState("USER-001");
         TurnContext context = new TurnContext(
                 new ChatRequest("conv-allowlist", "USER-001", "帮我搜索商品"),
@@ -65,7 +72,7 @@ class SkillCapabilityAllowlistTest {
         assertEquals("未授权能力已被安全拒绝", answer);
         assertTrue(context.getTraceEvents().stream()
                 .anyMatch(event -> "capability_denied".equals(event.getEventType())));
-        verifyNoInteractions(toolManager);
+        verifyNoInteractions(capabilityGateway);
     }
 
     private AgentSkillPackage packageAllowingOnlyOrderLookup() {
@@ -86,7 +93,7 @@ class SkillCapabilityAllowlistTest {
     }
 
     /**
-     * 第一步故意请求未授权 product_search；第二步看到失败 Observation 后结束。
+     * 第一步故意请求未授权 product_search；第二步看到统一 Capability Observation 后结束。
      */
     private static final class UnauthorizedCapabilityWorkflow implements AgentWorkflow {
 
@@ -109,7 +116,8 @@ class SkillCapabilityAllowlistTest {
 
         @Override
         public WorkflowDecision nextAction(TurnContext context) {
-            if (context.getLatestObservationByType("capability") == null) {
+            // Handler 已只写 capability_result；这里跟正式 Workflow 使用相同的稳定观察键。
+            if (context.getLatestObservationByType("capability_result") == null) {
                 return WorkflowDecision.next(
                         new CapabilityAction("product_search", Map.of("keyword", "耳机")),
                         "故意请求 manifest 未授权能力"

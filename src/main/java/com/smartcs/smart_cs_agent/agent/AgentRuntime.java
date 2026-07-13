@@ -14,12 +14,10 @@ import com.smartcs.smart_cs_agent.agent.handler.core.HandlerTraceSupport;
 import com.smartcs.smart_cs_agent.skill.AgentRouteResult;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.skill.api.AgentSkillPackage;
-import com.smartcs.smart_cs_agent.tools.ToolManager;
 import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowDecision;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowCandidate;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRouteResult;
-import dev.langchain4j.model.chat.ChatLanguageModel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -112,20 +110,6 @@ public class AgentRuntime {
         }
         this.maxIterations = maxIterations;
         this.turnTimeoutMs = turnTimeoutMs;
-    }
-
-    /**
-     * 兼容旧的纯 Java 单元测试装配方式。
-     *
-     * <p>生产环境不使用这个构造函数；它只在没有 Spring 的测试里组装默认 Handler。</p>
-     */
-    public AgentRuntime(SkillManager skillManager,
-                        ChatLanguageModel chatModel,
-                        ToolManager toolManager) {
-        this(
-                skillManager,
-                ActionHandlerRegistry.legacyTestRegistry(skillManager, chatModel, toolManager)
-        );
     }
 
     /** 兼容旧调用方：把 ConversationState 包装成 TurnContext。 */
