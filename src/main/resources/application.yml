@@ -96,6 +96,17 @@ smartcs:
       agent-user-role: ${SMARTCS_AFTER_SALES_AGENT_USER_ROLE:AGENT}
       connect-timeout-ms: ${SMARTCS_AFTER_SALES_CONNECT_TIMEOUT_MS:3000}
       read-timeout-ms: ${SMARTCS_AFTER_SALES_READ_TIMEOUT_MS:10000}
+    recovery:
+      # 默认关闭；只有确认售后平台真正支持 Idempotency-Key 时才开启后台补建。
+      enabled: ${SMARTCS_HANDOFF_RECOVERY_ENABLED:false}
+      batch-size: ${SMARTCS_HANDOFF_RECOVERY_BATCH_SIZE:10}
+      fixed-delay-ms: ${SMARTCS_HANDOFF_RECOVERY_FIXED_DELAY_MS:5000}
+      # 同步线程准备 Outbox 后的首次执行宽限，避免后台与它同时调用远端。
+      prepared-grace-ms: ${SMARTCS_HANDOFF_RECOVERY_PREPARED_GRACE_MS:30000}
+      lease-ms: ${SMARTCS_HANDOFF_RECOVERY_LEASE_MS:30000}
+      retry-delay-ms: ${SMARTCS_HANDOFF_RECOVERY_RETRY_DELAY_MS:5000}
+      max-retry-delay-ms: ${SMARTCS_HANDOFF_RECOVERY_MAX_RETRY_DELAY_MS:60000}
+      max-attempts: ${SMARTCS_HANDOFF_RECOVERY_MAX_ATTEMPTS:3}
   persistence:
     # memory：业务 Repository 使用内存模拟数据，会话使用 InMemorySessionStore，适合测试和 Demo。
     # jdbc：业务数据、会话和 Capability 幂等记录都使用 MySQL；会话使用 version 做 CAS。

@@ -1,13 +1,19 @@
 package com.smartcs.smart_cs_agent.handoff.outbox;
 
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateResult;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 本地演示和单元测试使用的 Outbox。
@@ -23,6 +29,28 @@ import java.util.concurrent.ConcurrentHashMap;
 public class InMemoryPendingHandoffStore implements PendingHandoffStore {
 
     private final Map<String, StoredEntry> records = new ConcurrentHashMap<>();
+    private final Map<String, ClaimEntry> claims = new ConcurrentHashMap<>();
+    private final long preparedGraceMs;
+    private static final Set<PendingHandoffStatus> DUE_STATUSES = Set.of(
+            PendingHandoffStatus.PREPARED,
+            PendingHandoffStatus.RESULT_UNKNOWN,
+            PendingHandoffStatus.RETRY_SCHEDULED,
+            PendingHandoffStatus.PROCESSING
+    );
+
+    /** 手动构造和单元测试使用与生产默认值一致的 30 秒宽限期。 */
+    public InMemoryPendingHandoffStore() {
+        this(30_000);
+    }
+
+    @Autowired
+    public InMemoryPendingHandoffStore(
+            @Value("${smartcs.handoff.recovery.prepared-grace-ms:30000}") long preparedGraceMs) {
+        if (preparedGraceMs <= 0) {
+            throw new IllegalArgumentException("preparedGraceMs must be positive");
+        }
+        this.preparedGraceMs = preparedGraceMs;
+    }
 
     @Override
     public PendingHandoffPreparation prepare(PendingHandoffCommand command) {
@@ -99,6 +127,125 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
     }
 
     @Override
+    public List<PendingHandoffRecord> findDue(long now, int limit) {
+        requirePositive(limit, "limit");
+        return records.values().stream()
+                .map(StoredEntry::record)
+                .filter(record -> DUE_STATUSES.contains(record.status()))
+                .filter(record -> record.nextAttemptAt() <= now)
+                .sorted(Comparator.comparingLong(PendingHandoffRecord::nextAttemptAt)
+                        .thenComparing(PendingHandoffRecord::outboxId))
+                .limit(limit)
+                .toList();
+    }
+
+    @Override
+    public Optional<PendingHandoffClaim> tryClaim(String idempotencyKey,
+                                                  long expectedVersion,
+                                                  String ownerToken,
+                                                  long now,
+                                                  long leaseMs) {
+        requireText(ownerToken, "ownerToken");
+        if (leaseMs <= 0) {
+            throw new IllegalArgumentException("leaseMs must be positive");
+        }
+        StoredEntry current = requireEntry(idempotencyKey);
+        if (current.record().version() != expectedVersion
+                || !DUE_STATUSES.contains(current.record().status())
+                || current.record().nextAttemptAt() > now) {
+            return Optional.empty();
+        }
+
+        long leaseUntil = now + leaseMs;
+        AtomicBoolean acquired = new AtomicBoolean(false);
+        claims.compute(idempotencyKey, (ignored, existing) -> {
+            if (existing == null || existing.leaseUntil() <= now) {
+                acquired.set(true);
+                return new ClaimEntry(ownerToken, leaseUntil);
+            }
+            return existing;
+        });
+        if (!acquired.get()) {
+            return Optional.empty();
+        }
+
+        try {
+            PendingHandoffRecord processing = replace(
+                    idempotencyKey,
+                    expectedVersion,
+                    record -> copyWithState(
+                            record,
+                            PendingHandoffStatus.PROCESSING,
+                            record.failureType(),
+                            record.confirmedResult(),
+                            record.attemptCount(),
+                            leaseUntil
+                    )
+            );
+            return Optional.of(new PendingHandoffClaim(processing, ownerToken, leaseUntil));
+        } catch (PendingHandoffVersionConflictException conflict) {
+            claims.remove(idempotencyKey, new ClaimEntry(ownerToken, leaseUntil));
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    public PendingHandoffRecord scheduleRetry(PendingHandoffClaim claim,
+                                              String failureType,
+                                              long nextAttemptAt) {
+        requireClaimOwner(claim);
+        try {
+            return replace(
+                    claim.record().request().idempotencyKey(),
+                    claim.record().version(),
+                    record -> copyWithState(
+                            record,
+                            PendingHandoffStatus.RETRY_SCHEDULED,
+                            safeFailureType(failureType),
+                            null,
+                            record.attemptCount() + 1,
+                            nextAttemptAt
+                    )
+            );
+        } finally {
+            releaseClaim(claim);
+        }
+    }
+
+    @Override
+    public PendingHandoffRecord markNeedsManualReview(PendingHandoffClaim claim,
+                                                      String failureType) {
+        requireClaimOwner(claim);
+        try {
+            return replace(
+                    claim.record().request().idempotencyKey(),
+                    claim.record().version(),
+                    record -> copyWithState(
+                            record,
+                            PendingHandoffStatus.NEEDS_MANUAL_REVIEW,
+                            safeFailureType(failureType),
+                            null,
+                            record.attemptCount() + 1,
+                            Long.MAX_VALUE
+                    )
+            );
+        } finally {
+            releaseClaim(claim);
+        }
+    }
+
+    @Override
+    public void releaseClaim(PendingHandoffClaim claim) {
+        if (claim == null) {
+            return;
+        }
+        String key = claim.record().request().idempotencyKey();
+        claims.computeIfPresent(key, (ignored, existing) ->
+                existing.ownerToken().equals(claim.ownerToken()) ? null : existing
+        );
+    }
+
+    @Override
     public Optional<PendingHandoffRecord> findByIdempotencyKey(String idempotencyKey) {
         StoredEntry entry = records.get(idempotencyKey);
         return entry == null ? Optional.empty() : Optional.of(entry.record());
@@ -121,7 +268,7 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
                 "NONE",
                 null,
                 0,
-                now,
+                safeAdd(now, preparedGraceMs),
                 1,
                 now,
                 now
@@ -143,6 +290,57 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
         return updatedRecord;
     }
 
+    private PendingHandoffRecord copyWithState(PendingHandoffRecord current,
+                                               PendingHandoffStatus status,
+                                               String failureType,
+                                               AfterSalesTicketCreateResult result,
+                                               int attemptCount,
+                                               long nextAttemptAt) {
+        return new PendingHandoffRecord(
+                current.outboxId(),
+                current.userId(),
+                current.conversationId(),
+                current.reason(),
+                current.summary(),
+                current.request(),
+                status,
+                failureType,
+                result,
+                attemptCount,
+                nextAttemptAt,
+                current.version() + 1,
+                current.createdAt(),
+                System.currentTimeMillis()
+        );
+    }
+
+    private void requireClaimOwner(PendingHandoffClaim claim) {
+        if (claim == null) {
+            throw new IllegalArgumentException("claim cannot be null");
+        }
+        String key = claim.record().request().idempotencyKey();
+        ClaimEntry existing = claims.get(key);
+        if (existing == null || !existing.ownerToken().equals(claim.ownerToken())) {
+            throw new PendingHandoffVersionConflictException();
+        }
+    }
+
+    private void requireText(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(field + " cannot be blank");
+        }
+    }
+
+    private void requirePositive(int value, String field) {
+        if (value <= 0) {
+            throw new IllegalArgumentException(field + " must be positive");
+        }
+    }
+
+    private long safeAdd(long left, long right) {
+        return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
+    }
+
     private StoredEntry requireEntry(String idempotencyKey) {
         StoredEntry entry = records.get(idempotencyKey);
         if (entry == null) {
@@ -160,5 +358,8 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore {
     }
 
     private record StoredEntry(String fingerprint, PendingHandoffRecord record) {
+    }
+
+    private record ClaimEntry(String ownerToken, long leaseUntil) {
     }
 }

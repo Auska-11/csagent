@@ -1,6 +1,7 @@
 package com.smartcs.smart_cs_agent.tools;
 
 import com.smartcs.smart_cs_agent.handoff.outbox.InMemoryPendingHandoffStore;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffClaim;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffCommand;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffPreparation;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffRecord;
@@ -9,6 +10,7 @@ import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStore;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -147,6 +149,37 @@ class HandoffToolsTest {
                                                 AfterSalesTicketCreateResult result,
                                                 long expectedVersion) {
                 throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public List<PendingHandoffRecord> findDue(long now, int limit) {
+                return List.of();
+            }
+
+            @Override
+            public Optional<PendingHandoffClaim> tryClaim(String idempotencyKey,
+                                                          long expectedVersion,
+                                                          String ownerToken,
+                                                          long now,
+                                                          long leaseMs) {
+                return Optional.empty();
+            }
+
+            @Override
+            public PendingHandoffRecord scheduleRetry(PendingHandoffClaim claim,
+                                                       String failureType,
+                                                       long nextAttemptAt) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public PendingHandoffRecord markNeedsManualReview(PendingHandoffClaim claim,
+                                                              String failureType) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void releaseClaim(PendingHandoffClaim claim) {
             }
 
             @Override

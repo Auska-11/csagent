@@ -136,6 +136,35 @@ class JdbcPendingHandoffStoreTest {
         assertEquals("AS-901", confirmed.confirmedResult().ticketId());
     }
 
+    @Test
+    void shouldClaimOnceTakeOverExpiredLeaseAndScheduleRetry() {
+        RecordingJdbcDatabaseClient database = new RecordingJdbcDatabaseClient();
+        JdbcPendingHandoffStore store = new JdbcPendingHandoffStore(database);
+        PendingHandoffRecord prepared = store.prepare(command("idem-jdbc-lease", "JDBC 租约")).record();
+        long now = prepared.nextAttemptAt();
+
+        assertEquals(1, store.findDue(now, 10).size());
+        PendingHandoffClaim first = store.tryClaim(
+                "idem-jdbc-lease", prepared.version(), "owner-1", now, 1_000
+        ).orElseThrow();
+        assertTrue(store.tryClaim(
+                "idem-jdbc-lease", first.record().version(), "owner-2", now + 500, 1_000
+        ).isEmpty());
+
+        PendingHandoffClaim takeover = store.tryClaim(
+                "idem-jdbc-lease", first.record().version(), "owner-2", now + 1_000, 1_000
+        ).orElseThrow();
+        PendingHandoffRecord retry = store.scheduleRetry(
+                takeover, "SocketTimeoutException", now + 5_000
+        );
+
+        assertEquals(PendingHandoffStatus.RETRY_SCHEDULED, retry.status());
+        assertEquals(1, retry.attemptCount());
+        assertTrue(database.claims.isEmpty());
+        assertTrue(store.findDue(now + 4_999, 10).isEmpty());
+        assertEquals(1, store.findDue(now + 5_000, 10).size());
+    }
+
     private PendingHandoffCommand command(String idempotencyKey, String summary) {
         return new PendingHandoffCommand(
                 "USER-001",
@@ -166,6 +195,7 @@ class JdbcPendingHandoffStoreTest {
 
         private final Map<String, Row> rows = new ConcurrentHashMap<>();
         private final Map<String, ResultRow> results = new ConcurrentHashMap<>();
+        private final Map<String, ClaimRow> claims = new ConcurrentHashMap<>();
         private final List<String> createTableSqls = new ArrayList<>();
         private boolean skipNextConfirmationStatusUpdate;
 
@@ -193,12 +223,26 @@ class JdbcPendingHandoffStoreTest {
                 }
                 return 1;
             }
+            if (normalized.startsWith("INSERT INTO cs_pending_handoff_claim")) {
+                String key = args[0].toString();
+                ClaimRow candidate = new ClaimRow(
+                        args[1].toString(), number(args[2]).longValue()
+                );
+                if (claims.putIfAbsent(key, candidate) != null) {
+                    throw duplicate();
+                }
+                return 1;
+            }
             if (normalized.startsWith("INSERT INTO cs_pending_handoff")) {
                 String key = args[1].toString();
                 if (rows.putIfAbsent(key, new Row(args.clone())) != null) {
                     throw duplicate();
                 }
                 return 1;
+            }
+            if (normalized.startsWith("UPDATE cs_pending_handoff")
+                    && normalized.contains("SET status = ?, next_attempt_at")) {
+                return markProcessing(args);
             }
             if (normalized.startsWith("UPDATE cs_pending_handoff")
                     && normalized.contains("status IN")) {
@@ -212,6 +256,21 @@ class JdbcPendingHandoffStoreTest {
                 }
                 return markConfirmed(args);
             }
+            if (normalized.startsWith("UPDATE cs_pending_handoff")
+                    && normalized.contains("AND status = ?")) {
+                return finishProcessing(args);
+            }
+            if (normalized.startsWith("UPDATE cs_pending_handoff_claim")) {
+                return takeOverClaim(args);
+            }
+            if (normalized.startsWith("DELETE FROM cs_pending_handoff_claim")) {
+                String key = args[0].toString();
+                ClaimRow existing = claims.get(key);
+                if (existing == null || !existing.ownerToken.equals(args[1].toString())) {
+                    return 0;
+                }
+                return claims.remove(key, existing) ? 1 : 0;
+            }
             throw new IllegalArgumentException("Unexpected SQL: " + sql);
         }
 
@@ -220,7 +279,67 @@ class JdbcPendingHandoffStoreTest {
             if (sql.contains("FROM cs_pending_handoff_result")) {
                 return mapResult(args[0].toString(), mapper);
             }
+            if (sql.contains("FROM cs_pending_handoff_claim")) {
+                return mapClaim(args[0].toString(), mapper);
+            }
             return mapBase(args[0].toString(), mapper);
+        }
+
+        @Override
+        public <T> List<T> queryList(String sql, RowMapper<T> mapper, Object... args) {
+            if (!sql.contains("FROM cs_pending_handoff")) {
+                throw new IllegalArgumentException("Unexpected query SQL: " + sql);
+            }
+            long now = number(args[4]).longValue();
+            int limit = number(args[5]).intValue();
+            List<T> mapped = new ArrayList<>();
+            for (Map.Entry<String, Row> entry : rows.entrySet()) {
+                Row row = entry.getValue();
+                String status = row.values[13].toString();
+                boolean acceptedStatus = status.equals(args[0].toString())
+                        || status.equals(args[1].toString())
+                        || status.equals(args[2].toString())
+                        || status.equals(args[3].toString());
+                if (!acceptedStatus || number(row.values[16]).longValue() > now) {
+                    continue;
+                }
+                ResultSet resultSet = mock(ResultSet.class);
+                try {
+                    when(resultSet.getString("idempotency_key")).thenReturn(entry.getKey());
+                    mapped.add(mapper.map(resultSet));
+                } catch (SQLException e) {
+                    throw new IllegalStateException("Failed to map due key", e);
+                }
+                if (mapped.size() >= limit) {
+                    break;
+                }
+            }
+            return mapped;
+        }
+
+        private int markProcessing(Object[] args) {
+            String key = args[3].toString();
+            Row existing = rows.get(key);
+            if (existing == null
+                    || number(existing.values[17]).longValue() != number(args[4]).longValue()
+                    || number(existing.values[16]).longValue() > number(args[9]).longValue()) {
+                return 0;
+            }
+            String status = existing.values[13].toString();
+            boolean accepted = status.equals(args[5].toString())
+                    || status.equals(args[6].toString())
+                    || status.equals(args[7].toString())
+                    || status.equals(args[8].toString());
+            if (!accepted) {
+                return 0;
+            }
+            Object[] changed = existing.values.clone();
+            changed[13] = args[0];
+            changed[16] = args[1];
+            changed[17] = number(changed[17]).longValue() + 1;
+            changed[19] = args[2];
+            rows.put(key, new Row(changed));
+            return 1;
         }
 
         private int markUnknown(Object[] args) {
@@ -259,6 +378,37 @@ class JdbcPendingHandoffStoreTest {
             changed[17] = number(changed[17]).longValue() + 1;
             changed[19] = args[2];
             rows.put(key, new Row(changed));
+            return 1;
+        }
+
+        private int finishProcessing(Object[] args) {
+            String key = args[4].toString();
+            Row existing = rows.get(key);
+            if (existing == null
+                    || number(existing.values[17]).longValue() != number(args[5]).longValue()
+                    || !existing.values[13].toString().equals(args[6].toString())) {
+                return 0;
+            }
+            Object[] changed = existing.values.clone();
+            changed[13] = args[0];
+            changed[14] = args[1];
+            changed[15] = number(changed[15]).intValue() + 1;
+            changed[16] = args[2];
+            changed[17] = number(changed[17]).longValue() + 1;
+            changed[19] = args[3];
+            rows.put(key, new Row(changed));
+            return 1;
+        }
+
+        private int takeOverClaim(Object[] args) {
+            String key = args[3].toString();
+            ClaimRow existing = claims.get(key);
+            if (existing == null
+                    || !existing.ownerToken.equals(args[4].toString())
+                    || existing.leaseUntil != number(args[5]).longValue()) {
+                return 0;
+            }
+            claims.put(key, new ClaimRow(args[0].toString(), number(args[1]).longValue()));
             return 1;
         }
 
@@ -312,6 +462,21 @@ class JdbcPendingHandoffStoreTest {
             }
         }
 
+        private <T> Optional<T> mapClaim(String key, RowMapper<T> mapper) {
+            ClaimRow row = claims.get(key);
+            if (row == null) {
+                return Optional.empty();
+            }
+            ResultSet resultSet = mock(ResultSet.class);
+            try {
+                when(resultSet.getString("owner_token")).thenReturn(row.ownerToken);
+                when(resultSet.getLong("lease_until")).thenReturn(row.leaseUntil);
+                return Optional.of(mapper.map(resultSet));
+            } catch (SQLException e) {
+                throw new IllegalStateException("Failed to execute claim RowMapper", e);
+            }
+        }
+
         private PendingHandoffStatus statusOf(String key) {
             return PendingHandoffStatus.valueOf(rows.get(key).values[13].toString());
         }
@@ -330,6 +495,9 @@ class JdbcPendingHandoffStoreTest {
         }
 
         private record ResultRow(String ticketId, String status, String createdAt) {
+        }
+
+        private record ClaimRow(String ownerToken, long leaseUntil) {
         }
     }
 }

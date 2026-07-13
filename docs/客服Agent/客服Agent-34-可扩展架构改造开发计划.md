@@ -4,11 +4,11 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成十五批收口，Outbox 已支持调用前准备与成功回放，后台恢复与真实数据库验收仍在继续 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成十六批收口，Outbox 已支持租约与后台有限恢复，真实数据库和容器验收仍在继续 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 389 个默认测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
+| 当前验证规模 | 394 个默认测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -22,9 +22,9 @@
 
 这里的“核心目标完成”不等于整份长期路线图全部结束。Phase 7 的生产路由迁移已经完成，但旧
 `CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的应用日志与 MCP 普通审计安全已经
-收口，售后/Embedding/Qdrant 也已有独立 HTTP 超时；人工转接已具备调用前 PREPARED、结果未知持久化
-和成功回放。但整轮 deadline、Outbox 后台核对/补建、真实数据库和容器故障注入，以及 Phase 9 的
-Legacy 删除仍是后续演进项，
+收口，售后/Embedding/Qdrant 也已有独立 HTTP 超时；人工转接已具备调用前 PREPARED、结果未知持久化、
+成功回放、租约和后台有限补建。但整轮 deadline、售后结果查询与人工复核入口、真实数据库和容器
+故障注入，以及 Phase 9 的 Legacy 删除仍是后续演进项，
 不能把它们误写成已完成。
 
 ## 2. 为什么需要这次改造（改造前问题）
@@ -1076,6 +1076,20 @@ JDBC 新增追加式 `cs_pending_handoff_result` 表保存真实 ticketId、状�
 但多实例领取租约、到期查询、有限补建/退避、远端结果查询和人工复核仍未完成。详细说明见
 `客服Agent-57-Outbox调用前准备与成功结果回放说明.md`。
 
+### Phase 8 第十六批进度（2026-07-13）
+
+`PendingHandoffStore` 已新增到期查询、短租约原子领取、过期接管、重试调度、人工复核和 owner 校验。
+JDBC 使用独立 `cs_pending_handoff_claim` 唯一表协调多个实例；实例领取后崩溃时，PROCESSING 记录会在
+lease 到期后重新进入 due 列表，不会永久卡住。
+
+新增可选 `PendingHandoffRecoveryWorker`，使用 Outbox 原请求和原 Idempotency-Key 调用售后平台；临时
+失败按有上限的指数退避进入 RETRY_SCHEDULED，达到最大次数进入 NEEDS_MANUAL_REVIEW。PREPARED 默认
+有 30 秒首次执行宽限，避免后台与同步线程并发调用。恢复默认关闭，只有确认下游实现幂等后才允许开启。
+
+本批完成后默认测试套件共 `394` 项，0 失败、0 错误、0 跳过。当前仍缺售后结果查询接口、人工复核
+管理 API/UI、租约心跳、历史清理和真实 MySQL 多实例故障验收。详细说明见
+`客服Agent-58-Outbox租约与后台有限恢复说明.md`。
+
 ### 验收标准
 
 - 不能通过猜测 conversationId 读取或清除其他用户会话。
@@ -1286,7 +1300,7 @@ smartcs:
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 389 个测试）。
+- [x] 旧测试全部保留并通过（当前默认套件共 394 个测试）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。

@@ -4,11 +4,15 @@ import com.smartcs.smart_cs_agent.persistence.JdbcDatabaseClient;
 import com.smartcs.smart_cs_agent.persistence.JdbcDuplicateKeyException;
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateRequest;
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateResult;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -21,10 +25,29 @@ import java.util.UUID;
 @ConditionalOnProperty(name = "smartcs.persistence.mode", havingValue = "jdbc")
 public class JdbcPendingHandoffStore implements PendingHandoffStore {
 
+    private static final Set<PendingHandoffStatus> DUE_STATUSES = Set.of(
+            PendingHandoffStatus.PREPARED,
+            PendingHandoffStatus.RESULT_UNKNOWN,
+            PendingHandoffStatus.RETRY_SCHEDULED,
+            PendingHandoffStatus.PROCESSING
+    );
+
     private final JdbcDatabaseClient databaseClient;
+    private final long preparedGraceMs;
 
     public JdbcPendingHandoffStore(JdbcDatabaseClient databaseClient) {
+        this(databaseClient, 30_000);
+    }
+
+    @Autowired
+    public JdbcPendingHandoffStore(
+            JdbcDatabaseClient databaseClient,
+            @Value("${smartcs.handoff.recovery.prepared-grace-ms:30000}") long preparedGraceMs) {
         this.databaseClient = Objects.requireNonNull(databaseClient, "databaseClient cannot be null");
+        if (preparedGraceMs <= 0) {
+            throw new IllegalArgumentException("preparedGraceMs must be positive");
+        }
+        this.preparedGraceMs = preparedGraceMs;
         initTable();
     }
 
@@ -68,6 +91,17 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
                     PRIMARY KEY (idempotency_key)
                 )
                 """);
+        // 领取租约独立成表，避免把短生命周期 owner 信息混入长期业务记录。
+        databaseClient.update("""
+                CREATE TABLE IF NOT EXISTS cs_pending_handoff_claim (
+                    idempotency_key VARCHAR(255) NOT NULL,
+                    owner_token VARCHAR(64) NOT NULL,
+                    lease_until BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL,
+                    PRIMARY KEY (idempotency_key),
+                    INDEX idx_cs_pending_handoff_claim_lease (lease_until)
+                )
+                """);
     }
 
     @Override
@@ -103,7 +137,7 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
                     PendingHandoffStatus.PREPARED.name(),
                     "NONE",
                     0,
-                    now,
+                    safeAdd(now, preparedGraceMs),
                     1,
                     now,
                     now
@@ -197,6 +231,114 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
                 .orElseThrow(() -> new IllegalStateException("Confirmed pending handoff could not be loaded"));
         ensureSameResult(confirmed.confirmedResult(), result);
         return confirmed;
+    }
+
+    @Override
+    public List<PendingHandoffRecord> findDue(long now, int limit) {
+        if (limit <= 0) {
+            throw new IllegalArgumentException("limit must be positive");
+        }
+        List<String> keys = databaseClient.queryList("""
+                        SELECT idempotency_key
+                        FROM cs_pending_handoff
+                        WHERE status IN (?, ?, ?, ?)
+                          AND next_attempt_at <= ?
+                        ORDER BY next_attempt_at, outbox_id
+                        LIMIT ?
+                        """,
+                resultSet -> resultSet.getString("idempotency_key"),
+                PendingHandoffStatus.PREPARED.name(),
+                PendingHandoffStatus.RESULT_UNKNOWN.name(),
+                PendingHandoffStatus.RETRY_SCHEDULED.name(),
+                PendingHandoffStatus.PROCESSING.name(),
+                now,
+                limit);
+        return keys.stream()
+                .map(this::findByIdempotencyKey)
+                .flatMap(Optional::stream)
+                .filter(record -> record.status() != PendingHandoffStatus.CONFIRMED)
+                .toList();
+    }
+
+    @Override
+    public Optional<PendingHandoffClaim> tryClaim(String idempotencyKey,
+                                                  long expectedVersion,
+                                                  String ownerToken,
+                                                  long now,
+                                                  long leaseMs) {
+        requireText(idempotencyKey, "idempotencyKey");
+        requireText(ownerToken, "ownerToken");
+        if (leaseMs <= 0) {
+            throw new IllegalArgumentException("leaseMs must be positive");
+        }
+        PendingHandoffRecord current = findByIdempotencyKey(idempotencyKey).orElse(null);
+        if (current == null
+                || current.version() != expectedVersion
+                || !DUE_STATUSES.contains(current.status())
+                || current.nextAttemptAt() > now) {
+            return Optional.empty();
+        }
+
+        long leaseUntil = now + leaseMs;
+        if (!acquireClaimRow(idempotencyKey, ownerToken, now, leaseUntil)) {
+            return Optional.empty();
+        }
+
+        int changed = databaseClient.update("""
+                UPDATE cs_pending_handoff
+                SET status = ?, next_attempt_at = ?, version = version + 1, updated_at = ?
+                WHERE idempotency_key = ?
+                  AND version = ?
+                  AND status IN (?, ?, ?, ?)
+                  AND next_attempt_at <= ?
+                """,
+                PendingHandoffStatus.PROCESSING.name(),
+                leaseUntil,
+                now,
+                idempotencyKey,
+                expectedVersion,
+                PendingHandoffStatus.PREPARED.name(),
+                PendingHandoffStatus.RESULT_UNKNOWN.name(),
+                PendingHandoffStatus.RETRY_SCHEDULED.name(),
+                PendingHandoffStatus.PROCESSING.name(),
+                now);
+        if (changed != 1) {
+            releaseClaimRow(idempotencyKey, ownerToken);
+            return Optional.empty();
+        }
+        PendingHandoffRecord processing = findByIdempotencyKey(idempotencyKey)
+                .orElseThrow(() -> new IllegalStateException("Claimed pending handoff could not be loaded"));
+        return Optional.of(new PendingHandoffClaim(processing, ownerToken, leaseUntil));
+    }
+
+    @Override
+    public PendingHandoffRecord scheduleRetry(PendingHandoffClaim claim,
+                                              String failureType,
+                                              long nextAttemptAt) {
+        return finishClaim(
+                claim,
+                PendingHandoffStatus.RETRY_SCHEDULED,
+                failureType,
+                nextAttemptAt
+        );
+    }
+
+    @Override
+    public PendingHandoffRecord markNeedsManualReview(PendingHandoffClaim claim,
+                                                      String failureType) {
+        return finishClaim(
+                claim,
+                PendingHandoffStatus.NEEDS_MANUAL_REVIEW,
+                failureType,
+                Long.MAX_VALUE
+        );
+    }
+
+    @Override
+    public void releaseClaim(PendingHandoffClaim claim) {
+        if (claim != null) {
+            releaseClaimRow(claim.record().request().idempotencyKey(), claim.ownerToken());
+        }
     }
 
     @Override
@@ -310,6 +452,102 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
                 idempotencyKey);
     }
 
+    private boolean acquireClaimRow(String idempotencyKey,
+                                    String ownerToken,
+                                    long now,
+                                    long leaseUntil) {
+        try {
+            return databaseClient.update("""
+                    INSERT INTO cs_pending_handoff_claim(
+                        idempotency_key, owner_token, lease_until, updated_at
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    idempotencyKey,
+                    ownerToken,
+                    leaseUntil,
+                    now) == 1;
+        } catch (JdbcDuplicateKeyException duplicateKey) {
+            Optional<StoredClaim> existing = loadClaim(idempotencyKey);
+            if (existing.isEmpty() || existing.get().leaseUntil() > now) {
+                return false;
+            }
+            StoredClaim expired = existing.get();
+            return databaseClient.update("""
+                    UPDATE cs_pending_handoff_claim
+                    SET owner_token = ?, lease_until = ?, updated_at = ?
+                    WHERE idempotency_key = ?
+                      AND owner_token = ?
+                      AND lease_until = ?
+                    """,
+                    ownerToken,
+                    leaseUntil,
+                    now,
+                    idempotencyKey,
+                    expired.ownerToken(),
+                    expired.leaseUntil()) == 1;
+        }
+    }
+
+    private PendingHandoffRecord finishClaim(PendingHandoffClaim claim,
+                                             PendingHandoffStatus targetStatus,
+                                             String failureType,
+                                             long nextAttemptAt) {
+        Objects.requireNonNull(claim, "claim cannot be null");
+        String idempotencyKey = claim.record().request().idempotencyKey();
+        StoredClaim storedClaim = loadClaim(idempotencyKey)
+                .orElseThrow(PendingHandoffVersionConflictException::new);
+        if (!storedClaim.ownerToken().equals(claim.ownerToken())) {
+            throw new PendingHandoffVersionConflictException();
+        }
+        try {
+            long now = System.currentTimeMillis();
+            int changed = databaseClient.update("""
+                    UPDATE cs_pending_handoff
+                    SET status = ?, failure_type = ?, attempt_count = attempt_count + 1,
+                        next_attempt_at = ?, version = version + 1, updated_at = ?
+                    WHERE idempotency_key = ?
+                      AND version = ?
+                      AND status = ?
+                    """,
+                    targetStatus.name(),
+                    safeFailureType(failureType),
+                    nextAttemptAt,
+                    now,
+                    idempotencyKey,
+                    claim.record().version(),
+                    PendingHandoffStatus.PROCESSING.name());
+            if (changed != 1) {
+                throw new PendingHandoffVersionConflictException();
+            }
+            return findByIdempotencyKey(idempotencyKey)
+                    .orElseThrow(() -> new IllegalStateException("Finished pending handoff could not be loaded"));
+        } finally {
+            releaseClaimRow(idempotencyKey, claim.ownerToken());
+        }
+    }
+
+    private Optional<StoredClaim> loadClaim(String idempotencyKey) {
+        return databaseClient.queryOne("""
+                        SELECT owner_token, lease_until
+                        FROM cs_pending_handoff_claim
+                        WHERE idempotency_key = ?
+                        """,
+                resultSet -> new StoredClaim(
+                        resultSet.getString("owner_token"),
+                        resultSet.getLong("lease_until")
+                ),
+                idempotencyKey);
+    }
+
+    private void releaseClaimRow(String idempotencyKey, String ownerToken) {
+        databaseClient.update("""
+                DELETE FROM cs_pending_handoff_claim
+                WHERE idempotency_key = ? AND owner_token = ?
+                """,
+                idempotencyKey,
+                ownerToken);
+    }
+
     private void ensureSameResult(AfterSalesTicketCreateResult existing,
                                   AfterSalesTicketCreateResult candidate) {
         if (existing == null || !existing.equals(candidate)) {
@@ -331,6 +569,13 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
         }
     }
 
+    private long safeAdd(long left, long right) {
+        return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
+    }
+
     private record StoredPendingHandoff(String fingerprint, PendingHandoffRecord record) {
+    }
+
+    private record StoredClaim(String ownerToken, long leaseUntil) {
     }
 }

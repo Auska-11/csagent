@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InMemoryPendingHandoffStoreTest {
 
@@ -95,6 +96,40 @@ class InMemoryPendingHandoffStoreTest {
         assertEquals(result, lateTimeout.confirmedResult());
         assertEquals(false, replay.created());
         assertEquals(result, replay.record().confirmedResult());
+    }
+
+    @Test
+    void shouldAllowOnlyOneLeaseOwnerAndTakeOverAfterExpiry() {
+        InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore();
+        PendingHandoffRecord prepared = store.prepare(command("idem-lease", "租约测试")).record();
+        long now = prepared.nextAttemptAt();
+
+        assertTrue(store.findDue(now - 1, 10).isEmpty(), "PREPARED 宽限期内后台不能抢占同步调用");
+        assertEquals(1, store.findDue(now, 10).size());
+        PendingHandoffClaim first = store.tryClaim(
+                "idem-lease", prepared.version(), "owner-1", now, 1_000
+        ).orElseThrow();
+        assertEquals(PendingHandoffStatus.PROCESSING, first.record().status());
+        assertTrue(store.tryClaim(
+                "idem-lease", first.record().version(), "owner-2", now + 500, 1_000
+        ).isEmpty());
+
+        PendingHandoffClaim takeover = store.tryClaim(
+                "idem-lease", first.record().version(), "owner-2", now + 1_000, 1_000
+        ).orElseThrow();
+        assertEquals("owner-2", takeover.ownerToken());
+        assertThrows(
+                PendingHandoffVersionConflictException.class,
+                () -> store.scheduleRetry(first, "LateOwner", now + 2_000)
+        );
+
+        PendingHandoffRecord retry = store.scheduleRetry(
+                takeover, "SocketTimeoutException", now + 3_000
+        );
+        assertEquals(PendingHandoffStatus.RETRY_SCHEDULED, retry.status());
+        assertEquals(1, retry.attemptCount());
+        assertTrue(store.findDue(now + 2_999, 10).isEmpty());
+        assertEquals(1, store.findDue(now + 3_000, 10).size());
     }
 
     private PendingHandoffCommand command(String idempotencyKey, String summary) {

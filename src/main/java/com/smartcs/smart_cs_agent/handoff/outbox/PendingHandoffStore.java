@@ -2,6 +2,7 @@ package com.smartcs.smart_cs_agent.handoff.outbox;
 
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateResult;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -24,6 +25,28 @@ public interface PendingHandoffStore {
     PendingHandoffRecord confirm(String idempotencyKey,
                                  AfterSalesTicketCreateResult result,
                                  long expectedVersion);
+
+    /** 查询已经到期、可以由后台处理的记录。 */
+    List<PendingHandoffRecord> findDue(long now, int limit);
+
+    /** 使用短租约原子领取；其他实例已经持有未过期租约时返回 empty。 */
+    Optional<PendingHandoffClaim> tryClaim(String idempotencyKey,
+                                           long expectedVersion,
+                                           String ownerToken,
+                                           long now,
+                                           long leaseMs);
+
+    /** 本次处理临时失败，安排下一次重试并释放租约。 */
+    PendingHandoffRecord scheduleRetry(PendingHandoffClaim claim,
+                                       String failureType,
+                                       long nextAttemptAt);
+
+    /** 达到最大尝试次数或遇到确定性问题，转入人工复核并释放租约。 */
+    PendingHandoffRecord markNeedsManualReview(PendingHandoffClaim claim,
+                                               String failureType);
+
+    /** Worker 已成功确认或主动放弃本次处理时释放自己的租约。 */
+    void releaseClaim(PendingHandoffClaim claim);
 
     Optional<PendingHandoffRecord> findByIdempotencyKey(String idempotencyKey);
 }
