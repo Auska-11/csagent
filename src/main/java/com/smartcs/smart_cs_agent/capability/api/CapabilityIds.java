@@ -22,7 +22,6 @@ public final class CapabilityIds {
     public static final String HANDOFF_REQUEST = "handoff.request";
 
     private static final Map<String, String> LEGACY_TO_CANONICAL;
-    private static final Map<String, String> CANONICAL_TO_LEGACY;
 
     static {
         Map<String, String> aliases = new LinkedHashMap<>();
@@ -36,10 +35,6 @@ public final class CapabilityIds {
         aliases.put("knowledge_search", KNOWLEDGE_SEARCH);
         aliases.put("handoff_create", HANDOFF_REQUEST);
         LEGACY_TO_CANONICAL = Map.copyOf(aliases);
-
-        Map<String, String> reverse = new LinkedHashMap<>();
-        aliases.forEach((legacy, canonical) -> reverse.put(canonical, legacy));
-        CANONICAL_TO_LEGACY = Map.copyOf(reverse);
     }
 
     private CapabilityIds() {
@@ -53,15 +48,4 @@ public final class CapabilityIds {
         return LEGACY_TO_CANONICAL.getOrDefault(capabilityId, capabilityId);
     }
 
-    /** Provider 委托旧 ToolRegistry 时使用；没有旧别名则原样返回。 */
-    public static String legacyName(String capabilityId) {
-        if (capabilityId == null) {
-            return null;
-        }
-        return CANONICAL_TO_LEGACY.getOrDefault(capabilityId, capabilityId);
-    }
-
-    public static boolean isLegacyAlias(String capabilityId) {
-        return LEGACY_TO_CANONICAL.containsKey(capabilityId);
-    }
 }

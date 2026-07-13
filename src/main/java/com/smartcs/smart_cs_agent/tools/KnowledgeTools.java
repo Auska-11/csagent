@@ -98,8 +98,8 @@ public class KnowledgeTools {
     /**
      * 返回结构化检索结果。
      *
-     * ToolRegistry 会把这个结果放到 ToolResult.data 里，
-     * 后续做评测时可以直接判断命中了哪篇文档。
+     * LocalKnowledgeSearchCapabilityProvider 会把内部结果裁剪成稳定 KnowledgeSearchHit，
+     * 本方法保留更完整的解释字段，供检索评测判断命中文档和排序原因。
      */
     public List<KnowledgeSearchResult> search(String query, int topK) {
         if (ragProperties.isEmbeddingQdrantMode() && embeddingClient != null && vectorStore != null) {

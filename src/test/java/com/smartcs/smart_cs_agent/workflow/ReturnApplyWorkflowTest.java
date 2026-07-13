@@ -13,8 +13,7 @@ import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.agent.context.WorkflowStatus;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
-import com.smartcs.smart_cs_agent.model.ReturnRecord;
-import com.smartcs.smart_cs_agent.tools.ReturnToolData;
+import com.smartcs.smart_cs_agent.capability.api.contracts.ReturnApplicationSummary;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowDecision;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
 import com.smartcs.smart_cs_agent.workflow.returnapply.ReturnApplyStep;
@@ -88,9 +87,13 @@ class ReturnApplyWorkflowTest {
         observeSuccess(submitTurn,
                 "return.apply",
                 "submitted",
-                ReturnToolData.submitted(
-                        new ReturnRecord("RET-002", "ORD-003", "质量问题", "Under Review"),
+                new ReturnApplicationSummary(
+                        true,
+                        "RET-002",
+                        "ORD-003",
                         "USB-C 数据线",
+                        "质量问题",
+                        "Under Review",
                         "1-2 business days"
                 )
         );

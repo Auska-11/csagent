@@ -23,11 +23,13 @@ class HandoffToolsTest {
     void shouldCreateMemoryTicketByDefault() {
         HandoffTools tools = new HandoffTools();
 
-        HandoffTicketData ticket = tools.createHandoffTicket(
+        HandoffTicketData ticket = tools.createHandoffTicketForTenant(
+                TENANT,
                 "USER-001",
                 "conv-memory",
                 "USER_REQUESTED_HUMAN",
-                "用户要求人工客服继续处理"
+                "用户要求人工客服继续处理",
+                null
         );
 
         assertTrue(ticket.getTicketId().startsWith("HD-"));
@@ -89,29 +91,6 @@ class HandoffToolsTest {
         );
         assertEquals("AS-123", replay.getTicketId());
         assertEquals(1, client.callCount);
-    }
-
-    @Test
-    void shouldRejectLegacyEntryPointInAfterSalesMode() {
-        HandoffProperties properties = new HandoffProperties();
-        properties.setMode("after-sales-http");
-        FakeAfterSalesTicketClient client = new FakeAfterSalesTicketClient(
-                new AfterSalesTicketCreateResult("AS-UNEXPECTED", "PENDING", "2026-07-13T00:00:00Z")
-        );
-        HandoffTools tools = new HandoffTools(properties, client, new InMemoryPendingHandoffStore());
-
-        HandoffTicketCreationException error = assertThrows(
-                HandoffTicketCreationException.class,
-                () -> tools.createHandoffTicket(
-                        "USER-001", "conv-legacy", "COMPLAINT", "旧入口不能猜租户"
-                )
-        );
-
-        assertEquals(
-                "Tenant-aware handoff entry point is required for after-sales HTTP mode",
-                error.getMessage()
-        );
-        assertEquals(0, client.callCount);
     }
 
     @Test

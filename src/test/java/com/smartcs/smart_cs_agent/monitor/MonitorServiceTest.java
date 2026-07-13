@@ -135,7 +135,7 @@ class MonitorServiceTest {
                         new TraceEvent("capability_denied", 1, "allowlist denied", Map.of(
                                 "capability", "return.apply"
                         )),
-                        // 兼容期 Handler 还会产生 TECHNICAL_FAILURE ToolResult；Guardrail 必须优先。
+                        // 同轮存在技术事件时，显式安全拒绝仍必须成为最终分类。
                         new TraceEvent("tool_observed", 1, "compatibility result", Map.of(
                                 "success", false,
                                 "outcome", "TECHNICAL_FAILURE",

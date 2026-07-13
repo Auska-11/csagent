@@ -97,15 +97,16 @@ Skill Package 绑定到未注册 Workflow 而启动失败。
 
 - [x] `CapabilityActionHandler` 和 `HandoffActionHandler` 直接依赖 `CapabilityGateway`。
 - [x] 删除 `ActionHandlerRegistry.legacyTestRegistry` 和 `AgentRuntime` 旧构造器。
-- [ ] 将旧 `/api/tools/call` 迁移到 Capability/MCP 协议或明确下线。
-- [ ] 补齐仍由 `ToolRegistryCapabilityProvider` 提供的原子 Local Provider。
-- [ ] 删除 `ToolManager`、`ToolRegistryCapabilityProvider` 与无上下文 Legacy 执行入口。
-- [ ] 确认 Capability Catalog/Schema 只有一个权威来源。
+- [x] 确认不存在旧 `/api/tools/call`；调用统一使用 Capability/MCP 的 `/api/mcp/tools/call` 或 JSON-RPC。
+- [x] 补齐 Order 与 Knowledge 原子 Local Provider，九个能力均由独立 Provider 提供。
+- [x] 删除 `ToolManager`、`ToolRegistryCapabilityProvider`、`ToolRegistry` 与无上下文 Legacy 执行入口。
+- [x] Capability Catalog/Schema 只有 `CapabilityDefinition` 一个权威来源。
 
-第一批已同时删除 `ToolManager`，并将 Workflow Observation 从旧 `ToolResult` 与新结果双写收口为
-唯一 `capability_result`。由于 Order 与 Knowledge 独立 Provider 尚未补齐，`ToolRegistryCapabilityProvider`
-和 `ToolRegistry` 仍按计划保留到下一批，不能把 9.3 误标为全部完成。实现与测试证据见
-[`客服Agent-70-Phase9Capability主链路与ToolManager删除说明.md`](客服Agent-70-Phase9Capability主链路与ToolManager删除说明.md)。
+第一批删除 `ToolManager` 并将 Workflow Observation 收口为唯一 `capability_result`；第二批补齐 Order、
+Knowledge Provider，删除 Adapter/Registry/旧 Tool 协议和重复 DTO。9.3 已完成，证据分别见
+[`客服Agent-70-Phase9Capability主链路与ToolManager删除说明.md`](客服Agent-70-Phase9Capability主链路与ToolManager删除说明.md)
+和
+[`客服Agent-71-Phase9独立CapabilityProvider与ToolRegistry清理说明.md`](客服Agent-71-Phase9独立CapabilityProvider与ToolRegistry清理说明.md)。
 
 ### 9.4 文档、Eval 与 Maven Modules 决策
 

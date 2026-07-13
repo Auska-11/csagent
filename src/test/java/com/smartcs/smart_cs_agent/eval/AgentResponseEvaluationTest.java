@@ -18,11 +18,6 @@ import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.testing.WorkflowTestSupport;
 import com.smartcs.smart_cs_agent.tools.HandoffTools;
 import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
-import com.smartcs.smart_cs_agent.tools.OrderTools;
-import com.smartcs.smart_cs_agent.tools.ProductTools;
-import com.smartcs.smart_cs_agent.tools.ReturnTools;
-import com.smartcs.smart_cs_agent.tools.ToolRegistry;
-import com.smartcs.smart_cs_agent.tools.UserTools;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
 import com.smartcs.smart_cs_agent.workflow.escalation.EscalationWorkflow;
 import com.smartcs.smart_cs_agent.workflow.general.GeneralCustomerServiceWorkflow;
@@ -140,21 +135,19 @@ class AgentResponseEvaluationTest {
         ReturnRepository returnRepository = new ReturnRepository();
         UserRepository userRepository = new UserRepository();
 
-        ToolRegistry toolRegistry = new ToolRegistry(
-                new OrderTools(orderRepository, productRepository),
-                new ProductTools(productRepository),
-                new ReturnTools(returnRepository, orderRepository, productRepository),
-                new UserTools(userRepository),
-                new KnowledgeTools(),
-                new HandoffTools()
-        );
-
         AgentRuntime runtime = new AgentRuntime(
                 skillManager,
                 WorkflowTestSupport.actionHandlerRegistry(
                         skillManager,
                         new FakeChatLanguageModel("专业 Workflow 不应调用 Fake LLM"),
-                        WorkflowTestSupport.toolRegistryGateway(toolRegistry)
+                        WorkflowTestSupport.localCapabilityGateway(
+                                orderRepository,
+                                productRepository,
+                                returnRepository,
+                                userRepository,
+                                new KnowledgeTools(),
+                                new HandoffTools()
+                        )
                 )
         );
 

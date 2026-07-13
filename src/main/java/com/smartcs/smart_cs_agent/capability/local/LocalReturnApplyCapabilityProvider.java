@@ -7,6 +7,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityProvider;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityRiskLevel;
+import com.smartcs.smart_cs_agent.capability.api.contracts.ReturnApplicationSummary;
 import com.smartcs.smart_cs_agent.domain.returnservice.ReturnApplicationResult;
 import com.smartcs.smart_cs_agent.domain.returnservice.ReturnApplicationService;
 import org.springframework.stereotype.Component;
@@ -24,7 +25,7 @@ import java.util.Map;
  */
 @Component
 @ConditionalOnExpression("'${smartcs.capability.provider-mode:local}' != 'mcp-remote'")
-public class LocalReturnApplyCapabilityProvider implements CapabilityProvider, LegacyCapabilityOverride {
+public class LocalReturnApplyCapabilityProvider implements CapabilityProvider {
 
     public static final String PROVIDER_ID = "local-return-domain";
 
@@ -47,11 +48,6 @@ public class LocalReturnApplyCapabilityProvider implements CapabilityProvider, L
     }
 
     @Override
-    public java.util.Set<String> overriddenCapabilityIds() {
-        return java.util.Set.of(CapabilityIds.RETURN_APPLY);
-    }
-
-    @Override
     public CapabilityResult<?> invoke(CapabilityCall call, ExecutionContext context) {
         String orderId = stringArgument(call, "order_id");
         String reason = stringArgument(call, "reason");
@@ -67,11 +63,21 @@ public class LocalReturnApplyCapabilityProvider implements CapabilityProvider, L
 
         ReturnApplicationResult result = returnApplicationService.apply(orderId, reason, context);
         if (result.isSubmitted()) {
+            // Domain 保留实体和业务规则；只有 Provider 把它们投影成对外稳定契约。
+            ReturnApplicationSummary summary = new ReturnApplicationSummary(
+                    true,
+                    result.getRecord().getReturnId(),
+                    result.getRecord().getOrderId(),
+                    result.getProductName(),
+                    result.getRecord().getReason(),
+                    result.getRecord().getStatus(),
+                    result.getExpectedReviewTime()
+            );
             return CapabilityResult.success(
                     CapabilityIds.RETURN_APPLY,
                     PROVIDER_ID,
                     result.getMessage(),
-                    result.getData()
+                    summary
             );
         }
         return CapabilityResult.businessRejected(
@@ -79,7 +85,7 @@ public class LocalReturnApplyCapabilityProvider implements CapabilityProvider, L
                 PROVIDER_ID,
                 result.getCode(),
                 result.getMessage(),
-                result.getData()
+                null
         );
     }
 
@@ -104,7 +110,10 @@ public class LocalReturnApplyCapabilityProvider implements CapabilityProvider, L
                         "reason_code", Map.of("type", "string"),
                         "return_id", Map.of("type", "string"),
                         "order_id", Map.of("type", "string"),
-                        "status", Map.of("type", "string")
+                        "product_name", Map.of("type", "string"),
+                        "reason", Map.of("type", "string"),
+                        "status", Map.of("type", "string"),
+                        "expected_review_time", Map.of("type", "string")
                 )
         );
         return new CapabilityDefinition(

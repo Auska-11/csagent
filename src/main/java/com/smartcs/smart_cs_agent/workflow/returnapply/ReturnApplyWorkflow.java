@@ -12,8 +12,8 @@ import com.smartcs.smart_cs_agent.agent.context.CapabilityObservation;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
+import com.smartcs.smart_cs_agent.capability.api.contracts.ReturnApplicationSummary;
 import com.smartcs.smart_cs_agent.skill.CustomerServiceSlotExtractor;
-import com.smartcs.smart_cs_agent.tools.ReturnToolData;
 import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
 import com.smartcs.smart_cs_agent.workflow.api.RoutingContext;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowDecision;
@@ -297,10 +297,10 @@ public class ReturnApplyWorkflow implements AgentWorkflow {
             );
         }
 
-        ReturnToolData data = ReturnToolData.fromMap(result.getData());
+        ReturnApplicationSummary data = ReturnApplicationSummary.fromMap(result.getData());
         if (data != null) {
             state.transitionTo(ReturnApplyStep.COMPLETED);
-            if (Boolean.TRUE.equals(data.getSubmitted())) {
+            if (data.isSubmitted()) {
                 context.getState().markWorkflowCompleted();
                 return WorkflowDecision.next(
                         new FinalAnswerAction("退货申请已提交成功：\n"
@@ -311,11 +311,11 @@ public class ReturnApplyWorkflow implements AgentWorkflow {
                 );
             }
 
-            // 重复申请、订单消失等是业务拒绝，不应伪装成系统异常，也不能自动重试。
-            context.getState().markWorkflowCompleted();
+            // success + submitted=false 违反 return.apply 输出契约，不能伪装成业务拒绝或自动重试。
+            state.transitionTo(ReturnApplyStep.RETRYABLE_FAILED);
             return WorkflowDecision.next(
-                    new FinalAnswerAction(safeText(result.getMessage(), "退货申请未提交。")),
-                    "退货领域能力返回业务拒绝：" + safeText(data.getReasonCode(), "UNKNOWN")
+                    new FinalAnswerAction("退货系统返回了不一致的处理结果，为避免重复提交，请联系人工客服。"),
+                    "return.apply 成功结果却没有确认 submitted=true"
             );
         }
 

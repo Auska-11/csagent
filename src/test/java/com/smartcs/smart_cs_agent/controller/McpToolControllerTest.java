@@ -2,16 +2,10 @@ package com.smartcs.smart_cs_agent.controller;
 
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
-import com.smartcs.smart_cs_agent.capability.core.DefaultCapabilityGateway;
-import com.smartcs.smart_cs_agent.capability.local.ToolRegistryCapabilityProvider;
 import com.smartcs.smart_cs_agent.mcp.server.McpServerAdapter;
 import com.smartcs.smart_cs_agent.mcp.server.McpServerSecurityProperties;
-import com.smartcs.smart_cs_agent.repository.OrderRepository;
-import com.smartcs.smart_cs_agent.repository.ProductRepository;
-import com.smartcs.smart_cs_agent.repository.ReturnRepository;
-import com.smartcs.smart_cs_agent.repository.UserRepository;
-import com.smartcs.smart_cs_agent.tools.*;
 import com.smartcs.smart_cs_agent.security.SecurityRoles;
+import com.smartcs.smart_cs_agent.testing.WorkflowTestSupport;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -131,12 +125,8 @@ class McpToolControllerTest {
     }
 
     private McpServerAdapter createAdapter() {
-        ToolRegistry registry = createRegistry();
-        DefaultCapabilityGateway gateway = new DefaultCapabilityGateway(List.of(
-                new ToolRegistryCapabilityProvider(registry, true)
-        ));
         return new McpServerAdapter(
-                gateway,
+                WorkflowTestSupport.localCapabilityGateway(),
                 new McpServerSecurityProperties()
         );
     }
@@ -148,30 +138,4 @@ class McpToolControllerTest {
         );
     }
 
-    private ToolRegistry createRegistry() {
-        ProductRepository productRepository = new ProductRepository();
-        OrderRepository orderRepository = new OrderRepository();
-        ReturnRepository returnRepository = new ReturnRepository();
-        UserRepository userRepository = new UserRepository();
-
-        return new ToolRegistry(
-                new OrderTools(orderRepository, productRepository),
-                new ProductTools(productRepository),
-                new ReturnTools(returnRepository, orderRepository, productRepository),
-                new UserTools(userRepository),
-                createKnowledgeTools(),
-                new HandoffTools()
-        );
-    }
-
-    private KnowledgeTools createKnowledgeTools() {
-        KnowledgeDocument returnPolicy = new KnowledgeDocument(
-                "policy/return_policy.md",
-                "policy",
-                "退换货政策",
-                "超过 7 天后，不再默认支持七天无理由退货。若商品存在质量问题，可以继续申请售后检测。",
-                List.of("退货", "七天", "超过七天", "质量问题")
-        );
-        return new KnowledgeTools(List.of(returnPolicy));
-    }
 }

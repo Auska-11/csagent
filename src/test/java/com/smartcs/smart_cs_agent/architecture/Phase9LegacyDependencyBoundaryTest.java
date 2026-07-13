@@ -9,6 +9,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
  * Phase 9 兼容层依赖门禁。
@@ -51,7 +52,7 @@ class Phase9LegacyDependencyBoundaryTest {
     void toolRegistryAdapterShouldRemainIsolatedBehindCompatibilityFacade() throws IOException {
         assertOnlyExpectedFilesImport(
                 "com.smartcs.smart_cs_agent.tools.ToolRegistry",
-                Set.of("com/smartcs/smart_cs_agent/capability/local/ToolRegistryCapabilityProvider.java")
+                Set.of()
         );
         assertOnlyExpectedFilesImport(
                 "com.smartcs.smart_cs_agent.capability.local.ToolRegistryCapabilityProvider",
@@ -69,6 +70,30 @@ class Phase9LegacyDependencyBoundaryTest {
                 "legacyTestRegistry",
                 Set.of()
         );
+    }
+
+    @Test
+    void deletedToolCompatibilityTypesShouldStayPhysicallyDeleted() {
+        Set<String> deletedFiles = Set.of(
+                "com/smartcs/smart_cs_agent/tools/ToolManager.java",
+                "com/smartcs/smart_cs_agent/tools/ToolRegistry.java",
+                "com/smartcs/smart_cs_agent/tools/ToolCall.java",
+                "com/smartcs/smart_cs_agent/tools/ToolResult.java",
+                "com/smartcs/smart_cs_agent/tools/ToolDefinition.java",
+                "com/smartcs/smart_cs_agent/tools/ToolParameterDefinition.java",
+                "com/smartcs/smart_cs_agent/tools/ToolHandler.java",
+                "com/smartcs/smart_cs_agent/tools/ReturnToolData.java",
+                "com/smartcs/smart_cs_agent/capability/local/ToolRegistryCapabilityProvider.java",
+                "com/smartcs/smart_cs_agent/capability/local/LegacyCapabilityContractMapper.java",
+                "com/smartcs/smart_cs_agent/capability/local/LegacyCapabilityOverride.java"
+        );
+
+        for (String relativeFile : deletedFiles) {
+            assertFalse(
+                    Files.exists(MAIN_JAVA.resolve(relativeFile)),
+                    () -> "Phase 9 已删除的兼容类型不应重新出现：" + relativeFile
+            );
+        }
     }
 
     /**

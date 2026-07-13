@@ -34,7 +34,7 @@ import static org.mockito.Mockito.when;
 class LocalHandoffCapabilityProviderTest {
 
     @Test
-    void shouldExposeSideEffectDefinitionAndOverrideLegacyTool() {
+    void shouldExposeSideEffectDefinition() {
         LocalHandoffCapabilityProvider provider = new LocalHandoffCapabilityProvider(new HandoffTools());
         CapabilityDefinition definition = provider.definitions().iterator().next();
 
@@ -44,7 +44,6 @@ class LocalHandoffCapabilityProviderTest {
         assertTrue(definition.isSideEffect());
         assertTrue(definition.isIdempotent());
         assertEquals(CapabilityRiskLevel.MEDIUM, definition.getRiskLevel());
-        assertEquals(Set.of(CapabilityIds.HANDOFF_REQUEST), provider.overriddenCapabilityIds());
     }
 
     @Test

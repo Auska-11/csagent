@@ -6,16 +6,15 @@ import java.util.Map;
 /**
  * MCP Adapter 工具调用请求。
  *
- * 【为什么不直接复用 ToolCall？】
- * ToolCall 是早期工具协议对象，目前只由仍在迁移的 ToolRegistry 兼容层使用。
- * McpToolCallRequest 是 HTTP 接口入参，属于外部协议边界。
+ * 【为什么不直接复用 CapabilityCall？】
+ * McpToolCallRequest 是 HTTP 接口入参，CapabilityCall 是 Agent 内部的传输无关请求，两者属于不同边界。
  *
  * 两者字段目前很像，但职责不同：
  * - McpToolCallRequest：负责接收前端或外部调用方传来的 JSON。
- * - ToolCall：负责进入内部工具注册表执行。
+ * - CapabilityCall：由 MCP Server Adapter 校验元数据后交给 Gateway 执行。
  *
  * 这样分开后，后续真正迁移成独立 MCP Server 时，外部协议可以继续演进，
- * 不会把内部 ToolCall 结构绑死。
+ * 不会把内部 CapabilityCall 结构绑死。
  */
 public class McpToolCallRequest {
 

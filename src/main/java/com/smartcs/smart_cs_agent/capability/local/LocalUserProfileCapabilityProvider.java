@@ -16,7 +16,6 @@ import org.springframework.stereotype.Component;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * 当前认证用户资料的独立本地 Provider。
@@ -26,8 +25,7 @@ import java.util.Set;
  */
 @Component
 @ConditionalOnExpression("'${smartcs.capability.provider-mode:local}' != 'mcp-remote'")
-public class LocalUserProfileCapabilityProvider
-        implements CapabilityProvider, LegacyCapabilityOverride {
+public class LocalUserProfileCapabilityProvider implements CapabilityProvider {
 
     public static final String PROVIDER_ID = "local-user-profile";
 
@@ -47,11 +45,6 @@ public class LocalUserProfileCapabilityProvider
     @Override
     public Collection<CapabilityDefinition> definitions() {
         return List.of(definition);
-    }
-
-    @Override
-    public Set<String> overriddenCapabilityIds() {
-        return Set.of(CapabilityIds.USER_LOOKUP);
     }
 
     @Override

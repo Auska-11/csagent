@@ -9,7 +9,7 @@ import java.util.Map;
 /**
  * ConversationState 的稳定持久化格式。
  *
- * <p>不要直接把 ConversationState 交给 Jackson：运行时状态中包含 Observation、ToolResult 等
+ * <p>不要直接把 ConversationState 交给 Jackson：运行时状态中包含 Observation、Provider 结果等
  * 多态对象，反序列化后很容易变成普通 Map，Workflow 再做 instanceof 时就会失败。这个快照只
  * 保存真正需要跨轮恢复的字符串状态和消息窗口。</p>
  */

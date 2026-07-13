@@ -2,6 +2,9 @@
 
 ## 1. 本批解决了什么
 
+> 后续状态：本文记录 9.3 第一批。Order/Knowledge Provider 与 ToolRegistry 清理已在第二批完成，
+> 见《客服Agent-71-Phase9独立CapabilityProvider与ToolRegistry清理说明》。
+
 Phase 9.2 删除了旧“大 Skill”执行链，但 Action Handler 仍先调用 `ToolManager`，再由它转发给
 `CapabilityGateway`。这会让生产代码同时出现 Tool 与 Capability 两套概念：
 

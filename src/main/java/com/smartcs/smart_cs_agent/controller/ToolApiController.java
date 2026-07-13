@@ -40,7 +40,7 @@ public class ToolApiController {
      */
     @GetMapping
     public Map<String, Object> listTools() {
-        // 调试接口和 MCP tools/list 读取同一份 Capability Catalog，避免维护第二套 ToolDefinition Schema。
+        // 调试接口和 MCP tools/list 读取同一份 Capability Catalog，避免再维护第二套 Schema。
         List<CapabilityDefinition> tools = List.copyOf(capabilityGateway.catalog().list());
         return Map.of(
                 "count", tools.size(),

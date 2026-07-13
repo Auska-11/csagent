@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -43,10 +42,6 @@ class LocalProductCatalogCapabilityProviderTest {
             assertFalse(definition.isIdempotent());
             assertEquals(CapabilityRiskLevel.READ_ONLY, definition.getRiskLevel());
         }
-        assertEquals(
-                Set.of(CapabilityIds.PRODUCT_SEARCH, CapabilityIds.PRODUCT_LOOKUP),
-                provider.overriddenCapabilityIds()
-        );
     }
 
     @Test

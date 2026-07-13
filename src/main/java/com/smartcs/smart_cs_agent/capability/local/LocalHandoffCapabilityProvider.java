@@ -16,7 +16,6 @@ import org.springframework.stereotype.Component;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * {@code handoff.request} 的独立本地 Provider。
@@ -29,8 +28,7 @@ import java.util.Set;
  */
 @Component
 @ConditionalOnExpression("'${smartcs.capability.provider-mode:local}' != 'mcp-remote'")
-public class LocalHandoffCapabilityProvider
-        implements CapabilityProvider, LegacyCapabilityOverride {
+public class LocalHandoffCapabilityProvider implements CapabilityProvider {
 
     public static final String PROVIDER_ID = "local-handoff";
 
@@ -50,11 +48,6 @@ public class LocalHandoffCapabilityProvider
     @Override
     public Collection<CapabilityDefinition> definitions() {
         return List.of(definition);
-    }
-
-    @Override
-    public Set<String> overriddenCapabilityIds() {
-        return Set.of(CapabilityIds.HANDOFF_REQUEST);
     }
 
     @Override

@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class LocalUserProfileCapabilityProviderTest {
 
     @Test
-    void shouldExposeAuthenticatedReadOnlyDefinitionAndOverrideLegacyCapability() {
+    void shouldExposeAuthenticatedReadOnlyDefinition() {
         LocalUserProfileCapabilityProvider provider = provider();
         CapabilityDefinition definition = provider.definitions().iterator().next();
 
@@ -38,7 +38,6 @@ class LocalUserProfileCapabilityProviderTest {
         assertFalse(definition.isSideEffect());
         assertFalse(definition.isIdempotent());
         assertEquals(CapabilityRiskLevel.READ_ONLY, definition.getRiskLevel());
-        assertEquals(Set.of(CapabilityIds.USER_LOOKUP), provider.overriddenCapabilityIds());
     }
 
     @Test

@@ -1,6 +1,5 @@
 package com.smartcs.smart_cs_agent.tools;
 
-import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.handoff.outbox.InMemoryPendingHandoffStore;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffCommand;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffPreparation;
@@ -69,50 +68,6 @@ public class HandoffTools {
         this.pendingHandoffStore = pendingHandoffStore == null
                 ? new InMemoryPendingHandoffStore()
                 : pendingHandoffStore;
-    }
-
-    /**
-     * 创建人工转接工单。
-     *
-     * @param userId 用户 ID
-     * @param conversationId 会话 ID
-     * @param reason 转人工原因
-     * @param summary 给人工看的摘要
-     * @return 工单结构化信息
-     */
-    public HandoffTicketData createHandoffTicket(String userId,
-                                                 String conversationId,
-                                                 String reason,
-                                                 String summary) {
-        return createHandoffTicket(userId, conversationId, reason, summary, null);
-    }
-
-    /**
-     * 创建人工转接工单，并使用上层 Capability 的操作幂等键隔离不同业务请求。
-     *
-     * <p>同一会话可能先后发生两次投诉，仅使用 conversationId + reason 会把它们错误合并。
-     * operationIdempotencyKey 由服务端执行上下文提供，使每个已确认的副作用请求都有独立身份。</p>
-     */
-    public HandoffTicketData createHandoffTicket(String userId,
-                                                 String conversationId,
-                                                 String reason,
-                                                 String summary,
-                                                 String operationIdempotencyKey) {
-        // 这是尚未携带 ExecutionContext 的旧 ToolRegistry 兼容入口。memory 模式没有外部租户副作用，
-        // 可以继续使用默认演示租户；HTTP 模式必须 fail-closed，不能猜一个租户后写入真实售后平台。
-        if (properties.isAfterSalesHttpMode()) {
-            throw new HandoffTicketCreationException(
-                    "Tenant-aware handoff entry point is required for after-sales HTTP mode"
-            );
-        }
-        return createHandoffTicketForTenant(
-                ConversationKey.DEFAULT_TENANT_ID,
-                userId,
-                conversationId,
-                reason,
-                summary,
-                operationIdempotencyKey
-        );
     }
 
     /**
@@ -305,19 +260,6 @@ public class HandoffTools {
                 status,
                 LocalDateTime.now().toString()
         );
-    }
-
-    /**
-     * 把工单结构整理成适合 Trace 和 Prompt 阅读的文本。
-     */
-    public String formatTicket(HandoffTicketData ticket) {
-        return "已创建人工转接工单：\n" +
-                "工单号：" + ticket.getTicketId() + "\n" +
-                "用户：" + ticket.getUserId() + "\n" +
-                "会话：" + ticket.getConversationId() + "\n" +
-                "原因：" + ticket.getReason() + "\n" +
-                "状态：" + ticket.getStatus() + "\n" +
-                "摘要：" + ticket.getSummary();
     }
 
     private String buildTitle(String reason, String summary) {

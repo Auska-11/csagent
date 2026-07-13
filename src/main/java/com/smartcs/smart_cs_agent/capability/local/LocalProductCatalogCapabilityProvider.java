@@ -17,7 +17,6 @@ import org.springframework.stereotype.Component;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * 商品目录的独立本地 Provider。
@@ -28,8 +27,7 @@ import java.util.Set;
  */
 @Component
 @ConditionalOnExpression("'${smartcs.capability.provider-mode:local}' != 'mcp-remote'")
-public class LocalProductCatalogCapabilityProvider
-        implements CapabilityProvider, LegacyCapabilityOverride {
+public class LocalProductCatalogCapabilityProvider implements CapabilityProvider {
 
     public static final String PROVIDER_ID = "local-product-catalog";
 
@@ -49,11 +47,6 @@ public class LocalProductCatalogCapabilityProvider
     @Override
     public Collection<CapabilityDefinition> definitions() {
         return definitions;
-    }
-
-    @Override
-    public Set<String> overriddenCapabilityIds() {
-        return Set.of(CapabilityIds.PRODUCT_SEARCH, CapabilityIds.PRODUCT_LOOKUP);
     }
 
     @Override

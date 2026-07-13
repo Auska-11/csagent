@@ -156,8 +156,8 @@ final class TurnOutcomeClassifier {
             case BUSINESS_REJECTED -> 1;
             case USER_CANCELLED -> 2;
             case TECHNICAL_FAILURE -> 3;
-            // Capability allowlist 拒绝当前还会产生一个兼容期 TECHNICAL_FAILURE ToolResult，
-            // Guardrail 优先级必须更高，避免同一轮被错误计入技术故障。
+            // 同一轮可能既出现上游技术失败，又出现权限/安全拒绝；Guardrail 优先级必须更高，
+            // 避免安全拦截被较早的技术事件覆盖成普通故障。
             case GUARDRAIL_REJECTED -> 4;
         };
     }

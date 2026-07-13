@@ -1,13 +1,12 @@
 package com.smartcs.smart_cs_agent.controller;
 
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
-import com.smartcs.smart_cs_agent.tools.ToolResult;
 
 /**
  * MCP Adapter 工具调用响应。
  *
  * 这个类是给 HTTP / MCP Adapter 层看的响应 DTO。
- * 它把内部 ToolResult 映射成稳定的外部字段，方便前端、调试工具或未来 MCP Client 读取。
+ * 它把内部 CapabilityResult 映射成稳定的外部字段，方便前端和调试工具读取。
  */
 public class McpToolResponse {
 
@@ -46,19 +45,6 @@ public class McpToolResponse {
         this.outcome = outcome;
         this.providerId = providerId;
         this.replayed = replayed;
-    }
-
-    public static McpToolResponse from(ToolResult result) {
-        return new McpToolResponse(
-                result.isSuccess(),
-                result.getToolName(),
-                result.getMessage(),
-                result.getData(),
-                result.getErrorCode(),
-                result.getOutcome().name(),
-                result.getProviderId(),
-                result.isReplayed()
-        );
     }
 
     public static McpToolResponse from(CapabilityResult<?> result) {

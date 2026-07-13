@@ -17,11 +17,6 @@ import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.testing.WorkflowTestSupport;
 import com.smartcs.smart_cs_agent.tools.HandoffTools;
 import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
-import com.smartcs.smart_cs_agent.tools.OrderTools;
-import com.smartcs.smart_cs_agent.tools.ProductTools;
-import com.smartcs.smart_cs_agent.tools.ReturnTools;
-import com.smartcs.smart_cs_agent.tools.ToolRegistry;
-import com.smartcs.smart_cs_agent.tools.UserTools;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
 import com.smartcs.smart_cs_agent.workflow.general.GeneralCustomerServiceWorkflow;
 import com.smartcs.smart_cs_agent.workflow.returnapply.ReturnApplyWorkflow;
@@ -49,7 +44,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 用户可见的退货流程与真实 Repository 副作用。</p>
  *
  * <p>调用链：CustomerServiceAgent -> ConversationStore -> AgentRuntime ->
- * ReturnApplyWorkflow -> CapabilityGateway -> ToolRegistryCapabilityProvider -> ReturnTools。</p>
+ * ReturnApplyWorkflow -> CapabilityGateway -> LocalReturnApplyCapabilityProvider -> ReturnApplicationService。</p>
  *
  * <p>测试使用 Fake LLM 和内存 Repository，不访问网络或真实数据库，因此可以稳定地加入默认
  * {@code mvn test}。</p>
@@ -142,15 +137,6 @@ class CustomerServiceAgentCharacterizationTest {
         ReturnRepository returnRepository = new ReturnRepository();
         UserRepository userRepository = new UserRepository();
 
-        ToolRegistry toolRegistry = new ToolRegistry(
-                new OrderTools(orderRepository, productRepository),
-                new ProductTools(productRepository),
-                new ReturnTools(returnRepository, orderRepository, productRepository),
-                new UserTools(userRepository),
-                new KnowledgeTools(),
-                new HandoffTools()
-        );
-
         GlobalInterruptPolicy interruptPolicy = new GlobalInterruptPolicy();
         SkillManager skillManager = WorkflowTestSupport.skillManager(
                 new TestSkillConfig(),
@@ -162,7 +148,14 @@ class CustomerServiceAgentCharacterizationTest {
                 WorkflowTestSupport.actionHandlerRegistry(
                         skillManager,
                         new FixedReplyChatLanguageModel("专业退货 Workflow 不应调用 Fake LLM"),
-                        WorkflowTestSupport.toolRegistryGateway(toolRegistry)
+                        WorkflowTestSupport.localCapabilityGateway(
+                                orderRepository,
+                                productRepository,
+                                returnRepository,
+                                userRepository,
+                                new KnowledgeTools(),
+                                new HandoffTools()
+                        )
                 )
         );
         ConversationStore conversationStore = new ConversationStore();

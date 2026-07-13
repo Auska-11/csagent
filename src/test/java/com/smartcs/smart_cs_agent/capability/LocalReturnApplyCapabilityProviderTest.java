@@ -7,6 +7,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityOutcome;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
+import com.smartcs.smart_cs_agent.capability.api.contracts.ReturnApplicationSummary;
 import com.smartcs.smart_cs_agent.capability.core.DefaultCapabilityGateway;
 import com.smartcs.smart_cs_agent.capability.idempotency.memory.InMemoryCapabilityIdempotencyStore;
 import com.smartcs.smart_cs_agent.capability.local.LocalReturnApplyCapabilityProvider;
@@ -50,6 +51,9 @@ class LocalReturnApplyCapabilityProviderTest {
         assertTrue(definition.isIdempotent());
         assertTrue(first.isSuccess());
         assertTrue(replay.isReplayed());
+        ReturnApplicationSummary summary = (ReturnApplicationSummary) first.getData();
+        assertEquals("ORD-003", summary.getOrderId());
+        assertTrue(summary.isSubmitted());
         assertNotNull(fixture.returnRepository.findByOrderId("ORD-003"));
     }
 

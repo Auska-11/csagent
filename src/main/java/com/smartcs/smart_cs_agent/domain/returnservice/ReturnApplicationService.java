@@ -7,7 +7,6 @@ import com.smartcs.smart_cs_agent.model.ReturnRecord;
 import com.smartcs.smart_cs_agent.repository.OrderRepository;
 import com.smartcs.smart_cs_agent.repository.ProductRepository;
 import com.smartcs.smart_cs_agent.repository.ReturnRepository;
-import com.smartcs.smart_cs_agent.tools.ReturnToolData;
 import org.springframework.stereotype.Service;
 
 import java.util.Locale;
@@ -43,8 +42,7 @@ public class ReturnApplicationService {
         if (normalizedOrderId.isBlank() || reason == null || reason.isBlank()) {
             return ReturnApplicationResult.rejected(
                     "INVALID_RETURN_ARGUMENT",
-                    "订单号和退货原因不能为空。",
-                    ReturnToolData.orderNotFound(orderId)
+                    "订单号和退货原因不能为空。"
             );
         }
 
@@ -52,8 +50,7 @@ public class ReturnApplicationService {
         if (context == null || !context.getPrincipal().isAuthenticated()) {
             return ReturnApplicationResult.rejected(
                     "AUTHENTICATION_REQUIRED",
-                    "提交退货申请需要经过身份认证。",
-                    ReturnToolData.orderNotFound(normalizedOrderId)
+                    "提交退货申请需要经过身份认证。"
             );
         }
 
@@ -63,16 +60,14 @@ public class ReturnApplicationService {
             if (order == null) {
                 return ReturnApplicationResult.rejected(
                         "ORDER_NOT_FOUND",
-                        "订单 " + normalizedOrderId + " 不存在，无法申请退货。",
-                        ReturnToolData.orderNotFound(normalizedOrderId)
+                        "订单 " + normalizedOrderId + " 不存在，无法申请退货。"
                 );
             }
 
             if (!context.getPrincipal().getUserId().equals(order.getUserId())) {
                 return ReturnApplicationResult.rejected(
                         "ORDER_OWNERSHIP_MISMATCH",
-                        "该订单不属于当前认证用户，无法申请退货。",
-                        ReturnToolData.orderNotFound(normalizedOrderId)
+                        "该订单不属于当前认证用户，无法申请退货。"
                 );
             }
 
@@ -80,8 +75,7 @@ public class ReturnApplicationService {
             if (!"已签收".equals(order.getStatus())) {
                 return ReturnApplicationResult.rejected(
                         "ORDER_STATUS_NOT_RETURNABLE",
-                        "订单当前状态为“" + order.getStatus() + "”，暂不能提交退货申请。",
-                        ReturnToolData.orderNotFound(normalizedOrderId)
+                        "订单当前状态为“" + order.getStatus() + "”，暂不能提交退货申请。"
                 );
             }
 
@@ -91,8 +85,7 @@ public class ReturnApplicationService {
             if (existing != null) {
                 return ReturnApplicationResult.rejected(
                         "DUPLICATE_RETURN_APPLICATION",
-                        "订单 " + normalizedOrderId + " 已有退货申请，退货单号：" + existing.getReturnId(),
-                        ReturnToolData.duplicate(existing, productName)
+                        "订单 " + normalizedOrderId + " 已有退货申请，退货单号：" + existing.getReturnId()
                 );
             }
 
@@ -105,14 +98,19 @@ public class ReturnApplicationService {
             );
             returnRepository.save(record);
 
-            ReturnToolData data = ReturnToolData.submitted(record, productName, "1-2 business days");
+            String expectedReviewTime = "1-2 business days";
             String message = "Return application submitted:\n"
                     + "- Return ID: " + returnId + "\n"
                     + "- Order ID: " + normalizedOrderId + "\n"
                     + "- Product: " + productName + "\n"
                     + "- Reason: " + reason.trim() + "\n"
                     + "- Status: Under Review (expected 1-2 business days)";
-            return ReturnApplicationResult.submitted(message, data);
+            return ReturnApplicationResult.submitted(
+                    message,
+                    record,
+                    productName,
+                    expectedReviewTime
+            );
         }
     }
 

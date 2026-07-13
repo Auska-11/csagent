@@ -10,7 +10,18 @@ import com.smartcs.smart_cs_agent.agent.handler.defaults.HandoffActionHandler;
 import com.smartcs.smart_cs_agent.agent.handler.defaults.LlmActionHandler;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityGateway;
 import com.smartcs.smart_cs_agent.capability.core.DefaultCapabilityGateway;
-import com.smartcs.smart_cs_agent.capability.local.ToolRegistryCapabilityProvider;
+import com.smartcs.smart_cs_agent.capability.local.LocalHandoffCapabilityProvider;
+import com.smartcs.smart_cs_agent.capability.local.LocalKnowledgeSearchCapabilityProvider;
+import com.smartcs.smart_cs_agent.capability.local.LocalOrderCapabilityProvider;
+import com.smartcs.smart_cs_agent.capability.local.LocalProductCatalogCapabilityProvider;
+import com.smartcs.smart_cs_agent.capability.local.LocalReturnApplyCapabilityProvider;
+import com.smartcs.smart_cs_agent.capability.local.LocalReturnLookupCapabilityProvider;
+import com.smartcs.smart_cs_agent.capability.local.LocalUserProfileCapabilityProvider;
+import com.smartcs.smart_cs_agent.domain.returnservice.ReturnApplicationService;
+import com.smartcs.smart_cs_agent.repository.OrderRepository;
+import com.smartcs.smart_cs_agent.repository.ProductRepository;
+import com.smartcs.smart_cs_agent.repository.ReturnRepository;
+import com.smartcs.smart_cs_agent.repository.UserRepository;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.skill.registry.AgentSkillPackageRegistry;
 import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
@@ -18,7 +29,8 @@ import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRegistry;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRouter;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRouterProperties;
-import com.smartcs.smart_cs_agent.tools.ToolRegistry;
+import com.smartcs.smart_cs_agent.tools.HandoffTools;
+import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 
 import java.util.Arrays;
@@ -75,8 +87,43 @@ public final class WorkflowTestSupport {
         ));
     }
 
-    /** 在 ToolRegistry 完全拆除前，让旧工具 Fixture 通过真实 Gateway 参与测试。 */
-    public static CapabilityGateway toolRegistryGateway(ToolRegistry toolRegistry) {
-        return new DefaultCapabilityGateway(List.of(new ToolRegistryCapabilityProvider(toolRegistry, true)));
+    /** 使用全新的内存 Repository 装配一套完整本地 Capability，适合只验证协议和目录的测试。 */
+    public static CapabilityGateway localCapabilityGateway() {
+        return localCapabilityGateway(
+                new OrderRepository(),
+                new ProductRepository(),
+                new ReturnRepository(),
+                new UserRepository(),
+                new KnowledgeTools(),
+                new HandoffTools()
+        );
+    }
+
+    /**
+     * 为需要检查 Repository 副作用或自定义知识文档的测试装配真实本地 Provider。
+     *
+     * <p>所有 Provider 与生产 Spring 装配相同，只省略了旧 ToolRegistry Adapter。参数保持显式，
+     * 是为了让测试读者能看出哪些组件共享同一份内存状态。</p>
+     */
+    public static CapabilityGateway localCapabilityGateway(OrderRepository orderRepository,
+                                                            ProductRepository productRepository,
+                                                            ReturnRepository returnRepository,
+                                                            UserRepository userRepository,
+                                                            KnowledgeTools knowledgeTools,
+                                                            HandoffTools handoffTools) {
+        ReturnApplicationService returnApplicationService = new ReturnApplicationService(
+                returnRepository,
+                orderRepository,
+                productRepository
+        );
+        return new DefaultCapabilityGateway(List.of(
+                new LocalOrderCapabilityProvider(orderRepository, productRepository),
+                new LocalProductCatalogCapabilityProvider(productRepository),
+                new LocalReturnApplyCapabilityProvider(returnApplicationService),
+                new LocalReturnLookupCapabilityProvider(returnRepository, orderRepository, productRepository),
+                new LocalUserProfileCapabilityProvider(userRepository),
+                new LocalKnowledgeSearchCapabilityProvider(knowledgeTools),
+                new LocalHandoffCapabilityProvider(handoffTools)
+        ));
     }
 }
