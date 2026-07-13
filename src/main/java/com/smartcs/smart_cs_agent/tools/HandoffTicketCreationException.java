@@ -8,6 +8,10 @@ package com.smartcs.smart_cs_agent.tools;
  */
 public class HandoffTicketCreationException extends RuntimeException {
 
+    public HandoffTicketCreationException(String message) {
+        super(message);
+    }
+
     public HandoffTicketCreationException(String message, Throwable cause) {
         super(message, cause);
     }

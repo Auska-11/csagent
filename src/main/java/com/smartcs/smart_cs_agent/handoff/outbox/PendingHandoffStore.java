@@ -1,5 +1,7 @@
 package com.smartcs.smart_cs_agent.handoff.outbox;
 
+import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateResult;
+
 import java.util.Optional;
 
 /**
@@ -10,7 +12,18 @@ import java.util.Optional;
  */
 public interface PendingHandoffStore {
 
-    PendingHandoffRecord recordUnknown(PendingHandoffCommand command);
+    /** 在任何远端副作用发生前保存请求，并告诉调用方自己是否是首次执行者。 */
+    PendingHandoffPreparation prepare(PendingHandoffCommand command);
+
+    /** 远端响应未知时推进状态。expectedVersion 防止旧执行者覆盖更新状态。 */
+    PendingHandoffRecord markResultUnknown(String idempotencyKey,
+                                           String failureType,
+                                           long expectedVersion);
+
+    /** 保存已确认成功的远端结果；之后相同请求必须直接回放，不能再次调用远端。 */
+    PendingHandoffRecord confirm(String idempotencyKey,
+                                 AfterSalesTicketCreateResult result,
+                                 long expectedVersion);
 
     Optional<PendingHandoffRecord> findByIdempotencyKey(String idempotencyKey);
 }

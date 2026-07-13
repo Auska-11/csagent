@@ -4,11 +4,11 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成十四批收口，PendingHandoffStore 已持久化，自动恢复与真实数据库验收仍在继续 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成十五批收口，Outbox 已支持调用前准备与成功回放，后台恢复与真实数据库验收仍在继续 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 383 个默认测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
+| 当前验证规模 | 389 个默认测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -22,8 +22,9 @@
 
 这里的“核心目标完成”不等于整份长期路线图全部结束。Phase 7 的生产路由迁移已经完成，但旧
 `CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的应用日志与 MCP 普通审计安全已经
-收口，售后/Embedding/Qdrant 也已有独立 HTTP 超时，人工转接结果未知时也不再假报成功；但整轮 deadline、pending 工单持久化、真实数据库
-和容器故障注入，以及 Phase 9 的 Legacy 删除仍是后续演进项，
+收口，售后/Embedding/Qdrant 也已有独立 HTTP 超时；人工转接已具备调用前 PREPARED、结果未知持久化
+和成功回放。但整轮 deadline、Outbox 后台核对/补建、真实数据库和容器故障注入，以及 Phase 9 的
+Legacy 删除仍是后续演进项，
 不能把它们误写成已完成。
 
 ## 2. 为什么需要这次改造（改造前问题）
@@ -1061,6 +1062,20 @@ HTTP 超时只能证明客户端没有收到响应，远端可能已经创建工
 推进和后台核对/补建将在后续批次完成。详细说明见
 `客服Agent-56-PendingHandoffStore持久化基础说明.md`。
 
+### Phase 8 第十五批进度（2026-07-13）
+
+人工转接 Outbox 已从“捕获远端异常后记录”前移为调用前 `PREPARED`。`prepare()` 会返回记录是否由当前
+执行者首次创建，只有 `created=true` 才能调用售后平台；已有 PREPARED 或 RESULT_UNKNOWN 的同步请求
+不会盲目重试，已有 CONFIRMED 则直接回放持久化成功结果。
+
+JDBC 新增追加式 `cs_pending_handoff_result` 表保存真实 ticketId、状态和创建时间。即使进程在结果表写入
+后、主表状态更新前退出，重建 Store 仍会把结果解释为 CONFIRMED。外部 Idempotency-Key 也改为基于用户、
+会话、原因和 Capability 操作键的 SHA-256，不再暴露用户/会话标识，并允许同一会话先后发起独立操作。
+
+本批完成后默认测试套件共 `389` 项，0 失败、0 错误、0 跳过。调用前崩溃窗口和成功结果回放已经收口，
+但多实例领取租约、到期查询、有限补建/退避、远端结果查询和人工复核仍未完成。详细说明见
+`客服Agent-57-Outbox调用前准备与成功结果回放说明.md`。
+
 ### 验收标准
 
 - 不能通过猜测 conversationId 读取或清除其他用户会话。
@@ -1271,7 +1286,7 @@ smartcs:
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 383 个测试）。
+- [x] 旧测试全部保留并通过（当前默认套件共 389 个测试）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。

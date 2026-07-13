@@ -87,7 +87,8 @@ public class LocalHandoffCapabilityProvider
                 userId,
                 conversationId,
                 reason,
-                summary
+                summary,
+                context.getIdempotencyKey()
         );
         HandoffTicketSummary contract = new HandoffTicketSummary(
                 ticket.getTicketId(),

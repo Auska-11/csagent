@@ -8,6 +8,9 @@ package com.smartcs.smart_cs_agent.handoff.outbox;
  */
 public enum PendingHandoffStatus {
 
+    /** 已在调用远端前保存请求，但还没有拿到可确认的执行结果。 */
+    PREPARED,
+
     /** Agent 没有拿到远端响应，远端究竟成功还是失败仍需核对。 */
     RESULT_UNKNOWN,
 

@@ -1,6 +1,7 @@
 package com.smartcs.smart_cs_agent.handoff.outbox;
 
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateRequest;
+import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateResult;
 
 /**
  * 已保存的人工转接 Outbox 记录。
@@ -17,6 +18,7 @@ public record PendingHandoffRecord(
         AfterSalesTicketCreateRequest request,
         PendingHandoffStatus status,
         String failureType,
+        AfterSalesTicketCreateResult confirmedResult,
         int attemptCount,
         long nextAttemptAt,
         long version,

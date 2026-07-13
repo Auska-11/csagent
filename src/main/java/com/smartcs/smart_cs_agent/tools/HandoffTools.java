@@ -2,11 +2,18 @@ package com.smartcs.smart_cs_agent.tools;
 
 import com.smartcs.smart_cs_agent.handoff.outbox.InMemoryPendingHandoffStore;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffCommand;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffPreparation;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffRecord;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStatus;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -76,8 +83,28 @@ public class HandoffTools {
                                                  String conversationId,
                                                  String reason,
                                                  String summary) {
+        return createHandoffTicket(userId, conversationId, reason, summary, null);
+    }
+
+    /**
+     * 创建人工转接工单，并使用上层 Capability 的操作幂等键隔离不同业务请求。
+     *
+     * <p>同一会话可能先后发生两次投诉，仅使用 conversationId + reason 会把它们错误合并。
+     * operationIdempotencyKey 由服务端执行上下文提供，使每个已确认的副作用请求都有独立身份。</p>
+     */
+    public HandoffTicketData createHandoffTicket(String userId,
+                                                 String conversationId,
+                                                 String reason,
+                                                 String summary,
+                                                 String operationIdempotencyKey) {
         if (properties.isAfterSalesHttpMode() && afterSalesTicketClient != null) {
-            return createAfterSalesTicket(userId, conversationId, reason, summary);
+            return createAfterSalesTicket(
+                    userId,
+                    conversationId,
+                    reason,
+                    summary,
+                    operationIdempotencyKey
+            );
         }
 
         return createMemoryTicket(userId, conversationId, reason, summary, "WAITING_HUMAN_AGENT");
@@ -86,7 +113,8 @@ public class HandoffTools {
     private HandoffTicketData createAfterSalesTicket(String userId,
                                                      String conversationId,
                                                      String reason,
-                                                     String summary) {
+                                                     String summary,
+                                                     String operationIdempotencyKey) {
         AfterSalesTicketCreateRequest request = new AfterSalesTicketCreateRequest(
                 buildTitle(reason, summary),
                 buildDescription(userId, conversationId, reason, summary),
@@ -94,34 +122,95 @@ public class HandoffTools {
                 inferProductLine(reason, summary),
                 inferIssueType(reason, summary),
                 inferPriority(reason, summary),
-                buildIdempotencyKey(conversationId, reason)
-        );
-
-        try {
-            AfterSalesTicketCreateResult result = afterSalesTicketClient.createTicket(request);
-            return new HandoffTicketData(
-                    result.ticketId(),
-                    userId,
-                    conversationId,
-                    reason,
-                    summary,
-                    result.status(),
-                    result.createdAt()
-            );
-        } catch (RuntimeException e) {
-            // 超时只表示“客户端没有拿到结果”，远端可能已经创建了工单。
-            // 在可靠 PendingHandoffStore/Outbox 完成前，不能生成一个只存在内存的假工单并向用户宣告成功。
-            // 先把完整请求和原幂等键写入 Outbox，进程重启后仍可查询和补建。
-            // Outbox 写入成功也不能向用户宣告工单成功，因为它只证明“补建任务已保存”。
-            try {
-                pendingHandoffStore.recordUnknown(new PendingHandoffCommand(
+                buildIdempotencyKey(
                         userId,
                         conversationId,
                         reason,
                         summary,
-                        request,
-                        e.getClass().getSimpleName()
-                ));
+                        operationIdempotencyKey
+                )
+        );
+
+        PendingHandoffPreparation preparation;
+        try {
+            // Outbox 必须先于外部副作用写入。即使进程在下一行之前退出，重启后也能看到 PREPARED，
+            // 而不是在没有任何证据的情况下重新创建一张工单。
+            preparation = pendingHandoffStore.prepare(new PendingHandoffCommand(
+                    userId,
+                    conversationId,
+                    reason,
+                    summary,
+                    request
+            ));
+        } catch (RuntimeException persistenceFailure) {
+            // 无法建立可靠记录时必须 fail-closed，绝不能绕过 Outbox 直接调用远端副作用。
+            throw new HandoffTicketCreationException(
+                    "Pending handoff request could not be prepared",
+                    persistenceFailure
+            );
+        }
+
+        PendingHandoffRecord preparedRecord = preparation.record();
+        if (!preparation.created()) {
+            if (preparedRecord.status() == PendingHandoffStatus.CONFIRMED
+                    && preparedRecord.confirmedResult() != null) {
+                // Capability 幂等结果可能尚未落库，但 Outbox 已经保存成功结果；直接回放即可。
+                return toTicketData(
+                        preparedRecord.confirmedResult(),
+                        userId,
+                        conversationId,
+                        reason,
+                        summary
+                );
+            }
+            // 已有 PREPARED/RESULT_UNKNOWN 表示上一次执行可能已经触发远端副作用。
+            // 同步请求不能凭猜测再调用一次，后续由核对/补建执行器使用原幂等键推进。
+            throw new HandoffTicketCreationException(
+                    "Remote handoff is awaiting reconciliation"
+            );
+        }
+
+        try {
+            AfterSalesTicketCreateResult result = afterSalesTicketClient.createTicket(request);
+            PendingHandoffRecord confirmed;
+            try {
+                confirmed = pendingHandoffStore.confirm(
+                        request.idempotencyKey(),
+                        result,
+                        preparedRecord.version()
+                );
+            } catch (RuntimeException persistenceFailure) {
+                // 远端已经明确成功，但本地无法证明结果已持久化时，也不能向上返回成功。
+                // 保守返回技术失败，避免 Capability 层保存一个无法从 Outbox 恢复的成功结果。
+                throw new HandoffTicketCreationException(
+                        "Remote handoff succeeded but confirmation could not be persisted",
+                        persistenceFailure
+                );
+            }
+            return toTicketData(
+                    confirmed.confirmedResult(),
+                    userId,
+                    conversationId,
+                    reason,
+                    summary
+            );
+        } catch (RuntimeException e) {
+            if (e instanceof HandoffTicketCreationException) {
+                throw e;
+            }
+            // 超时只表示“客户端没有拿到结果”，远端可能已经创建了工单。
+            // PREPARED 已在调用前写入，这里只需要把记录推进为 RESULT_UNKNOWN。
+            try {
+                PendingHandoffRecord unknown = pendingHandoffStore.markResultUnknown(
+                        request.idempotencyKey(),
+                        e.getClass().getSimpleName(),
+                        preparedRecord.version()
+                );
+                if (unknown.status() == PendingHandoffStatus.CONFIRMED
+                        && unknown.confirmedResult() != null) {
+                    // 极少数并发场景下，当前线程超时的同时核对执行者拿到了成功结果。
+                    return toTicketData(unknown.confirmedResult(), userId, conversationId, reason, summary);
+                }
             } catch (RuntimeException persistenceFailure) {
                 // 外部结果未知且 Outbox 也写入失败，是更高优先级的可靠性故障。
                 // 仍统一包装成安全异常，不把 SQL、连接地址或原始 HTTP 错误传给用户。
@@ -138,6 +227,25 @@ public class HandoffTools {
                     e
             );
         }
+    }
+
+    private HandoffTicketData toTicketData(AfterSalesTicketCreateResult result,
+                                           String userId,
+                                           String conversationId,
+                                           String reason,
+                                           String summary) {
+        if (result == null) {
+            throw new HandoffTicketCreationException("Confirmed handoff result is missing");
+        }
+        return new HandoffTicketData(
+                result.ticketId(),
+                userId,
+                conversationId,
+                reason,
+                summary,
+                result.status(),
+                result.createdAt()
+        );
     }
 
     private HandoffTicketData createMemoryTicket(String userId,
@@ -244,14 +352,32 @@ public class HandoffTools {
         return "handoff";
     }
 
-    private String buildIdempotencyKey(String conversationId, String reason) {
-        return "agent:" + safeSegment(conversationId, "unknown-conversation")
-                + ":handoff:" + safeSegment(reason, "unknown-reason");
+    private String buildIdempotencyKey(String userId,
+                                       String conversationId,
+                                       String reason,
+                                       String summary,
+                                       String operationIdempotencyKey) {
+        // 外部 Header 不直接暴露 userId/conversationId。完整 SHA-256 仍能稳定关联同一逻辑操作，
+        // 并避免不同用户恰好使用相同客户端 key 时在售后平台发生碰撞。
+        String operation = firstNonBlank(operationIdempotencyKey, summary, "handoff");
+        String source = hashSegment(userId)
+                + hashSegment(conversationId)
+                + hashSegment(reason)
+                + hashSegment(operation);
+        try {
+            String digest = HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256")
+                            .digest(source.getBytes(StandardCharsets.UTF_8))
+            );
+            return "agent-handoff-" + digest;
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
     }
 
-    private String safeSegment(String value, String fallback) {
-        String text = firstNonBlank(value, fallback);
-        return text.replaceAll("[^A-Za-z0-9_\\-:.]", "-");
+    private String hashSegment(String value) {
+        String safe = value == null ? "" : value;
+        return safe.length() + ":" + safe;
     }
 
     private boolean containsAny(String text, String... keywords) {

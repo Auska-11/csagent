@@ -53,7 +53,8 @@ class LocalHandoffCapabilityProviderTest {
                 "USER-001",
                 "conv-trusted",
                 "COMPLAINT",
-                "用户投诉服务问题"
+                "用户投诉服务问题",
+                "idem-trusted"
         )).thenReturn(new HandoffTicketData(
                 "HD-2001",
                 "USER-001",
@@ -89,7 +90,8 @@ class LocalHandoffCapabilityProviderTest {
                 "USER-001",
                 "conv-trusted",
                 "COMPLAINT",
-                "用户投诉服务问题"
+                "用户投诉服务问题",
+                "idem-trusted"
         );
     }
 
