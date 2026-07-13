@@ -509,7 +509,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 377 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 383 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -560,6 +560,7 @@ docker compose down
 - [应用日志与 MCP 审计安全说明](docs/客服Agent/客服Agent-53-应用日志与MCP审计安全说明.md)
 - [外部 HTTP 客户端超时说明](docs/客服Agent/客服Agent-54-外部HTTP客户端超时与故障测试说明.md)
 - [人工转接结果未知与假成功修复说明](docs/客服Agent/客服Agent-55-人工转接结果未知与假成功修复说明.md)
+- [PendingHandoffStore 持久化基础说明](docs/客服Agent/客服Agent-56-PendingHandoffStore持久化基础说明.md)
 
 ## 简历表达参考
 
@@ -575,6 +576,6 @@ docker compose down
 - 实现 RAG 双模式：默认 local 模式保证测试和演示稳定，高级模式接入 OpenAI-compatible embedding API 与 Qdrant 向量数据库，并在外部服务失败时回退本地检索。
 - 实现轻量 Multi-Agent 路由，将用户消息分配到售前、售后、投诉和通用专家域，并通过 Trace 记录路由原因和置信度。
 - 实现 Repository 层 `memory` / `jdbc` 双模式，默认内存模式保证测试稳定，开启 JDBC 模式后可将用户、商品、订单和退货记录持久化到 MySQL。
-- 实现人工转接 `memory` / `after-sales-http` 双模式，联调时通过幂等 HTTP 请求调用售后工单平台创建真实工单；远端结果未知时返回可回放的技术失败，不再伪造内存 pending 工单和成功回复。
+- 实现人工转接 `memory` / `after-sales-http` 双模式，联调时通过幂等 HTTP 请求调用售后工单平台创建真实工单；远端结果未知时写入 memory/JDBC Outbox 并返回技术失败，不再伪造内存 pending 工单和成功回复。
 - 构建 Agent Trace、Monitor 指标和用户反馈闭环，将无用反馈沉淀为 Eval 候选样本，支持审核、导出、半自动合并正式评测集和回归测试。
 - 建设五类离线评测，包括路由评测、知识库召回评测、回复质量规则评测、Agent 链路评测和 LLM-as-Judge 评测，并输出 JSON 报告、历史快照和趋势指标；通过 GitHub Actions 在 push / PR 时自动运行 Maven 测试，形成基础 CI 质量门禁。

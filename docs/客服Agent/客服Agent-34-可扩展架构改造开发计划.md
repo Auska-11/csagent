@@ -4,11 +4,11 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成十三批收口，人工转接假成功已修复，可靠 Outbox 与真实数据库验收仍在继续 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成十四批收口，PendingHandoffStore 已持久化，自动恢复与真实数据库验收仍在继续 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 377 个默认测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
+| 当前验证规模 | 383 个默认测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -1046,6 +1046,21 @@ HTTP 超时只能证明客户端没有收到响应，远端可能已经创建工
 不是可靠自动补建：`PendingHandoffStore`/Outbox、按幂等键查询核对、后台补建和人工复核仍是下一批任务。
 详细说明见 `客服Agent-55-人工转接结果未知与假成功修复说明.md`。
 
+### Phase 8 第十四批进度（2026-07-13）
+
+新增独立的 `PendingHandoffStore` Outbox 边界，以及 memory/JDBC 两种条件装配实现。售后平台结果未知时，
+`HandoffTools` 会先保存完整远端请求、原 Idempotency-Key、用户与会话上下文、失败类型和状态，再返回技术
+失败。JDBC 模式写入 `cs_pending_handoff`，应用重建 Store 后仍能恢复待核对请求。
+
+数据库表以 idempotencyKey 建唯一约束，并保存 SHA-256 请求指纹：相同 key、相同参数会返回已有记录；
+相同 key、不同参数会明确冲突，不能覆盖原始证据。异常原文不会进入 Outbox，远端与 Outbox 同时失败时
+也只向上返回统一安全异常。
+
+本批完成后默认测试套件共 `383` 项，0 失败、0 错误、0 跳过。当前仍是在捕获远端异常后写记录，
+外部调用后、Outbox 写入前的进程崩溃窗口尚未关闭；调用前 PREPARED、成功结果回放、领取租约、CAS 状态
+推进和后台核对/补建将在后续批次完成。详细说明见
+`客服Agent-56-PendingHandoffStore持久化基础说明.md`。
+
 ### 验收标准
 
 - 不能通过猜测 conversationId 读取或清除其他用户会话。
@@ -1256,7 +1271,7 @@ smartcs:
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 377 个测试）。
+- [x] 旧测试全部保留并通过（当前默认套件共 383 个测试）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。

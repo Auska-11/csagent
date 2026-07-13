@@ -1,5 +1,8 @@
 package com.smartcs.smart_cs_agent.tools;
 
+import com.smartcs.smart_cs_agent.handoff.outbox.InMemoryPendingHandoffStore;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffCommand;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -26,6 +29,7 @@ public class HandoffTools {
 
     private final HandoffProperties properties;
     private final AfterSalesTicketClient afterSalesTicketClient;
+    private final PendingHandoffStore pendingHandoffStore;
 
     /**
      * 测试和手动 new 对象时使用的构造函数。
@@ -33,16 +37,30 @@ public class HandoffTools {
      * 保留它是为了不破坏已有单元测试：如果没有 Spring 注入配置，就继续使用 memory 模式。
      */
     public HandoffTools() {
-        this(new HandoffProperties(), null);
+        this(new HandoffProperties(), null, new InMemoryPendingHandoffStore());
+    }
+
+    /**
+     * 单元测试和其他手动构造场景使用内存 Outbox，避免每个旧测试都必须了解持久化细节。
+     */
+    public HandoffTools(HandoffProperties properties, AfterSalesTicketClient afterSalesTicketClient) {
+        this(properties, afterSalesTicketClient, new InMemoryPendingHandoffStore());
     }
 
     /**
      * Spring 运行时使用的构造函数。
+     *
+     * <p>PendingHandoffStore 会跟随 smartcs.persistence.mode 自动选择 memory 或 jdbc 实现。</p>
      */
     @Autowired
-    public HandoffTools(HandoffProperties properties, AfterSalesTicketClient afterSalesTicketClient) {
+    public HandoffTools(HandoffProperties properties,
+                        AfterSalesTicketClient afterSalesTicketClient,
+                        PendingHandoffStore pendingHandoffStore) {
         this.properties = properties == null ? new HandoffProperties() : properties;
         this.afterSalesTicketClient = afterSalesTicketClient;
+        this.pendingHandoffStore = pendingHandoffStore == null
+                ? new InMemoryPendingHandoffStore()
+                : pendingHandoffStore;
     }
 
     /**
@@ -93,6 +111,27 @@ public class HandoffTools {
         } catch (RuntimeException e) {
             // 超时只表示“客户端没有拿到结果”，远端可能已经创建了工单。
             // 在可靠 PendingHandoffStore/Outbox 完成前，不能生成一个只存在内存的假工单并向用户宣告成功。
+            // 先把完整请求和原幂等键写入 Outbox，进程重启后仍可查询和补建。
+            // Outbox 写入成功也不能向用户宣告工单成功，因为它只证明“补建任务已保存”。
+            try {
+                pendingHandoffStore.recordUnknown(new PendingHandoffCommand(
+                        userId,
+                        conversationId,
+                        reason,
+                        summary,
+                        request,
+                        e.getClass().getSimpleName()
+                ));
+            } catch (RuntimeException persistenceFailure) {
+                // 外部结果未知且 Outbox 也写入失败，是更高优先级的可靠性故障。
+                // 仍统一包装成安全异常，不把 SQL、连接地址或原始 HTTP 错误传给用户。
+                persistenceFailure.addSuppressed(e);
+                throw new HandoffTicketCreationException(
+                        "Remote handoff result and pending record could not be confirmed",
+                        persistenceFailure
+                );
+            }
+
             // 抛出专用异常后，Gateway 会返回技术失败；同一个幂等键会稳定回放该失败，不会立即重复请求远端。
             throw new HandoffTicketCreationException(
                     "Remote handoff result could not be confirmed",

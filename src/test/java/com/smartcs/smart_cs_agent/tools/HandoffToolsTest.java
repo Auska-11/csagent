@@ -1,6 +1,12 @@
 package com.smartcs.smart_cs_agent.tools;
 
+import com.smartcs.smart_cs_agent.handoff.outbox.InMemoryPendingHandoffStore;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffCommand;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffRecord;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStore;
 import org.junit.jupiter.api.Test;
+
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -59,7 +65,8 @@ class HandoffToolsTest {
         properties.setMode("after-sales-http");
         FakeAfterSalesTicketClient client = new FakeAfterSalesTicketClient(null);
         client.fail = true;
-        HandoffTools tools = new HandoffTools(properties, client);
+        InMemoryPendingHandoffStore pendingStore = new InMemoryPendingHandoffStore();
+        HandoffTools tools = new HandoffTools(properties, client, pendingStore);
 
         HandoffTicketCreationException error = assertThrows(
                 HandoffTicketCreationException.class,
@@ -73,6 +80,50 @@ class HandoffToolsTest {
 
         assertEquals("Remote handoff result could not be confirmed", error.getMessage());
         assertFalse(error.getMessage().contains("remote platform unavailable"));
+
+        PendingHandoffRecord pending = pendingStore
+                .findByIdempotencyKey("agent:conv-fallback:handoff:COMPLAINT")
+                .orElseThrow();
+        assertEquals("conv-fallback", pending.conversationId());
+        assertEquals("IllegalStateException", pending.failureType());
+        assertEquals(1, pendingStore.size());
+    }
+
+    @Test
+    void shouldFailSafelyWhenRemoteResultAndOutboxWriteBothFail() {
+        HandoffProperties properties = new HandoffProperties();
+        properties.setMode("after-sales-http");
+        FakeAfterSalesTicketClient client = new FakeAfterSalesTicketClient(null);
+        client.fail = true;
+        PendingHandoffStore unavailableStore = new PendingHandoffStore() {
+            @Override
+            public PendingHandoffRecord recordUnknown(PendingHandoffCommand command) {
+                throw new IllegalStateException("jdbc:mysql://internal password=do-not-leak");
+            }
+
+            @Override
+            public Optional<PendingHandoffRecord> findByIdempotencyKey(String idempotencyKey) {
+                return Optional.empty();
+            }
+        };
+        HandoffTools tools = new HandoffTools(properties, client, unavailableStore);
+
+        HandoffTicketCreationException error = assertThrows(
+                HandoffTicketCreationException.class,
+                () -> tools.createHandoffTicket(
+                        "USER-001",
+                        "conv-double-failure",
+                        "COMPLAINT",
+                        "用户投诉，需要人工处理"
+                )
+        );
+
+        assertEquals(
+                "Remote handoff result and pending record could not be confirmed",
+                error.getMessage()
+        );
+        assertFalse(error.getMessage().contains("internal"));
+        assertFalse(error.getMessage().contains("do-not-leak"));
     }
 
     private static class FakeAfterSalesTicketClient implements AfterSalesTicketClient {
