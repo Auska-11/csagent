@@ -475,6 +475,10 @@ Copy-Item .env.example .env
 OPENAI_API_KEY=your-api-key
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL_NAME=your-model-name
+OPENAI_TIMEOUT=PT10S
+OPENAI_MAX_RETRIES=1
+SMARTCS_AGENT_TURN_TIMEOUT_MS=30000
+SMARTCS_LLM_EXECUTION_CALL_TIMEOUT_MS=12000
 SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=true
 SMARTCS_SECURITY_JWT_SECRET=replace-with-at-least-32-random-bytes
 ```
@@ -542,7 +546,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 405 个测试用例；另有 1 项显式真实 MySQL IT 通过。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 418 个测试用例；另有 1 项显式真实 MySQL IT 通过。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -598,6 +602,7 @@ docker compose down
 - [Outbox 租约与后台有限恢复说明](docs/客服Agent/客服Agent-58-Outbox租约与后台有限恢复说明.md)
 - [真实 MySQL 与 Docker 编排验收说明](docs/客服Agent/客服Agent-59-真实MySQL与Docker编排验收说明.md)
 - [Capability 执行中 Deadline 与结果未知说明](docs/客服Agent/客服Agent-60-Capability执行中Deadline与结果未知说明.md)
+- [LLM 重试上限与整轮时间预算说明](docs/客服Agent/客服Agent-61-LLM重试上限与整轮时间预算说明.md)
 
 ## 简历表达参考
 

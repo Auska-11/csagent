@@ -22,6 +22,7 @@ import com.smartcs.smart_cs_agent.workflow.escalation.EscalationWorkflow;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -67,6 +68,8 @@ class CapabilityActionHandlerTenantTest {
         EscalationWorkflow workflow = new EscalationWorkflow(new GlobalInterruptPolicy());
         state.startOrResumeWorkflow(workflow.descriptor().getId(), workflow.descriptor().getVersion());
         TurnContext turnContext = new TurnContext(request, state);
+        Instant budgetStartedAt = Instant.now();
+        turnContext.startTurnBudget(2_000);
         ActionHandlingContext handlingContext = new ActionHandlingContext(
                 turnContext,
                 workflow,
@@ -87,6 +90,8 @@ class CapabilityActionHandlerTenantTest {
         assertEquals("tenant-a", executionContext.getTenantId());
         assertEquals("USER-001", executionContext.getPrincipal().getUserId());
         assertEquals("shared-conv", executionContext.getConversationId());
+        assertTrue(executionContext.getDeadline().isAfter(budgetStartedAt));
+        assertTrue(executionContext.getDeadline().isBefore(budgetStartedAt.plusSeconds(3)));
         assertTrue(executionContext.getIdempotencyKey().startsWith(
                 "8:tenant-a8:USER-00111:shared-conv:"
         ));

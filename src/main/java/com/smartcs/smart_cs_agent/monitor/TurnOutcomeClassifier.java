@@ -25,11 +25,31 @@ final class TurnOutcomeClassifier {
 
         for (TraceEvent event : trace) {
             Assessment candidate = classifyEvent(event);
-            if (priority(candidate.outcome()) > priority(selected.outcome())) {
+            if (shouldReplace(selected, candidate)) {
                 selected = candidate;
             }
         }
         return selected;
+    }
+
+    /**
+     * 先按结果大类优先级选择；同为技术失败时，整轮预算事件要覆盖前面的组件级失败。
+     *
+     * <p>真实顺序通常是 llm_failed 在前、turn_deadline_exceeded 在后。如果只比较 TurnOutcome，
+     * 两者都是 TECHNICAL_FAILURE，Monitor 就会错误保留 LLM 组件码，看不到真正的整轮终止原因。</p>
+     */
+    private static boolean shouldReplace(Assessment selected, Assessment candidate) {
+        int selectedPriority = priority(selected.outcome());
+        int candidatePriority = priority(candidate.outcome());
+        if (candidatePriority != selectedPriority) {
+            return candidatePriority > selectedPriority;
+        }
+        return isTurnBudgetCode(candidate.errorCode()) && !isTurnBudgetCode(selected.errorCode());
+    }
+
+    private static boolean isTurnBudgetCode(String errorCode) {
+        return "TURN_DEADLINE_EXCEEDED".equals(errorCode)
+                || "TURN_STEP_BUDGET_EXCEEDED".equals(errorCode);
     }
 
     private static Assessment classifyEvent(TraceEvent event) {
@@ -53,6 +73,8 @@ final class TurnOutcomeClassifier {
                     new Assessment(TurnOutcome.TECHNICAL_FAILURE, defaultCode(errorCode, "ACTION_HANDLER_EXECUTION_FAILED"));
             case "turn_timeout" ->
                     new Assessment(TurnOutcome.TECHNICAL_FAILURE, "TURN_STEP_BUDGET_EXCEEDED");
+            case "turn_deadline_exceeded" ->
+                    new Assessment(TurnOutcome.TECHNICAL_FAILURE, "TURN_DEADLINE_EXCEEDED");
             case "turn_failed" ->
                     new Assessment(TurnOutcome.TECHNICAL_FAILURE, defaultCode(errorCode, "CHAT_TURN_EXECUTION_FAILED"));
             case "workflow_completed" -> classifyWorkflowStatus(text(data.get("status")));

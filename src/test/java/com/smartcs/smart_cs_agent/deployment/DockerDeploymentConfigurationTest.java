@@ -50,5 +50,8 @@ class DockerDeploymentConfigurationTest {
         assertTrue(compose.contains("jdbc:mysql://mysql:3306/smart_cs_agent"));
         assertTrue(compose.contains("/actuator/health/readiness"));
         assertTrue(compose.contains("mysql_data:/var/lib/mysql"));
+        assertTrue(compose.contains("OPENAI_MAX_RETRIES: ${OPENAI_MAX_RETRIES:-1}"));
+        assertTrue(compose.contains("SMARTCS_AGENT_TURN_TIMEOUT_MS: ${SMARTCS_AGENT_TURN_TIMEOUT_MS:-30000}"));
+        assertTrue(compose.contains("SMARTCS_LLM_EXECUTION_CALL_TIMEOUT_MS:"));
     }
 }

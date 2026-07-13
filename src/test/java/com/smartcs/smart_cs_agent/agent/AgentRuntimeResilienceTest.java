@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -82,6 +83,45 @@ class AgentRuntimeResilienceTest {
         assertTrue(error.getMessage().contains("max-iterations"));
     }
 
+    @Test
+    void shouldStopAfterSlowActionReturnsInsteadOfStartingAnotherStep() {
+        SkillManager skillManager = new SkillManager(new TestSkillConfig());
+        skillManager.registerSkill(new LoopingSkill());
+        AtomicInteger handledCount = new AtomicInteger();
+        ActionHandlerRegistry registry = new ActionHandlerRegistry(List.of(
+                new SlowLoopActionHandler(handledCount)
+        ));
+        // 200ms 足够 Runtime 完成纯内存路由，1 秒睡眠则稳定越过预算，减少慢 CI/GC 导致的竞态。
+        AgentRuntime runtime = new AgentRuntime(skillManager, registry, 5, 200);
+        ChatRequest request = new ChatRequest("conv-turn-deadline", "USER-001", "慢调用测试");
+        ConversationState state = new ConversationState(request.getMessage(), request.getUserId());
+        TurnContext context = new TurnContext(request, state);
+
+        String reply = runtime.runTurn(context);
+
+        assertTrue(reply.contains("时间上限"));
+        assertEquals(1, handledCount.get(), "慢 Action 返回后不能再执行第二个 Action");
+        assertEquals(WorkflowStatus.FAILED, state.getWorkflowStatus());
+        TraceEvent deadline = context.getTraceEvents().stream()
+                .filter(event -> "turn_deadline_exceeded".equals(event.getEventType()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(200L, deadline.getData().get("budgetMs"));
+    }
+
+    @Test
+    void shouldRejectDisabledWallClockBudget() {
+        SkillManager skillManager = new SkillManager(new TestSkillConfig());
+        ActionHandlerRegistry registry = new ActionHandlerRegistry(List.of(new LoopActionHandler()));
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> new AgentRuntime(skillManager, registry, 3, 0)
+        );
+
+        assertTrue(error.getMessage().contains("turn-timeout-ms"));
+    }
+
     /** 测试 Action 本身没有业务含义，只用于模拟扩展插件始终要求继续循环。 */
     private static final class LoopAction implements AgentAction {
     }
@@ -101,6 +141,32 @@ class AgentRuntimeResilienceTest {
         @Override
         public Map<String, Object> describe(LoopAction action) {
             return Map.of("actionType", "LoopAction");
+        }
+    }
+
+    /** 模拟一个不理解中断、只能在稍后返回的第三方 Action 插件。 */
+    private static final class SlowLoopActionHandler implements ActionHandler<LoopAction> {
+
+        private final AtomicInteger handledCount;
+
+        private SlowLoopActionHandler(AtomicInteger handledCount) {
+            this.handledCount = handledCount;
+        }
+
+        @Override
+        public Class<LoopAction> actionType() {
+            return LoopAction.class;
+        }
+
+        @Override
+        public ActionExecutionResult handle(LoopAction action, ActionHandlingContext context) {
+            handledCount.incrementAndGet();
+            try {
+                Thread.sleep(1_000);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            return ActionExecutionResult.continueLoop();
         }
     }
 

@@ -27,6 +27,7 @@ import java.util.Map;
 public class HandoffActionHandler implements ActionHandler<HandoffAction> {
 
     private static final String HANDOFF_CAPABILITY = CapabilityIds.HANDOFF_REQUEST;
+    private static final long DEFAULT_UPSTREAM_TIMEOUT_MS = 30_000;
 
     private final ToolManager toolManager;
     private final SkillManager skillManager;
@@ -130,6 +131,11 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
         String conversationId = turn.getRequest().getConversationId();
         String conversationScope = ConversationKey.from(turn.getRequest()).toScopedId();
         String workflowId = handlingContext.getWorkflow().descriptor().getId();
+        // 人工转接也是副作用能力。它既不能突破 Handler 的 30 秒上限，也不能挤占下一轮时间。
+        long upstreamTimeoutMs = Math.min(
+                DEFAULT_UPSTREAM_TIMEOUT_MS,
+                turn.remainingTurnBudgetMs()
+        );
         return new ExecutionContext(
                 conversationScope + ":step-" + turn.getStepCount(),
                 turn.getRequest().getPrincipal(),
@@ -137,7 +143,7 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
                 conversationId,
                 conversationScope + ":" + workflowId
                         + ":" + turn.getState().getWorkflowStartedAt() + ":handoff",
-                Instant.now().plus(30, ChronoUnit.SECONDS)
+                Instant.now().plus(upstreamTimeoutMs, ChronoUnit.MILLIS)
         );
     }
 

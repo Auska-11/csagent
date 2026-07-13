@@ -3,6 +3,7 @@ package com.smartcs.smart_cs_agent.agent.context;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 当前这一轮 Agent 执行上下文。
@@ -44,6 +45,15 @@ public class TurnContext {
     /** 本轮最终返回给用户的内容，可能是最终答复，也可能是追问 */
     private String finalAnswer;
 
+    /**
+     * 单轮 wall-clock 预算使用 System.nanoTime 计时，不受系统时间校准影响。
+     * 未经 AgentRuntime 启动预算时保持“无限”，方便 Workflow 纯单元测试只验证决策逻辑。
+     */
+    private long turnBudgetStartedAtNanos;
+    private long turnBudgetNanos;
+    private long configuredTurnBudgetMs;
+    private boolean turnBudgetStarted;
+
     public TurnContext(ChatRequest request, ConversationState state) {
         this.request = request;
         this.state = state;
@@ -51,6 +61,9 @@ public class TurnContext {
         this.traceEvents = new ArrayList<>();
         this.stepCount = 0;
         this.done = false;
+        this.turnBudgetNanos = Long.MAX_VALUE;
+        this.configuredTurnBudgetMs = Long.MAX_VALUE;
+        this.turnBudgetStarted = false;
     }
 
     public ChatRequest getRequest() {
@@ -163,5 +176,56 @@ public class TurnContext {
     public void markDone(String finalAnswer) {
         this.done = true;
         this.finalAnswer = finalAnswer;
+    }
+
+    /**
+     * 由 AgentRuntime 在真正开始一轮执行时启动总时间预算。
+     *
+     * <p>同一个 TurnContext 如果因测试或错误调用重复进入 Runtime，会从本次 runTurn 重新计时；
+     * ConversationState 是跨轮状态，但 wall-clock 预算只属于当前方法调用。</p>
+     */
+    public void startTurnBudget(long timeoutMs) {
+        if (timeoutMs <= 0) {
+            throw new IllegalArgumentException("turn timeout must be positive");
+        }
+        this.turnBudgetStartedAtNanos = System.nanoTime();
+        this.turnBudgetNanos = TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        this.configuredTurnBudgetMs = timeoutMs;
+        this.turnBudgetStarted = true;
+    }
+
+    public boolean hasTurnBudget() {
+        return turnBudgetStarted;
+    }
+
+    public long getConfiguredTurnBudgetMs() {
+        return configuredTurnBudgetMs;
+    }
+
+    /** 返回本轮还剩多少纳秒；未启动预算时返回 Long.MAX_VALUE。 */
+    public long remainingTurnBudgetNanos() {
+        if (!turnBudgetStarted) {
+            return Long.MAX_VALUE;
+        }
+        long elapsedNanos = System.nanoTime() - turnBudgetStartedAtNanos;
+        return Math.max(0, turnBudgetNanos - elapsedNanos);
+    }
+
+    /**
+     * 向上取整为毫秒，避免还剩不到 1ms 时被下游误认为已经完全没有预算。
+     */
+    public long remainingTurnBudgetMs() {
+        long remainingNanos = remainingTurnBudgetNanos();
+        if (remainingNanos == Long.MAX_VALUE) {
+            return Long.MAX_VALUE;
+        }
+        long wholeMillis = TimeUnit.NANOSECONDS.toMillis(remainingNanos);
+        return remainingNanos % TimeUnit.MILLISECONDS.toNanos(1) == 0
+                ? wholeMillis
+                : wholeMillis + 1;
+    }
+
+    public boolean isTurnBudgetExceeded() {
+        return turnBudgetStarted && remainingTurnBudgetNanos() <= 0;
     }
 }

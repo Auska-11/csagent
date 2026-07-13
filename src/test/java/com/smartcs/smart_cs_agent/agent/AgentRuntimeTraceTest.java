@@ -121,6 +121,10 @@ class AgentRuntimeTraceTest {
         assertTrue(eventTypes.contains("llm_failed"));
         assertTrue(eventTypes.contains("llm_observed"));
         assertTrue(eventTypes.contains("final_answer"));
+
+        TraceEvent failed = findTraceEvent(context, "llm_failed");
+        assertEquals("LLM_PROVIDER_ERROR", failed.getData().get("errorCode"));
+        assertFalse(failed.getData().containsKey("error"));
     }
 
     @Test

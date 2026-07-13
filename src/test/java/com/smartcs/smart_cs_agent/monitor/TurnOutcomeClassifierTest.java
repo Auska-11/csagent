@@ -55,4 +55,31 @@ class TurnOutcomeClassifierTest {
         assertEquals(TurnOutcome.GUARDRAIL_REJECTED, assessment.outcome());
         assertEquals("ACCESS_DENIED", assessment.errorCode());
     }
+
+    @Test
+    void shouldRecognizeWallClockTurnDeadlineAsTechnicalFailure() {
+        TurnOutcomeClassifier.Assessment assessment = TurnOutcomeClassifier.classify(List.of(
+                new TraceEvent("turn_deadline_exceeded", 2, "deadline", Map.of(
+                        "budgetMs", 30_000
+                ))
+        ));
+
+        assertEquals(TurnOutcome.TECHNICAL_FAILURE, assessment.outcome());
+        assertEquals("TURN_DEADLINE_EXCEEDED", assessment.errorCode());
+    }
+
+    @Test
+    void shouldPreferTurnDeadlineOverEarlierLlmComponentFailure() {
+        TurnOutcomeClassifier.Assessment assessment = TurnOutcomeClassifier.classify(List.of(
+                new TraceEvent("llm_failed", 2, "llm budget", Map.of(
+                        "errorCode", "LLM_TURN_BUDGET_EXCEEDED"
+                )),
+                new TraceEvent("turn_deadline_exceeded", 2, "turn budget", Map.of(
+                        "budgetMs", 30_000
+                ))
+        ));
+
+        assertEquals(TurnOutcome.TECHNICAL_FAILURE, assessment.outcome());
+        assertEquals("TURN_DEADLINE_EXCEEDED", assessment.errorCode());
+    }
 }

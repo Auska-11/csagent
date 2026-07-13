@@ -29,6 +29,14 @@ smartcs:
   agent:
     # 防止错误 Workflow/Handler 无限返回 CONTINUE；这是步骤预算，不替代 HTTP/JDBC 超时。
     max-iterations: ${SMARTCS_AGENT_MAX_ITERATIONS:10}
+    # 一轮对话从进入 Runtime 到最终收尾的 wall-clock 总预算，所有 LLM/Capability Action 共享。
+    turn-timeout-ms: ${SMARTCS_AGENT_TURN_TIMEOUT_MS:30000}
+  llm:
+    execution:
+      # 模型调用放入有界执行器。call-timeout 约束单个 LLM Action，Turn 余额可能进一步收紧它。
+      call-timeout-ms: ${SMARTCS_LLM_EXECUTION_CALL_TIMEOUT_MS:12000}
+      max-threads: ${SMARTCS_LLM_EXECUTION_MAX_THREADS:8}
+      queue-capacity: ${SMARTCS_LLM_EXECUTION_QUEUE_CAPACITY:32}
   security:
     # 本地工作台通过 demo issuer 获取短期 JWT；生产环境必须设为 false，并由真实身份系统签发。
     demo-issuer-enabled: ${SMARTCS_SECURITY_DEMO_ISSUER_ENABLED:true}
@@ -144,7 +152,10 @@ langchain4j:
       model-name: ${OPENAI_MODEL_NAME:dummy-model}
       temperature: 0.7
       max-tokens: 2000
-      timeout: PT60S
+      # LangChain4j 0.35 虽然命名为 max-retries，内部含义却是“最大总尝试次数”。
+      # 安全默认值 1 = 只尝试一次、零重试；需要一次额外重试时显式设为 2，业务层不会再套重试。
+      timeout: ${OPENAI_TIMEOUT:PT10S}
+      max-retries: ${OPENAI_MAX_RETRIES:1}
       # Prompt 和模型回复可能包含订单、联系方式及其他用户数据，普通应用日志默认禁止记录原文。
       # 需要排障时应优先使用已脱敏的 Trace；不要在生产环境临时打开完整请求/响应日志。
       log-requests: false

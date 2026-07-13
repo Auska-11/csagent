@@ -37,6 +37,28 @@ class ApplicationLogSafetyTest {
         assertEquals(Boolean.FALSE, chatModel.get("log-responses"));
     }
 
+    @Test
+    void shouldKeepModelRetriesAndAllAgentDeadlinesBoundedByDefault() {
+        InputStream input = Thread.currentThread()
+                .getContextClassLoader()
+                .getResourceAsStream("application.yml");
+        assertNotNull(input, "application.yml should be available on the test classpath");
+
+        Map<String, Object> root = new Yaml().load(input);
+        Map<String, Object> smartcs = nestedMap(root, "smartcs");
+        Map<String, Object> agent = nestedMap(smartcs, "agent");
+        Map<String, Object> llmExecution = nestedMap(nestedMap(smartcs, "llm"), "execution");
+        Map<String, Object> chatModel = nestedMap(
+                nestedMap(nestedMap(root, "langchain4j"), "open-ai"),
+                "chat-model"
+        );
+
+        assertEquals("${SMARTCS_AGENT_TURN_TIMEOUT_MS:30000}", agent.get("turn-timeout-ms"));
+        assertEquals("${SMARTCS_LLM_EXECUTION_CALL_TIMEOUT_MS:12000}", llmExecution.get("call-timeout-ms"));
+        assertEquals("${OPENAI_TIMEOUT:PT10S}", chatModel.get("timeout"));
+        assertEquals("${OPENAI_MAX_RETRIES:1}", chatModel.get("max-retries"));
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> nestedMap(Map<String, Object> parent, String key) {
         Object value = parent.get(key);

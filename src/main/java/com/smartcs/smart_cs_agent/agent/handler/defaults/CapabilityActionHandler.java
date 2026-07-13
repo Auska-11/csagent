@@ -33,6 +33,8 @@ import java.util.Map;
 @Component
 public class CapabilityActionHandler implements ActionHandler<CapabilityAction> {
 
+    private static final long DEFAULT_UPSTREAM_TIMEOUT_MS = 30_000;
+
     private final ToolManager toolManager;
     private final SkillManager skillManager;
 
@@ -160,15 +162,20 @@ public class CapabilityActionHandler implements ActionHandler<CapabilityAction> 
                 + ":" + turn.getState().getWorkflowStartedAt()
                 + ":" + capability;
 
-        // 这是普通 Action 给出的上游最大预算。Gateway 还会读取 CapabilityDefinition.defaultTimeoutMs，
-        // 两者取较早值，所以某个默认 2 秒的能力不会因为这里写 30 秒就多执行 28 秒。
+        // 普通 Action 最多给 30 秒，但不能突破本轮剩余 wall-clock 预算。
+        // Gateway 还会继续和 CapabilityDefinition.defaultTimeoutMs 取较早值，因此实际关系是：
+        // min(Turn 剩余时间, Handler 30 秒上限, Capability 自身默认超时)。
+        long upstreamTimeoutMs = Math.min(
+                DEFAULT_UPSTREAM_TIMEOUT_MS,
+                turn.remainingTurnBudgetMs()
+        );
         return new ExecutionContext(
                 traceId,
                 turn.getRequest().getPrincipal(),
                 turn.getRequest().getTenantId(),
                 conversationId,
                 idempotencyKey,
-                Instant.now().plus(30, ChronoUnit.SECONDS)
+                Instant.now().plus(upstreamTimeoutMs, ChronoUnit.MILLIS)
         );
     }
 

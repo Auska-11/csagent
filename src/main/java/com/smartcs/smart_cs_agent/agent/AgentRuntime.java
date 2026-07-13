@@ -52,6 +52,7 @@ import java.util.Objects;
 public class AgentRuntime {
 
     private static final int DEFAULT_MAX_ITERATIONS = 10;
+    private static final long DEFAULT_TURN_TIMEOUT_MS = 30_000;
 
     /** 负责 Workflow 路由以及 Workflow -> Skill Package 绑定。 */
     private final SkillManager skillManager;
@@ -67,16 +68,37 @@ public class AgentRuntime {
      */
     private final int maxIterations;
 
+    /**
+     * 一整轮 Agent 执行最多占用的 wall-clock 时间。
+     *
+     * <p>步骤预算只能阻止“循环次数太多”，无法阻止某一步 LLM 或外部能力一直卡住；
+     * 时间预算负责补上这个维度，并由 TurnContext 向所有 Handler 传递同一份剩余时间。</p>
+     */
+    private final long turnTimeoutMs;
+
     /** 兼容纯 Java 测试的默认构造方式。 */
     public AgentRuntime(SkillManager skillManager, ActionHandlerRegistry actionHandlerRegistry) {
-        this(skillManager, actionHandlerRegistry, DEFAULT_MAX_ITERATIONS);
+        this(
+                skillManager,
+                actionHandlerRegistry,
+                DEFAULT_MAX_ITERATIONS,
+                DEFAULT_TURN_TIMEOUT_MS
+        );
     }
 
-    /** Spring 生产构造函数；步数预算可通过环境变量调整，但不能关闭。 */
+    /** 兼容已有可靠性测试：第三个参数仍然只表示最大 Action 步数。 */
+    public AgentRuntime(SkillManager skillManager,
+                        ActionHandlerRegistry actionHandlerRegistry,
+                        int maxIterations) {
+        this(skillManager, actionHandlerRegistry, maxIterations, DEFAULT_TURN_TIMEOUT_MS);
+    }
+
+    /** Spring 生产构造函数；步骤和整轮时间两种预算都可配置，但都不能关闭。 */
     @Autowired
     public AgentRuntime(SkillManager skillManager,
                         ActionHandlerRegistry actionHandlerRegistry,
-                        @Value("${smartcs.agent.max-iterations:10}") int maxIterations) {
+                        @Value("${smartcs.agent.max-iterations:10}") int maxIterations,
+                        @Value("${smartcs.agent.turn-timeout-ms:30000}") long turnTimeoutMs) {
         this.skillManager = Objects.requireNonNull(skillManager, "skillManager cannot be null");
         this.actionHandlerRegistry = Objects.requireNonNull(
                 actionHandlerRegistry,
@@ -85,7 +107,11 @@ public class AgentRuntime {
         if (maxIterations <= 0) {
             throw new IllegalArgumentException("smartcs.agent.max-iterations must be positive");
         }
+        if (turnTimeoutMs <= 0) {
+            throw new IllegalArgumentException("smartcs.agent.turn-timeout-ms must be positive");
+        }
         this.maxIterations = maxIterations;
+        this.turnTimeoutMs = turnTimeoutMs;
     }
 
     /**
@@ -116,6 +142,8 @@ public class AgentRuntime {
      * 执行一轮对话，直到 Handler 要求等待用户、任务完成或超过最大循环步数。
      */
     public String runTurn(TurnContext context) {
+        // 每次进入 Runtime 都重新开始本轮预算。ConversationState 可以跨轮恢复，时间预算不能跨轮继承。
+        context.startTurnBudget(turnTimeoutMs);
         ConversationState state = context.getState();
         recordTurnStarted(context, state);
 
@@ -142,6 +170,9 @@ public class AgentRuntime {
         recordSelectedSkillPackage(context, workflow, skillPackage);
 
         for (int i = 0; i < maxIterations; i++) {
+            if (context.isTurnBudgetExceeded()) {
+                return finishDeadlineExceededTurn(context, workflow);
+            }
             context.increaseStepCount();
 
             // Workflow 只决定下一步，不执行外部调用。
@@ -157,6 +188,11 @@ public class AgentRuntime {
                     stateBefore
             );
 
+            // Workflow 决策通常只做内存计算，但扩展实现也可能变慢。预算耗尽后不能再启动外部副作用。
+            if (context.isTurnBudgetExceeded()) {
+                return finishDeadlineExceededTurn(context, workflow);
+            }
+
             ActionExecutionResult result = executeActionWithBoundary(
                     action,
                     decision,
@@ -165,6 +201,10 @@ public class AgentRuntime {
                     skillPackage
             );
             if (result.shouldContinue()) {
+                // 某个慢 Action 返回后再次检查，确保不会因为“已经进入本次循环”而多执行下一步。
+                if (context.isTurnBudgetExceeded()) {
+                    return finishDeadlineExceededTurn(context, workflow);
+                }
                 continue;
             }
             return finishTurn(context, workflow, result);
@@ -305,11 +345,37 @@ public class AgentRuntime {
         return answer;
     }
 
+    /**
+     * 整轮 wall-clock 预算耗尽后的统一收尾。
+     *
+     * <p>这里把 Workflow 标记为 FAILED，而不是保留为可自动恢复状态。原因是超时发生时，
+     * 某个只读调用可能仍在后台响应；对于副作用能力，Capability 层还会用结果未知语义和幂等键保护重试。
+     * 下一轮应重新路由并由用户显式重试，不能在同一轮继续盲目前进。</p>
+     */
+    private String finishDeadlineExceededTurn(TurnContext context, AgentWorkflow workflow) {
+        String answer = "当前处理超过本轮时间上限，已安全停止。请稍后重试，或请求人工客服。";
+        ConversationState state = context.getState();
+        context.addTrace("turn_deadline_exceeded", "本轮执行超过 wall-clock 总预算", Map.of(
+                "budgetMs", context.getConfiguredTurnBudgetMs(),
+                "remainingBudgetMs", context.remainingTurnBudgetMs(),
+                "stepCount", context.getStepCount()
+        ));
+
+        int summaryVersionBefore = state.getSummaryVersion();
+        state.addAssistantMessage(answer);
+        recordMemoryCompressionIfNeeded(context, summaryVersionBefore, state);
+        state.markWorkflowFailed();
+        recordWorkflowTerminal(context, workflow, state);
+        context.markDone(answer);
+        return answer;
+    }
+
     private void recordTurnStarted(TurnContext context, ConversationState state) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("conversationId", context.getRequest().getConversationId());
         data.put("userId", context.getRequest().getUserId());
         data.put("message", context.getMessage());
+        data.put("turnTimeoutMs", context.getConfiguredTurnBudgetMs());
         context.addTrace("turn_started", "开始处理用户本轮消息", data);
         context.addTrace("memory_loaded", "读取会话记忆", buildMemoryTraceData(state));
     }

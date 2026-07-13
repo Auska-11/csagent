@@ -7,6 +7,7 @@ import com.smartcs.smart_cs_agent.agent.handler.api.ActionExecutionResult;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandler;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandlingContext;
 import com.smartcs.smart_cs_agent.agent.handler.core.HandlerTraceSupport;
+import com.smartcs.smart_cs_agent.agent.llm.LlmExecutionGuard;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.skill.api.ResolvedSkillPrompt;
 import com.smartcs.smart_cs_agent.tools.ToolResult;
@@ -15,7 +16,7 @@ import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
-import dev.langchain4j.model.output.Response;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -31,10 +32,20 @@ public class LlmActionHandler implements ActionHandler<LLMAction> {
 
     private final SkillManager skillManager;
     private final ChatLanguageModel chatModel;
+    private final LlmExecutionGuard executionGuard;
 
+    /** 兼容不启动 Spring 的旧单元测试；生产环境使用下面的三参数构造函数。 */
     public LlmActionHandler(SkillManager skillManager, ChatLanguageModel chatModel) {
+        this(skillManager, chatModel, LlmExecutionGuard.sharedDefault());
+    }
+
+    @Autowired
+    public LlmActionHandler(SkillManager skillManager,
+                            ChatLanguageModel chatModel,
+                            LlmExecutionGuard executionGuard) {
         this.skillManager = skillManager;
         this.chatModel = chatModel;
+        this.executionGuard = executionGuard;
     }
 
     @Override
@@ -88,16 +99,18 @@ public class LlmActionHandler implements ActionHandler<LLMAction> {
         callData.put("messageCount", messages.size());
         context.addTrace("llm_called", "调用大模型：" + purpose, callData);
 
-        long startedAtNanos = System.nanoTime();
-        String result;
-        try {
-            Response<AiMessage> response = chatModel.generate(messages);
-            result = response.content().text();
-        } catch (RuntimeException e) {
+        LlmExecutionGuard.LlmInvocationResult invocation = executionGuard.generate(
+                chatModel,
+                messages,
+                context
+        );
+        String result = invocation.text();
+        if (!invocation.success()) {
             Map<String, Object> failedData = new LinkedHashMap<>();
             failedData.put("purpose", purpose);
-            failedData.put("durationMs", HandlerTraceSupport.elapsedMillis(startedAtNanos));
-            failedData.put("error", String.valueOf(e.getMessage()));
+            failedData.put("durationMs", invocation.durationMs());
+            failedData.put("budgetMs", invocation.budgetMs());
+            failedData.put("errorCode", invocation.errorCode());
             context.addTrace("llm_failed", "大模型调用失败，使用降级回复", failedData);
             result = buildFallbackResult(action, context);
         }
@@ -107,9 +120,19 @@ public class LlmActionHandler implements ActionHandler<LLMAction> {
 
         Map<String, Object> observedData = new LinkedHashMap<>();
         observedData.put("purpose", purpose);
-        observedData.put("durationMs", HandlerTraceSupport.elapsedMillis(startedAtNanos));
+        observedData.put("durationMs", invocation.durationMs());
+        observedData.put("budgetMs", invocation.budgetMs());
+        observedData.put("degraded", !invocation.success());
         observedData.put("resultPreview", HandlerTraceSupport.preview(result, 200));
         context.addTrace("llm_observed", "大模型返回结果", observedData);
+
+        // InterruptedException 表示上游请求线程已经被要求停止。此时绝不能像普通模型故障一样
+        // 返回 CONTINUE，否则 Workflow 可能继续启动下一个 Capability，甚至产生副作用。
+        if ("LLM_EXECUTION_INTERRUPTED".equals(invocation.errorCode())) {
+            return ActionExecutionResult.failed(
+                    "当前处理已被中断，为避免继续执行后续操作已经安全停止。请重新发起请求。"
+            );
+        }
         return ActionExecutionResult.continueLoop();
     }
 

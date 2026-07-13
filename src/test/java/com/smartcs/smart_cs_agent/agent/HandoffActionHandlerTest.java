@@ -24,6 +24,7 @@ import com.smartcs.smart_cs_agent.workflow.escalation.EscalationWorkflow;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -80,8 +81,11 @@ class HandoffActionHandlerTest {
                 )
         );
         HandoffActionHandler handler = new HandoffActionHandler(toolManager, skillManager);
+        ActionHandlingContext handlingContext = handlingContext(skillPackage);
+        Instant budgetStartedAt = Instant.now();
+        handlingContext.getTurnContext().startTurnBudget(2_000);
 
-        ActionExecutionResult result = handler.handle(action(), handlingContext(skillPackage));
+        ActionExecutionResult result = handler.handle(action(), handlingContext);
 
         assertEquals(ActionFlow.HANDED_OFF, result.getFlow());
         assertTrue(result.getAnswer().contains("HD-3001"));
@@ -94,6 +98,8 @@ class HandoffActionHandlerTest {
         assertEquals("USER-001", contextCaptor.getValue().getPrincipal().getUserId());
         assertEquals("tenant-demo", contextCaptor.getValue().getTenantId());
         assertEquals("conv-handler", contextCaptor.getValue().getConversationId());
+        assertTrue(contextCaptor.getValue().getDeadline().isAfter(budgetStartedAt));
+        assertTrue(contextCaptor.getValue().getDeadline().isBefore(budgetStartedAt.plusSeconds(3)));
         assertTrue(contextCaptor.getValue().getIdempotencyKey().startsWith(
                 "11:tenant-demo8:USER-00112:conv-handler:"
         ));

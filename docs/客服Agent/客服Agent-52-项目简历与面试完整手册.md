@@ -1,8 +1,8 @@
 # 客服 Agent 项目简历与面试完整手册
 
 > 整理日期：2026-07-13
-> 代码基线：当前工作区，包含 Phase 8 第十七批真实 MySQL 与 Docker 编排
-> 验证结果：mvn test 共 405 项全绿；Capability 执行中 deadline、真实 MySQL IT 和完整 Compose 故障恢复实际通过
+> 代码基线：当前工作区，包含 Phase 8 第十九批 LLM 重试上限与整轮时间预算
+> 验证结果：mvn test 共 418 项全绿；LLM/Capability 执行 deadline、真实 MySQL IT 和完整 Compose 故障恢复实际通过
 > 使用原则：只描述代码已经证明的能力；规划中的能力必须明确说“尚未完成”
 
 ## 1. 这份文档怎么用
@@ -47,9 +47,9 @@ Smart CS Agent 是一个面向电商客服场景的 Java 智能 Agent 系统。�
 
 | 指标 | 当前值 | 应怎样理解 |
 | --- | ---: | --- |
-| 默认自动化测试 | 405 项 | 当前工作区全量 mvn test 实测通过 |
-| 测试源码文件 | 107 个 | 包含单元、集成、架构边界、Eval 和显式真实 MySQL IT |
-| Java 主代码文件 | 280 个 | 反映项目已经超过单文件 Demo 规模 |
+| 默认自动化测试 | 418 项 | 当前工作区 `clean test` 实测通过 |
+| 测试源码文件 | 110 个 | 包含单元、集成、架构边界、Eval 和显式真实 MySQL IT |
+| Java 主代码文件 | 281 个 | 反映项目已经超过单文件 Demo 规模 |
 | 离线评测样本 | 36 条 | 路由 16、召回 8、规则回复 6、链路回复 3、Judge 3 |
 | Agent Skill Package | 9 个 | 运行时从 manifest、SKILL.md 和 references 加载 |
 | 独立业务 Workflow | 8 个 | 另保留一个 Legacy 回滚适配器 |
@@ -93,9 +93,9 @@ Smart CS Agent 是一个面向电商客服场景的 Java 智能 Agent 系统。�
 1. 设计 Runtime、Workflow、Action Handler、Capability Gateway 四层架构，将业务决策、动作执行和基础能力解耦；通过 Spring 自动注册实现扩展新 Workflow 时不修改 Runtime 和 Router 核心分支。
 2. 将订单、商品、退货申请、退货查询、政策问答、用户资料、人工升级和保修查询拆成 8 个独立 Workflow，并用 9 个 Agent Skill Package 管理 Prompt、references、版本和能力白名单。
 3. 建立统一 Capability 契约和 Local/MCP Provider 适配层，9 个稳定能力 ID 共用输入输出 Schema、三态结果、身份要求、风险等级和幂等策略，使 Workflow 不感知能力位于本地还是远程。
-4. 实现多轮会话状态、SessionStore 内存/JDBC 双实现、版本 CAS、Workflow 状态迁移链、副作用幂等租约和执行中 deadline；覆盖会话重建、并发冲突、结果未知回放及 Session 保存失败后的防重复调用。
+4. 实现多轮会话状态、SessionStore 内存/JDBC 双实现、版本 CAS、Workflow 状态迁移链、副作用幂等租约，以及 LLM/Capability 执行 deadline 与整轮 wall-clock 预算；覆盖会话重建、并发冲突、结果未知回放及 Session 保存失败后的防重复调用。
 5. 接入 Spring Security JWT Resource Server 和角色权限矩阵，使用 tenantId、userId、conversationId 复合所有权边界，并对公开 Trace 做递归脱敏、限长和不可变快照。
-6. 建立 Trace、Monitor、用户反馈到 Eval 候选样本的质量闭环，维护 36 条离线评测样本、405 项默认测试和显式真实 MySQL IT，接入 GitHub Actions 作为持续回归门禁。
+6. 建立 Trace、Monitor、用户反馈到 Eval 候选样本的质量闭环，维护 36 条离线评测样本、418 项默认测试和显式真实 MySQL IT，接入 GitHub Actions 作为持续回归门禁。
 
 ### 3.4 四条精简版
 
@@ -104,7 +104,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java 智能 Agent 系统。�
 - 设计可插拔 Agent 架构，按 Runtime、Workflow、Action Handler、Capability 分层，完成 8 个业务 Workflow 和 9 个 Skill Package 的运行时接入。
 - 统一 Local/MCP 能力契约，支持 JSON-RPC tools/list、tools/call、远程发现、有限重试和基础熔断，并通过 Capability allowlist 控制最小权限。
 - 实现会话 JDBC 持久化、版本 CAS、Workflow 状态迁移和副作用幂等租约，验证重建恢复、并发冲突与故障重试不重复调用 Provider。
-- 建立 JWT/RBAC、Trace 脱敏、Monitor 五类 Turn 结果和离线 Eval 体系，当前 405 项默认测试、真实 MySQL IT、Docker 故障恢复与 36 条评测样本通过既定断言。
+- 建立 JWT/RBAC、Trace 脱敏、Monitor 五类 Turn 结果和离线 Eval 体系，当前 418 项默认测试、真实 MySQL IT、Docker 故障恢复与 36 条评测样本通过既定断言。
 
 ### 3.5 简历关键词
 
@@ -591,8 +591,8 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 
 ### 9.1 高优先级
 
-1. LLM 重试次数和整轮总预算尚未统一
-   当前单次模型调用有客户端 timeout，Agent 也有 Action 步数上限，但多次 LLM Action、潜在重试和降级过程还没有共用一个 wall-clock 总预算。
+1. LLM 强制取消和资源隔离仍需生产化
+   当前已经统一 SDK 总尝试上限、单次调用 deadline 和 30 秒检查点式 wall-clock 预算，并用有界线程池限制卡住调用；但 Java 中断仍是协作式取消，尚缺 Micrometer 池指标、按租户/模型 bulkhead 和真实模型压力测试。
 
 2. 人工转接尚无完整自动补建
    调用前 PREPARED、成功回放、多实例租约、有限补建和真实 MySQL 租约验收已完成；但售后结果查询接口、人工复核管理入口和远端售后平台端到端恢复尚未实现，恢复默认关闭。
@@ -636,13 +636,13 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 建议顺序：
 
 1. 补售后结果查询接口和人工复核管理入口，并用真实 MySQL 验证 Outbox 多实例恢复。
-2. 补 LLM 调用重试次数和整轮 wall-clock 总预算。
-3. 加入 MySQL Testcontainers 集成测试。
-4. 为退货 order_id 增加唯一约束，替换 COUNT(*) + 1。
-5. 引入 HikariCP 和 Flyway。
-6. 处理 Session generation/ABA。
-7. 建设集中式安全审计、保留期、访问控制和告警。
-8. 为外部 HTTP 增加有限重试、退避、熔断和 bulkhead。
+2. 加入 MySQL Testcontainers 集成测试。
+3. 为退货 order_id 增加唯一约束，替换 COUNT(*) + 1。
+4. 引入 HikariCP 和 Flyway。
+5. 处理 Session generation/ABA。
+6. 建设集中式安全审计、保留期、访问控制和告警。
+7. 为 LLM 执行器增加 Micrometer 指标和按租户/模型 bulkhead。
+8. 为外部 HTTP 增加退避、抖动和更完整的熔断策略。
 9. 把 Docker 构建、镜像扫描和 Compose smoke test 加入 CI。
 10. 逐步删除 Legacy Skill 和 ToolRegistry 兼容路径。
 
@@ -669,7 +669,7 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 
 - 形成 9 个 Skill Package、8 个独立业务 Workflow 和 9 个稳定 Capability。
 - 新增 WarrantyQuery 时不需要修改 Runtime、Router 和 Gateway 的业务分支。
-- 默认测试从早期约 115 项增长到 405 项并保持全绿，另有 Capability deadline、真实 MySQL IT 和完整 Docker 故障恢复通过。
+- 默认测试从早期约 115 项增长到 418 项并保持全绿，另有 LLM/Capability deadline、真实 MySQL IT 和完整 Docker 故障恢复通过。
 - 建立 36 条离线评测样本、JSON 报告、历史趋势和反馈回归闭环。
 - 同时保留 Legacy 回滚路径，避免一次性重写带来的高风险。
 
@@ -677,7 +677,7 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 
 ### 12.1 30 秒版本
 
-我做了一个基于 Spring Boot 和 LangChain4j 的电商客服 Agent。它不是简单调用大模型，而是把订单、退货、商品、政策问答和人工升级拆成独立 Workflow，再通过 Action Handler 和 Capability Gateway 调用本地或 MCP 远程能力。项目还实现了多轮会话持久化、幂等防重、执行中 deadline、JWT/RBAC、RAG、Trace/Monitor 和离线评测。目前有 9 个 Skill Package、8 个独立业务 Workflow，默认 405 项测试通过，并完成真实 MySQL 与完整 Docker 故障恢复验收。
+我做了一个基于 Spring Boot 和 LangChain4j 的电商客服 Agent。它不是简单调用大模型，而是把订单、退货、商品、政策问答和人工升级拆成独立 Workflow，再通过 Action Handler 和 Capability Gateway 调用本地或 MCP 远程能力。项目还实现了多轮会话持久化、幂等防重、LLM/Capability deadline、整轮协作式 wall-clock 预算、JWT/RBAC、RAG、Trace/Monitor 和离线评测。目前有 9 个 Skill Package、8 个独立业务 Workflow，默认 418 项测试通过，并完成真实 MySQL 与完整 Docker 故障恢复验收。
 
 ### 12.2 2 分钟版本
 
@@ -687,7 +687,7 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 
 在可靠性方面，我把会话状态拆成 SessionStore 内存和 JDBC 实现，通过版本 CAS 防止丢失更新；对退货这类副作用增加幂等 Store、租约、续租和结果回放，并测试了 Provider 成功但 Session 保存失败后的重试不重复执行。安全上使用 Spring Security 校验 JWT 和角色，同时以 tenant、user、conversation 作为所有权边界，对 Trace 做统一脱敏。
 
-质量方面，项目有 36 条离线评测样本、Monitor 五类 Turn 结果、用户负反馈转 Eval 候选的闭环、405 项默认测试、Capability 执行中 deadline、真实 MySQL IT 和完整 Docker 故障恢复。当前还没有完成 LLM 整轮总预算、人工复核管理入口和多 Agent 实例故障注入，所以我会明确把它定位为工程化学习项目，而不是宣称已经完全生产级。
+质量方面，项目有 36 条离线评测样本、Monitor 五类 Turn 结果、用户负反馈转 Eval 候选的闭环、418 项默认测试、LLM/Capability 执行 deadline、真实 MySQL IT 和完整 Docker 故障恢复。当前还没有完成人工复核管理入口、按租户 LLM 隔离和多 Agent 实例故障注入，所以我会明确把它定位为工程化学习项目，而不是宣称已经完全生产级。
 
 ### 12.3 5 分钟讲解顺序
 
@@ -780,7 +780,7 @@ Liveness 只判断 JVM 是否活着；Readiness 判断实例当前是否适合�
 
 ### Q20：如果给你两周继续做，你先做什么？
 
-先补 LLM 重试次数和整轮总预算，再补售后结果查询与人工复核管理入口，随后处理退货唯一约束和多 Agent 实例故障注入。这些比继续增加新客服意图更能降低生产风险。
+先补售后结果查询与人工复核管理入口，再加入 LLM 线程池指标和按租户隔离，随后处理退货唯一约束与多 Agent 实例故障注入。这些比继续增加新客服意图更能降低生产风险。
 
 ## 14. 面试演示路线
 
@@ -788,7 +788,7 @@ Liveness 只判断 JVM 是否活着；Readiness 判断实例当前是否适合�
 
 - 使用本地 memory 模式，减少外部依赖。
 - 准备 CUSTOMER、ADMIN 和 MCP_CLIENT 三种 Demo JWT。
-- 提前运行 mvn test，确认 405 项通过。
+- 提前运行 mvn test，确认 418 项通过。
 - 提前打开首页、Monitor、Eval 和 Trace 面板。
 - 不在现场首次尝试真实模型、Qdrant 或外部售后平台。
 
@@ -816,7 +816,7 @@ Liveness 只判断 JVM 是否活着；Readiness 判断实例当前是否适合�
    展示 Monitor 五类结果和用户负反馈生成 Eval 候选。
 
 8. 测试
-   展示 405 项默认测试、Capability deadline、真实 MySQL IT、Docker 故障恢复记录和评测 summary，不要只展示聊天页面。
+   展示 418 项默认测试、LLM/Capability deadline、真实 MySQL IT、Docker 故障恢复记录和评测 summary，不要只展示聊天页面。
 
 ### 14.3 演示时不要做
 
@@ -859,7 +859,7 @@ Liveness 只判断 JVM 是否活着；Readiness 判断实例当前是否适合�
 - 8 个独立业务 Workflow。
 - 9 个 Capability ID。
 - 36 条离线评测样本。
-- 405 项默认测试，另有 Capability deadline、真实 MySQL IT 和完整 Docker 故障恢复。
+- 418 项默认测试，另有 LLM/Capability deadline、真实 MySQL IT 和完整 Docker 故障恢复。
 - 5 类 TurnOutcome。
 - memory/JDBC 双持久化模式。
 
@@ -886,7 +886,7 @@ Controller
 ### 三个必须主动承认的不足
 
 1. 真实 MySQL 与完整 Docker 故障恢复已通过，但尚未完成高并发压测和多 Agent 实例进程级故障注入。
-2. LLM 整轮总预算、售后结果查询和人工复核入口尚未完成。
+2. LLM 检查点式总预算已完成，但强制取消、线程池指标、按租户隔离，以及售后结果查询和人工复核入口尚未完成。
 3. 人工转接已用调用前 Outbox 收紧崩溃窗口，但其他副作用 Provider 仍需领域唯一约束或事务 Outbox。
 
 ### 最后一句总结

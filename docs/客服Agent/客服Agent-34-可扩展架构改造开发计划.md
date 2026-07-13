@@ -4,11 +4,11 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成十七批收口，真实 MySQL、Agent 镜像、完整 Compose 与数据库掉线恢复均已验收 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成十九批收口，真实 MySQL、Docker、Capability deadline 与 LLM 协作式整轮预算均已验收 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 405 个默认测试及 1 个显式真实 MySQL IT 通过；Capability 执行中 deadline、Agent 镜像与完整 Compose 均已实际验收 |
+| 当前验证规模 | 418 个默认测试及 1 个显式真实 MySQL IT 通过；Capability/LLM deadline、Agent 镜像与完整 Compose 均已实际验收 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -23,8 +23,9 @@
 这里的“核心目标完成”不等于整份长期路线图全部结束。Phase 7 的生产路由迁移已经完成，但旧
 `CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的应用日志与 MCP 普通审计安全已经
 收口，售后/Embedding/Qdrant 也已有独立 HTTP 超时；人工转接已具备调用前 PREPARED、结果未知持久化、
-成功回放、租约和后台有限补建；真实 MySQL 与完整容器故障注入、Capability 执行中 deadline 也已完成。
-但 LLM 重试总预算、售后结果查询与人工复核入口，以及 Phase 9 的 Legacy 删除仍是后续演进项，
+成功回放、租约和后台有限补建；真实 MySQL 与完整容器故障注入、Capability 执行中 deadline、
+LLM 总尝试次数上限和协作式 wall-clock 总预算也已完成。但售后结果查询与人工复核入口、按租户 LLM 隔离，
+以及 Phase 9 的 Legacy 删除仍是后续演进项，
 不能把它们误写成已完成。
 
 ## 2. 为什么需要这次改造（改造前问题）
@@ -48,7 +49,7 @@
 5. 每轮只按最新消息选 Skill，不足以支持可靠的多轮 Workflow 粘性状态。
 6. `AgentRuntime` 使用 Action 类型分支执行动作，新增 Action 仍需修改 Runtime。
 7. Tool 契约、Tool 执行、MCP 协议适配之间仍有耦合，未来本地和远程实现容易出现重复定义。
-8. 人工复核入口、LLM 整轮重试预算、多实例进程故障注入和部分生产数据一致性边界仍未完全收口。
+8. 人工复核入口、LLM 执行器指标与按租户隔离、多实例进程故障注入和部分生产数据一致性边界仍未完全收口。
 
 因此，本次改造的目标不是增加更多目录，而是建立稳定的扩展协议和单向依赖关系。
 
@@ -440,19 +441,19 @@ public record ExecutionContext(
 
 ### 任务
 
-- [ ] 记录当前 115 个测试、Eval 指标和关键 Demo 流程。
-- [ ] 增加架构改造前的 Characterization Tests：
-  - [ ] 订单查询。
-  - [ ] 用户全部订单。
-  - [ ] 商品咨询。
-  - [ ] 退货申请多轮流程。
-  - [ ] 退货进度查询。
-  - [ ] 知识库问答。
-  - [ ] 人工转接。
-  - [ ] LLM 失败降级。
-- [ ] 固定关键 Trace 事件名称和最低字段。
-- [ ] 记录当前 API DTO，改造期间优先保持兼容。
-- [ ] 增加一个“新增验证 Skill 不应修改核心”的测试夹具目录。
+- [x] 记录改造前 115 个测试、Eval 指标和关键 Demo 流程。
+- [x] 增加架构改造前的 Characterization Tests：
+  - [x] 订单查询。
+  - [x] 用户全部订单。
+  - [x] 商品咨询。
+  - [x] 退货申请多轮流程。
+  - [x] 退货进度查询。
+  - [x] 知识库问答。
+  - [x] 人工转接。
+  - [x] LLM 失败降级。
+- [x] 固定关键 Trace 事件名称和最低字段。
+- [x] 记录当前 API DTO，改造期间保持兼容。
+- [x] 增加“新增验证 Skill 不应修改核心”的 Warranty 扩展证明测试。
 
 ### 验收标准
 
@@ -785,7 +786,7 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 - [ ] 通用意图分类进入 Router/Classifier，不复制到每个 Workflow（人工升级子域已由 `GlobalInterruptPolicy` 统一）。
 - [ ] 槽位提取使用可组合 SlotExtractor。
 - [ ] Prompt 组装使用 Skill Package + PromptAssembler。
-- [ ] 回复生成使用通用 LLM Action Handler。
+- [x] 回复生成使用通用 LLM Action Handler。
 - [x] 取消和人工升级中断使用 `GlobalInterruptPolicy`，并传递稳定人工原因码。
 - [ ] 超时和安全冲突继续纳入 `GlobalInterruptPolicy`。
 - [ ] 用户记忆读写通过 Memory Port，不在 Workflow 中直接操作文件或 Map。
@@ -834,13 +835,13 @@ Phase 7 到此完成“生产路由迁移”。`CustomerServiceSkill` 中对应�
 - [x] Agent 在生成 ChatResponse 前抛异常时也记录 Turn 失败指标。
 - [x] 健康检查区分 liveness 和 readiness；JDBC 核心表不可读时 readiness 返回 503。
 - [x] 模型完整请求/响应日志默认关闭；MCP 成功、失败和安全拒绝统一写入最小化审计日志。
-- [ ] 完成并发、重启恢复、超时、熔断和故障注入测试：
+- [x] 完成并发、重启恢复、超时、熔断和故障注入测试：
   - [x] 进程内会话串行、跨 Store CAS、幂等并发合并和租约恢复测试。
   - [x] ConversationStore/CapabilityIdempotencyStore 重建恢复与 Session 保存失败回放测试。
   - [x] Agent 步数预算、MCP 真实读取超时、有限重试、协议失败、熔断打开和冷却恢复测试。
   - [x] 售后、Embedding 和 Qdrant 独立连接/读取超时及真实慢 HTTP Server 测试。
   - [x] Capability 执行中 deadline、结果未知回放和有界执行器饱和测试。
-  - [ ] LLM 重试次数与整轮总预算测试。
+  - [x] LLM 显式总尝试上限、单次调用 deadline、整轮协作预算和有界执行器故障测试。
   - [x] 真实 MySQL 并发、重启、查询超时、readiness 掉线与恢复测试。
 
 ### Phase 8 第一批进度（2026-07-12）
@@ -1121,6 +1122,23 @@ Memory API 也能正常读取会话。验收后已停止容器并保留 MySQL �
 同 key 等待、排队未开始、线程池饱和和 JDBC 跨 Store 等待。默认测试增至 405 项，全部通过。详细说明见
 `客服Agent-60-Capability执行中Deadline与结果未知说明.md`。
 
+### Phase 8 第十九批进度（2026-07-13）
+
+`AgentRuntime` 现在为每轮对话启动可配置的 30 秒协作式 wall-clock 总预算，并在循环开始、Workflow 决策后和
+慢 Action 返回后检查余额。总预算耗尽时产生 `turn_deadline_exceeded`，Workflow 进入 `FAILED`，
+Monitor 使用稳定的 `TURN_DEADLINE_EXCEEDED` 分类，不再只依赖最多 10 个 Action 的步骤预算。
+
+新增 `LlmExecutionGuard`：单个模型 Action 默认最多等待 12 秒，执行线程固定上限为 8、队列上限为 32；
+超时后请求中断，线程池饱和时快速降级。LangChain4j OpenAI timeout 显式改为 10 秒；0.35 中
+`max-retries=1` 实际表示最大总尝试 1 次、默认零重试，业务层也不再叠加第二套重试。LLM、普通
+Capability 和 Handoff 都使用同一份 Turn 剩余时间，学习用 Demo 入口也已接入 Guard。
+
+新增 13 项测试并扩展既有 Trace、deadline 和 Compose 门禁，覆盖模型中断请求、多次 LLM 调用共享预算、
+异常原文不泄露、慢 Action 不继续、非法配置、执行器饱和、耗尽后零调用、Monitor 混合 Trace 优先级、
+Demo 旁路和 LangChain4j 0.35“max-retries 实为总尝试次数”的依赖语义。`clean test` 实测默认套件
+增至 418 项，0 失败、0 错误、0 跳过。详细说明见
+`客服Agent-61-LLM重试上限与整轮时间预算说明.md`。
+
 ### 验收标准
 
 - 不能通过猜测 conversationId 读取或清除其他用户会话。
@@ -1296,15 +1314,15 @@ smartcs:
 
 ### Agent Kernel
 
-- [ ] AgentRuntime 只包含通用循环、预算、取消、Trace 和终止控制。
-- [ ] AgentRuntime 不依赖任何客服具体 Workflow、Tool、Repository 或 MCP 实现。
-- [ ] 新 Action 通过注册 Handler 扩展。
+- [x] AgentRuntime 只包含通用循环、预算、取消、Trace 和终止控制。
+- [x] AgentRuntime 不依赖任何客服具体 Workflow、Repository 或 MCP 实现；ToolManager 只保留 Legacy 测试构造接缝。
+- [x] 新 Action 通过注册 Handler 扩展。
 
 ### Agent Skill Package
 
-- [ ] manifest、SKILL.md、Prompt、references 被运行时真实加载。
-- [ ] Skill Package 有版本、校验、能力 allowlist 和 Trace。
-- [ ] 纯 Prompt Skill 和代码 Workflow 可以明确区分。
+- [x] manifest、SKILL.md、Prompt、references 被运行时真实加载。
+- [x] Skill Package 有版本、校验、能力 allowlist 和 Trace。
+- [x] 纯 Prompt Skill 和代码 Workflow 可以明确区分。
 
 ### Workflow
 
@@ -1316,8 +1334,8 @@ smartcs:
 ### Capability 与 MCP
 
 - [ ] Capability Catalog 是 Schema 唯一来源。
-- [ ] Local/MCP Provider 可配置替换。
-- [ ] Workflow 不感知 MCP 传输。
+- [x] Local/MCP Provider 可配置替换。
+- [x] Workflow 不感知 MCP 传输。
 - [ ] 所有 Provider 通过统一契约测试。
 - [ ] 副作用能力具备授权、事务和幂等。
 
@@ -1325,29 +1343,27 @@ smartcs:
 
 - [x] HTTP 用户身份由已验证 JWT Principal 注入，不信任模型、请求体或 MCP `_meta` 身份字段。
 - [ ] 会话、订单、退货、工单和 Monitor 管理操作有所有权/角色校验。
-- [ ] 同一会话并发安全。
+- [x] 同一会话通过进程内锁与 Session revision CAS 防止并发丢失更新。
 - [x] 公开 Trace 完成统一敏感信息脱敏与容量限制。
 - [x] 应用日志和 MCP 审计完成敏感信息脱敏。
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 405 个测试，另有 1 个真实 MySQL IT）。
+- [x] 旧测试全部保留并通过（当前默认套件共 418 个测试，另有 1 个真实 MySQL IT）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。
 - [x] Docker 镜像构建、完整 Compose 启动、readiness 掉线恢复和 Agent 重启持久化通过。
-- [ ] README、架构图、开发计划和真实代码一致。
+- [x] README、核心架构图、开发计划和真实代码已按第十九批同步。
 
-## 16. 第一批实施任务
+## 16. 第一批实施记录（已完成）
 
-下一次开始编码时，严格从以下最小切片开始：
-
-1. [ ] 补充退货申请 Characterization Test，锁定当前行为。
-2. [ ] 新建 `workflow/api` 和 `capability/api`，只定义最小接口。
-3. [ ] 新建 `LegacySkillWorkflowAdapter` 和 `ToolRegistryCapabilityProvider`。
-4. [ ] 新建 ArchUnit 依赖规则测试。
-5. [ ] 保持 AgentRuntime 和现有接口行为不变，运行全量测试。
-6. [ ] 评审接口是否能同时承载 ReturnApply 和 OrderQuery；通过后进入 Phase 2。
+1. [x] 补充退货申请 Characterization Test，锁定当前行为。
+2. [x] 新建 `workflow/api` 和 `capability/api`，只定义最小接口。
+3. [x] 新建 `LegacySkillWorkflowAdapter` 和 `ToolRegistryCapabilityProvider`。
+4. [x] 新建 ArchUnit 依赖规则测试。
+5. [x] 保持 AgentRuntime 和现有接口行为兼容，运行全量测试。
+6. [x] 评审接口可同时承载 ReturnApply 和 OrderQuery，并已完成后续生产 Workflow 迁移。
 
 第一批任务不拆 MCP、不改前端、不移动所有文件，目标只是安全建立下一阶段需要的稳定接缝。
 
@@ -1511,7 +1527,8 @@ Phase 7 的最终验收结论、核心文件 diff 证据和 Legacy 清理条件�
 2. `ToolManager`、`ToolRegistry` 和 `LegacySkillWorkflowAdapter` 仍是兼容层；新代码应优先使用
    Workflow/Capability 契约，待回归稳定后再删除旧入口。
 3. Conversation 和 Capability 幂等记录已经提供 JDBC 实现，但默认 memory 模式仍只适合单实例；
-   Repository 领域锁、业务唯一约束、事务/outbox 和真实数据库并发验证仍需继续补齐。
+   Repository 领域高并发压测、业务唯一约束和事务/outbox 仍需继续补齐；CAS、Capability 幂等并发和
+   Outbox 租约已通过真实 MySQL 验证，但两个真实 Agent 进程同时恢复的故障注入尚未完成。
 4. HTTP 已统一使用 JWT Resource Server，但当前单体仍采用共享 HS256 密钥和本地 Demo 签发器。生产应
    关闭 Demo 入口，并迁移到独立 IdP 的 RS256/ES256 或等价非对称验证、密钥轮换和撤销策略。
 5. 远程 MCP 工具发现当前主要用于启动期不可变 Catalog。TTL 缓存可刷新 Provider 自身快照，
