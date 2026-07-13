@@ -1641,3 +1641,29 @@ Phase 7 的最终验收结论、核心文件 diff 证据和 Legacy 清理条件�
 
 这些不足不影响本轮“可插拔核心接缝 + 扩展证明”的验收，但会影响多实例、动态更新和正式生产安全，
 因此不能在后续迭代中忽略。
+
+## 21. Phase 9：兼容层清理与模块化决策（进行中）
+
+Phase 8 已在 20.6 完成最终架构验收。Phase 9 不再扩充业务面，而是删除迁移过程中保留的双轨入口，
+使文档中的 Workflow/Capability 主链路与生产代码完全一致。
+
+### 21.1 当前进度
+
+- [x] 9.1 审计 `CustomerServiceSkill`、`LegacySkillWorkflowAdapter`、`ToolManager`、`ToolRegistry`
+  和 `ToolRegistryCapabilityProvider` 的生产依赖。
+- [x] 9.1 增加“允许清单只能收缩”的架构门禁。
+- [x] 9.1 冻结八类独立 Workflow 与 `customer_service` 通用兜底的路由行为。
+- [x] 9.1 通过 517 个默认测试与 Spring Boot JAR 构建。
+- [ ] 9.2 用真正的通用客服 Workflow 替代 Legacy Skill/Adapter。
+- [ ] 9.3 让 Handler/API 直接依赖 Capability 契约，并删除旧 Tool 兼容入口。
+- [ ] 9.4 更新 Eval、README、架构与面试材料，完成 Maven Modules 决策。
+- [ ] 9.5 完成默认测试、真实 MySQL、JAR、Docker/Compose 最终验收。
+
+### 21.2 关键决策
+
+`customer_service` 不是可以直接删除的旧名字。它仍是 `customer-service` Skill Package 绑定的稳定
+Workflow ID，并负责闲聊和模糊意图。Phase 9.2 将保持 ID 不变，只替换 Java 实现，避免破坏 manifest
+绑定与持久化会话。
+
+详细依赖表、分批删除顺序、测试证据和完成定义见
+[`客服Agent-68-Phase9兼容层清理实施计划与基线审计.md`](客服Agent-68-Phase9兼容层清理实施计划与基线审计.md)。
