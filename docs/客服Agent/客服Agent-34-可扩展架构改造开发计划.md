@@ -4,11 +4,11 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成十七批收口，真实 MySQL 核心语义已验收，Agent 镜像与容器掉线恢复仍待运行 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成十七批收口，真实 MySQL、Agent 镜像、完整 Compose 与数据库掉线恢复均已验收 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 396 个默认测试及 1 个显式真实 MySQL IT 通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入本地 JAR |
+| 当前验证规模 | 397 个默认测试及 1 个显式真实 MySQL IT 通过；Agent 镜像与完整 Compose 实际运行通过，容器 JAR 含 9 个 Skill Package |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -1094,14 +1094,17 @@ lease 到期后重新进入 due 列表，不会永久卡住。
 
 Dockerfile 已显式复制根目录 `skills/`，并增加 readiness HEALTHCHECK。Compose 新增固定 MySQL 8.4.0、
 持久卷、mysqladmin 健康检查、Agent JDBC 默认配置和 service_healthy 启动依赖；宿主机使用 3307，避免与
-已有 3306 MySQL 冲突。默认测试新增 Docker 静态门禁，总数增至 396。
+已有 3306 MySQL 冲突。默认测试新增 Docker 静态门禁；兼容性门禁补齐后总数增至 397。
 
 真实启动的 MySQL 8.4.0 容器已达到 healthy，显式 `RealMySqlPersistenceIT` 实际通过，覆盖双 Store
 Session CAS、Capability 幂等并发单调用、Outbox 租约过期接管和真实 `SELECT SLEEP` 查询超时。
 
-本批仍不能把 Docker 运行验收标记完成：`docker compose build smart-cs-agent` 因桌面执行审批额度不足被
-系统拒绝，尚无 Agent 镜像构建、容器内 Skill 清单、完整 Compose readiness、数据库掉线/恢复和容器重启
-续接证据。详细记录见 `客服Agent-59-真实MySQL与Docker编排验收说明.md`。
+完整 Docker 运行验收现已通过。第一次构建实际暴露 Docker 24 无法处理 `.dockerignore` 中文规则的
+BuildKit 兼容问题；改为纯 ASCII 规则并增加回归门禁后，Agent 镜像成功构建，MySQL、Qdrant、Agent
+完整启动，容器 JAR 实际包含 9 个 Skill Package。停止 MySQL 后 readiness 返回 503 且 Agent 变为
+unhealthy，恢复 MySQL 后自动回到 healthy；重启 Agent 后 Session 快照哈希和 Outbox 版本保持不变，
+Memory API 也能正常读取会话。验收后已停止容器并保留 MySQL 数据卷。详细记录见
+`客服Agent-59-真实MySQL与Docker编排验收说明.md`。
 
 ### 验收标准
 
@@ -1313,11 +1316,11 @@ smartcs:
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 396 个测试，另有 1 个真实 MySQL IT）。
+- [x] 旧测试全部保留并通过（当前默认套件共 397 个测试，另有 1 个真实 MySQL IT）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。
-- [ ] Docker 启动和健康检查通过。
+- [x] Docker 镜像构建、完整 Compose 启动、readiness 掉线恢复和 Agent 重启持久化通过。
 - [ ] README、架构图、开发计划和真实代码一致。
 
 ## 16. 第一批实施任务

@@ -481,7 +481,9 @@ SMARTCS_SECURITY_JWT_SECRET=replace-with-at-least-32-random-bytes
 docker compose up --build
 ```
 
-`docker-compose.yml` 会同时启动 Qdrant。默认 `.env.example` 中 `SMARTCS_RAG_MODE=local`，所以 Agent 不会强制依赖 embedding 服务；需要在容器中演示真向量库时，把 `.env` 改成：
+`docker-compose.yml` 会同时启动固定版本的 MySQL 8.4.0 和 Qdrant。Compose 场景下 Agent 默认使用
+JDBC，并等待 MySQL healthy 后再启动；宿主机默认通过 3307 访问数据库，避免占用常见的 3306。
+默认 `.env.example` 中 `SMARTCS_RAG_MODE=local`，所以 Agent 不会强制依赖 embedding 服务；需要在容器中演示真向量库时，把 `.env` 改成：
 
 ```text
 SMARTCS_RAG_MODE=embedding-qdrant
@@ -490,7 +492,7 @@ SMARTCS_QDRANT_BASE_URL=http://qdrant:6333
 ```
 
 Compose 也会透传 `SMARTCS_JDBC_CONNECT_TIMEOUT_MS`、`SMARTCS_JDBC_SOCKET_TIMEOUT_MS` 和
-`SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS`。开启 JDBC 模式时可以在 `.env` 中覆盖默认值。
+`SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS`，可以在 `.env` 中覆盖默认值。
 
 访问页面和健康检查：
 
@@ -506,6 +508,10 @@ http://localhost:8080/actuator/health/readiness
 ```powershell
 docker compose down
 ```
+
+该命令默认保留 `mysql_data` 卷；只有明确希望清空数据库时才使用 `docker compose down -v`。镜像构建、
+9 个 Skill 清单、readiness 掉线恢复和 Agent 重启持久化的真实证据见
+[真实 MySQL 与 Docker 编排验收说明](docs/客服Agent/客服Agent-59-真实MySQL与Docker编排验收说明.md)。
 
 `.env` 已经被 `.gitignore` 忽略，仓库只保留 `.env.example`，避免把真实 API Key 提交进去。
 
@@ -530,7 +536,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 396 个测试用例；另有 1 项显式真实 MySQL IT 通过。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 397 个测试用例；另有 1 项显式真实 MySQL IT 通过。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 

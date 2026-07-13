@@ -9,4 +9,4 @@ app.log
 .env
 .env.*
 !.env.example
-docs/工单平台
+docs

@@ -9,7 +9,8 @@
 1. 使用真实 MySQL 8.4.0 容器验证 Session、Capability 幂等和 Outbox 数据库语义。
 2. 修复 Dockerfile/Compose 的 Skill、MySQL、依赖顺序和健康检查配置。
 
-需要明确：真实 MySQL 验收已经实际运行通过；Agent 镜像构建因本地执行审批额度不足未能运行，因此完整 Agent 容器 readiness 仍是待验收项。
+真实 MySQL IT、Agent 镜像构建、完整 Compose 启动、数据库掉线恢复和 Agent 重启持久化现已全部实际运行通过。
+本批不是只检查配置文件，而是完成了从镜像到故障恢复的端到端部署验收。
 
 ## 2. Dockerfile 修复
 
@@ -77,7 +78,11 @@ mvn -Dtest=RealMySqlPersistenceIT test
 Docker Server: 24.0.7
 MySQL image: mysql:8.4.0
 Host port: 3307
-Container status: healthy
+Agent image: smart-cs-agent:latest
+Agent image digest: ee63903b76c1...
+MySQL status: healthy
+Agent status: healthy
+Qdrant status: running
 ```
 
 真实测试结果：
@@ -130,35 +135,104 @@ BUILD SUCCESS
 - Agent 等待 MySQL healthy。
 - Compose 默认使用 `jdbc:mysql://mysql:3306/...`。
 - MySQL 数据卷和应用 readiness 存在。
+- `.dockerignore` 只使用 ASCII 规则，兼容 Docker 24 的 BuildKit。
 
-本批默认测试共 396 项，0 失败、0 错误、0 跳过。
+新增兼容性门禁后，默认测试共 397 项，0 失败、0 错误、0 跳过。
 
-## 9. 尚未完成的 Docker 证据
+## 9. 完整 Docker 运行证据
 
-本次执行 `docker compose build smart-cs-agent` 时，桌面执行审批系统因额度不足拒绝了构建操作。因此以下事项不能标记完成：
+### 9.1 构建时发现并修复 Docker 24 兼容问题
 
-1. Agent 镜像真实构建成功。
-2. 容器 JAR 内 9 个 Skill Package 的实际 `jar tf` 检查。
-3. MySQL、Qdrant、Agent 三个服务完整启动。
-4. Agent 容器 readiness 变为 healthy。
-5. 停止 MySQL 后 readiness 变为 unhealthy，恢复 MySQL 后重新 healthy。
-6. Agent 容器重启后恢复 Session 和 Outbox。
+第一次真实构建没有停在 Java 编译，而是在发送构建上下文时失败：
 
-静态配置测试通过不等于这些运行时证据已经存在。
+```text
+header key "exclude-patterns" contains value with non-printable ASCII characters
+```
 
-## 10. 下一次完整容器验收命令
+根因是旧 `.dockerignore` 直接包含中文路径 `docs/工单平台`。Docker Desktop 24.0.7 的 BuildKit 会把
+ignore 规则放入内部 `exclude-patterns` 请求头，旧版本不能正确处理其中的 UTF-8 字符。该目录已经不存在，
+而 Dockerfile 本来也不会复制文档，因此规则改为纯 ASCII 的 `docs`。新的静态测试会确保以后不会再次加入
+非 ASCII ignore 规则。
 
-获得 Docker 构建授权后执行：
+修复后构建成功，镜像摘要为：
+
+```text
+sha256:ee63903b76c100bf0347402d786b491a6d56f44af7cd4288e5f5755ab5fd1f0b
+```
+
+### 9.2 Skill 与 readiness
+
+完整 Compose 启动后：
+
+- MySQL 为 `healthy`。
+- Agent 为 `healthy`。
+- Qdrant 正常运行。
+- readiness 返回 HTTP 200，组件包含 `persistence=UP`。
+- 运行容器的 JAR 内实际存在 9 个 `BOOT-INF/classes/skills/*/manifest.yaml`。
+- Agent 启动日志实际打印了 9 条 `Loaded Agent Skill package`。
+
+运行镜像使用精简 JRE，没有开发期 `jar` 命令。验收时使用 `docker cp` 将运行中的 JAR 复制到宿主机临时
+目录，再用宿主机 JDK 执行 `jar tf`；不为了验收给生产镜像安装整套 JDK。
+
+### 9.3 数据库掉线与恢复
+
+停止 MySQL、保持 Agent 运行后：
+
+1. readiness 立即返回 HTTP 503。
+2. JSON 明确显示 `persistence=DOWN`，不是只根据进程猜测。
+3. Docker healthcheck 在连续 6 次失败后把 Agent 标记为 `unhealthy`。
+
+重新启动 MySQL 后：
+
+1. readiness 自动恢复 HTTP 200，`persistence=UP`。
+2. Agent 自动恢复 `healthy`。
+3. `FailingStreak` 回到 0，不需要重启 Agent。
+
+### 9.4 Agent 重启与持久化
+
+先通过真实 JWT 聊天接口创建会话 `docker-acceptance-session`，接口返回 HTTP 200。重启前后比对结果：
+
+```text
+Session schema/version: 1 / 1
+Session state SHA-256: bf72727737f016cc184a07fbb9bfb0f027abe5a54e1ad22d055e634b12c187a9
+Outbox status/version: NEEDS_MANUAL_REVIEW / 4
+```
+
+重启前后上述值完全一致；重启后的 Memory API 还能正常反序列化会话，并返回用户消息、客服降级回复和
+已完成的 `customer_service` Workflow。这比只比较数据库行数更强，因为它同时证明数据仍在且新进程可读。
+
+验收结束后已执行 `docker compose down`。Agent、MySQL 和 Qdrant 容器均已停止并移除；没有使用 `-v`，
+`csagent_mysql_data` 数据卷仍然保留。
+
+## 10. 完整容器复验命令
+
+构建并启动：
 
 ```bash
 docker compose build smart-cs-agent
 docker compose up -d
 docker compose ps
-docker exec smart-cs-agent sh -c "jar tf app.jar | grep 'BOOT-INF/classes/skills/.*/manifest.yaml'"
 curl --fail http://localhost:8080/actuator/health/readiness
 ```
 
-然后执行数据库掉线与恢复测试，并在结束后使用：
+检查运行容器的 Skill 清单：
+
+```bash
+docker cp smart-cs-agent:/app/app.jar /tmp/smart-cs-agent-container.jar
+jar tf /tmp/smart-cs-agent-container.jar \
+  | rg '^BOOT-INF/classes/skills/.*/manifest.yaml$'
+```
+
+数据库掉线与恢复：
+
+```bash
+docker compose stop mysql
+curl http://localhost:8080/actuator/health/readiness
+docker compose start mysql
+curl --fail http://localhost:8080/actuator/health/readiness
+```
+
+结束后停止容器：
 
 ```bash
 docker compose down

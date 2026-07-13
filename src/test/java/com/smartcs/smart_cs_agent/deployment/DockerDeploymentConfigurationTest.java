@@ -17,6 +17,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DockerDeploymentConfigurationTest {
 
     @Test
+    void dockerIgnoreShouldRemainAsciiForDocker24Compatibility() throws IOException {
+        String dockerIgnore = Files.readString(Path.of(".dockerignore"));
+
+        /*
+         * Docker Desktop 24.0.7 会把 ignore 规则写进 BuildKit 的 exclude-patterns 请求头。
+         * 如果规则里直接包含中文路径，旧版 BuildKit 会以“请求头含非打印字符”为由中止构建。
+         * 当前镜像不需要 docs 下的任何文件，所以忽略整个 docs 目录既能缩小上下文，也能保持规则为 ASCII。
+         */
+        assertTrue(dockerIgnore.chars().allMatch(character -> character <= 0x7F));
+        assertTrue(dockerIgnore.lines().anyMatch("docs"::equals));
+    }
+
+    @Test
     void dockerImageShouldPackageSkillsAndExposeReadinessHealthcheck() throws IOException {
         String dockerfile = Files.readString(Path.of("Dockerfile"));
 
