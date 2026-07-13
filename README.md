@@ -13,7 +13,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - 长期用户偏好：支持记录“我喜欢蓝牙耳机”等商品偏好，默认 30 天 TTL，重复表达会刷新有效期；内存实现限制用户总量、每用户偏好数和单条长度，并按用户访问顺序、偏好最后表达顺序淘汰旧数据。手机号、邮箱、证件号、长数字和常见凭据会在写入前脱敏，敏感信息-only 输入不会保存；同时支持查询和清空长期记忆。
 - 知识库问答：支持退货政策、发票、保修、配送、转人工规则等 Markdown 知识库检索，并已增强查询改写、多路召回、本地轻量向量分、简单 rerank 和 `knowledge_miss` Trace；可选开启真 embedding + Qdrant 向量数据库模式。
 - Multi-Agent 路由：支持把用户消息路由到售前、售后、投诉和通用专家域，并在 Trace 中记录 `agent_routed`。
-- 人工转接：支持用户主动要求人工、投诉、赔偿或维权类表达；默认创建模拟人工工单，开启联调模式后可调用售后工单平台创建真实工单。
+- 人工转接：外部调用前先保存租户隔离的 Outbox，支持结果未知、短租约有限恢复和 ADMIN 列表/详情/审计/retry/confirm/reconcile/close；售后平台没有只读幂等查询协议时，reconcile 会安全返回 503，绝不把“查不了”伪装成“不存在”。
 - Agent Trace：接口和前端调试面板可以看到 Action、工具调用、LLM 调用、转人工、耗时等事件。
 - 前端调试工作台：支持多用户会话、典型 Demo 脚本、Trace 过滤/复制、Trace 指标摘要，以及工具 input/output schema 可视化。
 - 评测报告看板：前端 Eval 面板可以展示最新评测概览、历史趋势和核心指标变化。
@@ -22,8 +22,9 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - 独立 MCP Server 第一版：`POST /mcp` 支持 `initialize`、`tools/list` 和 `tools/call`；HTTP Client 每次请求使用 MCP_CLIENT Bearer JWT，JSON-RPC body 不再携带身份凭据。
 - 数据库持久化：支持 `memory` / `jdbc` 双模式，默认内存模式保证本地测试和 CI 稳定；JDBC 模式除业务数据外，还持久化会话状态和 Capability 幂等记录，并为连接、网络读取和 SQL 执行设置明确超时。
 - Capability 执行预算：能力默认超时与上游 deadline 取较早值，Provider 在有界线程池中执行；副作用开始后超时返回并回放 `CAPABILITY_RESULT_UNKNOWN`，不会把“停止等待”误写成“操作肯定失败”。
+- 整轮执行预算：每轮默认同时受 10 个 Action 和 30 秒 wall-clock 约束；LLM 有独立超时、有界线程池和总尝试次数上限，超时或队列饱和时结构化降级。
 - 状态演进：Workflow 私有状态支持按 Workflow ID 注册 `1 -> 2 -> 3` 逐版本迁移链；缺链、重复注册和未来版本都会失败关闭，不在 Runtime、Router 或 Codec 中堆业务分支。
-- 后端联调：`HandoffTools` 支持 `memory` / `after-sales-http` 双模式，可调用桌面 `demo/after-sales-sla-platform` 的 `POST /api/tickets` 创建真实售后工单。
+- 后端联调：`HandoffTools` 支持 `memory` / `after-sales-http` 双模式，可调用独立 `after-sales-sla-platform` 仓库的 `POST /api/tickets` 创建真实售后工单。
 - Monitor 指标与反馈闭环：支持 `GET /api/monitor/summary`、`POST /api/monitor/feedback`、`GET /api/monitor/feedback/candidates`、候选样本审核接口、Eval case 草稿导出接口和半自动合并正式评测集接口，基于 Trace 聚合整体/按工具成功率、LLM 失败率、转人工次数、平均耗时、用户反馈有用率、候选样本审核状态数量和负反馈问题类型分布，并能把无用反馈沉淀成 Eval 待审核候选样本；候选样本会持久化到本地 JSON 文件，服务重启后仍可继续审核；Monitor Summary 会进一步生成结构化风险告警，前端 Monitor 面板可以直接看到工具失败率、LLM 失败率、低有用反馈率、不安全承诺和内部实现泄露等风险。
 - 接口工程化：聊天接口使用明确 DTO、Spring Validation 和统一 `ApiErrorResponse`。
 - 统一认证与 RBAC：Spring Security Resource Server 校验 Bearer JWT 的 HS256 签名、issuer、audience、时间、subject 和 tenant；Chat/Memory、反馈、管理面板与 MCP 使用 CUSTOMER、ADMIN、MCP_CLIENT 角色隔离，未知地址默认拒绝。
@@ -32,22 +33,22 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 
 ## 架构概览
 
-```text
-前端页面
-  -> Spring Security Resource Server
-  -> JwtPrincipalConverter -> AuthenticatedPrincipal
-  -> ChatApiController -> ChatRequest
-  -> CustomerServiceAgent
-  -> ConversationStore / SessionStore / TurnContext
-  -> AgentRuntime
-  -> WorkflowRouter -> WorkflowRegistry -> 独立业务 Workflow
-  -> ActionHandlerRegistry -> AgentAction Handler
-  -> CapabilityGateway
-       -> Local Capability Provider -> Domain Service -> Repository
-       -> MCP Capability Provider -> HTTP JSON-RPC -> Remote MCP Server
-
-AgentSkillPackageRegistry
-  -> manifest.yaml / SKILL.md / prompts / references
+```mermaid
+flowchart TD
+    Client["Browser / API Client"] --> Security["Spring Security + JWT/RBAC"]
+    Security --> Chat["ChatApiController"]
+    Chat --> Agent["CustomerServiceAgent"]
+    Agent --> Session["ConversationStore -> SessionStore Memory/JDBC"]
+    Agent --> Runtime["AgentRuntime: loop + turn budget"]
+    Skill["Agent Skill Package Registry"] --> Router["WorkflowRouter + Registry"]
+    Runtime --> Router
+    Router --> Workflow["Independent AgentWorkflow"]
+    Workflow --> Handler["ActionHandlerRegistry"]
+    Handler --> Gateway["CapabilityGateway"]
+    Gateway --> Local["Local Provider -> Domain/Repository"]
+    Gateway --> Mcp["MCP Provider -> HTTP JSON-RPC"]
+    Handler --> Outbox["Handoff Outbox -> Recovery / ADMIN Review"]
+    Runtime --> Trace["Trace -> Monitor / Feedback / Eval"]
 ```
 
 核心设计取舍：
@@ -58,8 +59,9 @@ AgentSkillPackageRegistry
 - 当前输入、跨轮状态、本轮执行过程分别放在 `ChatRequest`、`ConversationState`、`TurnContext`。
 - Local/MCP Provider 共用 Capability 契约，Workflow 不感知能力位于本地还是远程。
 - HTTP 身份只来自已验证 JWT Principal，不能由请求体、LLM 参数或 MCP `_meta` 覆盖。
+- Session CAS、Capability 幂等和 Handoff Outbox 分别保护会话状态、副作用执行和外部结果未知，三者不能互相替代。
 - Repository 默认使用内存模式，开启 JDBC 模式后可连接 MySQL，保证学习演示和真实持久化两种需求都能覆盖。
-- 人工转接默认使用本地工单，联调时再切换到售后工单平台，保证单项目运行和双项目联动都稳定。
+- 人工转接创建支持本地/售后 HTTP 双模式；售后结果查询使用独立三态 Port，当前默认明确 unavailable。
 - RAG 默认使用本地检索，开启 `embedding-qdrant` 后再依赖真实 embedding API 和 Qdrant，保证基础演示和高级检索都能覆盖。
 - 先做稳定、可解释的规则评测，再补 LLM-as-Judge。
 
@@ -78,8 +80,8 @@ POST /api/auth/demo/tokens
 Authorization: Bearer <JWT>
 ```
 
-主要角色边界：Chat/Memory 和反馈允许 CUSTOMER 或 ADMIN；Monitor 其余接口、Eval、Tool 只允许
-ADMIN；`/api/mcp/**` 与 `/mcp` 允许 MCP_CLIENT 或 ADMIN。
+主要角色边界：Chat/Memory 和反馈允许 CUSTOMER 或 ADMIN；Monitor 其余接口、Eval、Tool 和
+`/api/admin/pending-handoffs/**` 只允许 ADMIN；`/api/mcp/**` 与 `/mcp` 允许 MCP_CLIENT 或 ADMIN。
 
 发送聊天消息：
 
@@ -180,6 +182,28 @@ Content-Type: application/json
   }
 }
 ```
+
+查看需要人工复核的转接记录：
+
+```http
+GET /api/admin/pending-handoffs?status=NEEDS_MANUAL_REVIEW&size=20
+Authorization: Bearer <ADMIN_JWT>
+```
+
+管理员可以读取详情和追加式审计，并使用下面四种处置命令：
+
+```text
+GET  /api/admin/pending-handoffs/{outboxId}
+GET  /api/admin/pending-handoffs/{outboxId}/audit-events
+POST /api/admin/pending-handoffs/{outboxId}/retry
+POST /api/admin/pending-handoffs/{outboxId}/confirm
+POST /api/admin/pending-handoffs/{outboxId}/reconcile
+POST /api/admin/pending-handoffs/{outboxId}/close
+```
+
+写命令必须携带页面读取到的 `expectedVersion`、结构化原因和可选备注。tenantId、actorId、幂等键、
+工单结果与证据来源都由服务端控制，不能通过请求体伪造。当前外部售后平台没有按 Idempotency-Key 的
+只读查询接口，因此默认 `/reconcile` 返回 503；受信任管理员仍可在外部后台核对后使用 `/confirm`。
 
 查看 Monitor 在线指标：
 
@@ -356,8 +380,9 @@ $env:SMARTCS_JDBC_SOCKET_TIMEOUT_MS="10000"
 $env:SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS="5"
 ```
 
-启动后，项目会自动创建四张业务表、`cs_agent_session`、`cs_capability_idempotency` 和三张人工转接
-Outbox 表，并写入演示种子数据。默认连接超时为 3 秒、Socket 读取超时为 10 秒、单条 SQL 超时为
+启动后，项目会自动创建四张业务表、`cs_agent_session`、`cs_capability_idempotency` 和四张人工转接
+表（主记录、成功结果、租约 Claim、人工处置审计），并写入演示种子数据。默认连接超时为 3 秒、Socket
+读取超时为 10 秒、单条 SQL 超时为
 5 秒，避免数据库故障时业务请求和 readiness 长期阻塞。业务表、会话与幂等存储分别见
 [数据库持久化设计](docs/客服Agent/客服Agent-28-数据库持久化设计.md)、
 [SessionStore 持久化与恢复说明](docs/客服Agent/客服Agent-43-SessionStore持久化与恢复说明.md) 和
@@ -387,11 +412,11 @@ $env:SMARTCS_QDRANT_READ_TIMEOUT_MS="10000"
 
 开启后，`KnowledgeTools` 会把 Markdown 知识库向量化后写入 Qdrant，并用用户问题的 query embedding 做相似度检索；如果 embedding 或 Qdrant 暂时不可用，会自动回退本地 RAG。设计说明见 [客服Agent-33-Embedding向量数据库RAG设计.md](docs/客服Agent/客服Agent-33-Embedding向量数据库RAG设计.md)。
 
-默认人工转接使用本地模拟工单。如果要联调桌面售后工单平台，先启动后端项目：
+默认人工转接使用本地模拟工单。如果要联调独立售后工单平台，先在它自己的仓库启动服务，例如两个仓库位于同一级目录时：
 
 ```powershell
-cd C:\Users\feasycom\Desktop\demo\after-sales-sla-platform
-mvn -s .mvn\settings.xml spring-boot:run
+cd ../after-sales-sla-platform
+mvn spring-boot:run
 ```
 
 再设置 Agent 项目环境变量：
@@ -401,6 +426,7 @@ $env:SMARTCS_HANDOFF_MODE="after-sales-http"
 $env:SMARTCS_AFTER_SALES_BASE_URL="http://localhost:8081"
 $env:SMARTCS_AFTER_SALES_AGENT_USER_ID="agent-service"
 $env:SMARTCS_AFTER_SALES_AGENT_USER_ROLE="AGENT"
+$env:SMARTCS_AFTER_SALES_RESULT_QUERY_MODE="unavailable"
 $env:SMARTCS_AFTER_SALES_CONNECT_TIMEOUT_MS="3000"
 $env:SMARTCS_AFTER_SALES_READ_TIMEOUT_MS="10000"
 $env:SMARTCS_HANDOFF_RECOVERY_ENABLED="false"
@@ -412,6 +438,10 @@ $env:SMARTCS_HANDOFF_RECOVERY_ENABLED="false"
 后台恢复默认关闭。只有确认售后平台会按 `Idempotency-Key` 返回同一工单后，才将
 `SMARTCS_HANDOFF_RECOVERY_ENABLED` 设为 `true`；恢复执行器会使用调用前保存的原请求、短租约和有限
 指数退避，多次失败后转为人工复核，不会无限重试。
+
+`SMARTCS_AFTER_SALES_RESULT_QUERY_MODE` 当前只支持 `unavailable`。它不是创建模式，而是 ADMIN
+`reconcile` 使用的只读查询 Adapter 模式；只有售后平台将来提供权威查询 API 且本项目新增 HTTP Adapter
+后，才可以切换为 `http`。
 
 此时用户触发转人工后，Agent 会调用售后工单平台 `POST /api/tickets` 创建真实工单，返回 `AS-{id}`。设计说明见 [客服Agent-32-售后工单平台联调设计.md](docs/客服Agent/客服Agent-32-售后工单平台联调设计.md)。
 
@@ -483,6 +513,7 @@ SMARTCS_AGENT_TURN_TIMEOUT_MS=30000
 SMARTCS_LLM_EXECUTION_CALL_TIMEOUT_MS=12000
 SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=true
 SMARTCS_SECURITY_JWT_SECRET=replace-with-at-least-32-random-bytes
+SMARTCS_AGENT_PORT=8080
 ```
 
 上面的 `true` 只适合本地工作台。共享或生产环境必须改为 `false`，并接入真实身份签发系统。
@@ -492,6 +523,9 @@ SMARTCS_SECURITY_JWT_SECRET=replace-with-at-least-32-random-bytes
 ```powershell
 docker compose up --build
 ```
+
+如果宿主机 8080 已被占用，可以在 `.env` 中改成 `SMARTCS_AGENT_PORT=18080`；容器内仍监听 8080，
+健康探针不受影响。
 
 `docker-compose.yml` 会同时启动固定版本的 MySQL 8.4.0 和 Qdrant。Compose 场景下 Agent 默认使用
 JDBC，并等待 MySQL healthy 后再启动；宿主机默认通过 3307 访问数据库，避免占用常见的 3306。
@@ -548,7 +582,8 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 428 个测试用例；另有 1 项显式真实 MySQL IT 通过。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次 `clean test` 通过 510 个测试用例（0 失败、0 错误、0 跳过）；另有 1 项显式真实 MySQL IT。
+评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -606,6 +641,11 @@ docker compose down
 - [Capability 执行中 Deadline 与结果未知说明](docs/客服Agent/客服Agent-60-Capability执行中Deadline与结果未知说明.md)
 - [LLM 重试上限与整轮时间预算说明](docs/客服Agent/客服Agent-61-LLM重试上限与整轮时间预算说明.md)
 - [PendingHandoff 租户隔离与复合键说明](docs/客服Agent/客服Agent-62-PendingHandoff租户隔离与复合键说明.md)
+- [人工复核查询与 CAS 状态机说明](docs/客服Agent/客服Agent-63-人工复核查询与CAS状态机说明.md)
+- [人工处置追加式审计说明](docs/客服Agent/客服Agent-64-人工处置追加式审计说明.md)
+- [ADMIN 人工复核 API 说明](docs/客服Agent/客服Agent-65-ADMIN人工复核API说明.md)
+- [售后幂等结果查询 Port 与契约审计说明](docs/客服Agent/客服Agent-66-售后幂等结果查询Port与契约审计说明.md)
+- [第二十批最终验收与架构收口说明](docs/客服Agent/客服Agent-67-第二十批最终验收与架构收口说明.md)
 
 ## 简历表达参考
 
@@ -621,6 +661,6 @@ docker compose down
 - 实现 RAG 双模式：默认 local 模式保证测试和演示稳定，高级模式接入 OpenAI-compatible embedding API 与 Qdrant 向量数据库，并在外部服务失败时回退本地检索。
 - 实现轻量 Multi-Agent 路由，将用户消息分配到售前、售后、投诉和通用专家域，并通过 Trace 记录路由原因和置信度。
 - 实现 Repository 层 `memory` / `jdbc` 双模式，默认内存模式保证测试稳定，开启 JDBC 模式后可将用户、商品、订单和退货记录持久化到 MySQL。
-- 实现人工转接 `memory` / `after-sales-http` 双模式，远端结果未知时写入 memory/JDBC Outbox；可选恢复 Worker 通过短租约、原 Idempotency-Key、有限退避和人工复核状态安全推进，不再伪造成功或无限重试。
+- 实现人工转接 `memory` / `after-sales-http` 双模式，远端结果未知时写入租户隔离的 memory/JDBC Outbox；可选 Worker 使用短租约、原 Idempotency-Key 和有限退避恢复，ADMIN API 提供列表、详情、retry/confirm/reconcile/close 及追加式审计，查询不可用时明确返回 503。
 - 构建 Agent Trace、Monitor 指标和用户反馈闭环，将无用反馈沉淀为 Eval 候选样本，支持审核、导出、半自动合并正式评测集和回归测试。
 - 建设五类离线评测，包括路由评测、知识库召回评测、回复质量规则评测、Agent 链路评测和 LLM-as-Judge 评测，并输出 JSON 报告、历史快照和趋势指标；通过 GitHub Actions 在 push / PR 时自动运行 Maven 测试，形成基础 CI 质量门禁。

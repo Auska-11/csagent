@@ -1,759 +1,348 @@
-# 智能客服 Agent：架构设计
+# Smart CS Agent 当前架构设计
 
-## 1. 为什么需要架构设计
+> 更新日期：2026-07-13
+> 代码基线：Phase 8 第二十批 20.6 收口
+> 阅读原则：本文描述当前代码已经实现的架构，不把后续规划写成既成事实。
 
-客服 Agent 项目如果只做成“用户输入一句话，大模型回复一句话”，很容易变成一个普通聊天 Demo。
+## 1. 项目定位
 
-真正有价值的客服 Agent，需要解决的是一组工程问题：
+Smart CS Agent 是一个面向电商客服的任务型 Agent。它不是把用户消息直接交给大模型，而是把一轮服务拆成：
 
-- 用户表达不规范，系统要识别真实意图。
-- 用户信息经常不完整，系统要主动追问。
-- 订单、商品、退货等问题不能靠大模型编，需要调用真实业务工具。
-- 退货政策、保修政策等问题需要查知识库，不能让模型凭空回答。
-- 一次服务往往是多轮对话，系统要记住当前任务进展。
-- Agent 调用了什么工具、为什么这么回答，需要能够被查看和调试。
-- Agent 的核心行为需要能被评测集回归验证。
+1. 验证身份和资源归属；
+2. 恢复已有多轮任务，或选择新的业务 Workflow；
+3. 由 Workflow 决定下一步动作；
+4. 由 Action Handler 执行动作；
+5. 通过 Capability Gateway 调用本地能力或 MCP 远程能力；
+6. 保存会话状态、幂等结果和人工转接 Outbox；
+7. 用 Trace、Monitor 和 Eval 验证真实执行链路。
 
-因此，本项目采用分层架构，把“对话入口、Agent 执行、客服决策、业务工具、数据访问、知识资料”拆开。
+项目当前最重要的架构目标已经实现：
 
-这样做的目的不是为了把代码写复杂，而是为了让每一层职责清楚，后续新增多轮会话、Trace、RAG、人工转接和评测时，不会全部堆在一个类里。
+> 新增一个业务 Workflow 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway 的业务分支。
 
-## 2. 项目目标
+这不等于系统已经完全生产级。Legacy 回滚路径、单 Maven Module、按租户 LLM 隔离、多实例进程级压测等仍是后续工作。
 
-本项目的目标是实现一个面向电商场景的任务型客服 Agent。
+## 2. 当前总体架构
 
-它需要支持：
+```mermaid
+flowchart TD
+    Client["Browser / API Client"] --> Security["Spring Security Resource Server"]
+    Security --> Principal["AuthenticatedPrincipal"]
+    Principal --> Chat["ChatApiController"]
+    Chat --> Agent["CustomerServiceAgent"]
 
-- 订单查询
-- 商品咨询
-- 退换货申请
-- 退换货进度查询
-- 用户信息查询
-- 信息不足时主动追问
-- 工具调用后的中文客服回复
-- 知识库政策问答
-- 后续扩展人工转接和评测
-- 离线路由评测
+    Agent --> Conversation["ConversationStore"]
+    Conversation --> SessionPort["SessionStore Port"]
+    SessionPort --> SessionMemory["InMemorySessionStore"]
+    SessionPort --> SessionJdbc["JdbcSessionStore"]
 
-项目最终希望体现的能力是：
+    Agent --> Runtime["AgentRuntime<br/>通用循环 + 整轮预算"]
+    SkillRegistry["AgentSkillPackageRegistry<br/>manifest + SKILL.md + references"] --> Router["WorkflowRouter"]
+    Runtime --> Router
+    Router --> WorkflowRegistry["WorkflowRegistry"]
+    WorkflowRegistry --> Workflow["Independent AgentWorkflow"]
+    Workflow --> Action["AgentAction"]
+    Action --> HandlerRegistry["ActionHandlerRegistry"]
+    HandlerRegistry --> Handler["Ask / Confirm / LLM / Capability / Handoff / Final"]
 
-> 不只是让大模型聊天，而是让 Agent 能根据用户意图选择合适的业务能力，完成真实客服任务。
+    Handler --> Gateway["CapabilityGateway"]
+    Gateway --> ExecutionGuard["deadline + bounded executor + idempotency"]
+    ExecutionGuard --> Local["Local Capability Provider"]
+    ExecutionGuard --> Mcp["MCP Capability Provider"]
+    Local --> Domain["Domain Service / Repository"]
+    Mcp --> Transport["HTTP JSON-RPC"]
+    Transport --> McpServer["Remote MCP Server"]
 
-## 3. 当前整体架构
+    Handler --> Handoff["HandoffTools"]
+    Handoff --> Outbox["PendingHandoffStore<br/>Memory / JDBC"]
+    Handoff --> AfterSales["Memory Ticket / After-sales HTTP"]
 
-当前项目主要分为以下几层：
-
-```text
-前端页面
-  ↓
-ChatApiController
-  ↓
-CustomerServiceAgent
-  ↓
-AgentRuntime
-  ↓
-CustomerServiceSkill
-  ↓
-ToolManager
-  ↓
-ToolRegistry
-  ↓
-OrderTools / ProductTools / ReturnTools / UserTools / KnowledgeTools / HandoffTools
-  ↓
-Repository 模拟数据层 / Markdown 知识库
+    Runtime --> Trace["TraceEvent"]
+    Trace --> Monitor["Monitor / Feedback / Eval"]
 ```
 
-每一层的职责如下：
+这个图里有五条需要先记住的边界：
 
-| 层次 | 当前类 | 核心职责 |
-| --- | --- | --- |
-| 前端页面 | `static/index.html` | 提供用户聊天界面和调试入口 |
-| Controller | `ChatApiController` | 接收 HTTP 请求，调用 Agent |
-| Agent 入口 | `CustomerServiceAgent` | 创建会话状态，调用 Runtime |
-| 执行引擎 | `AgentRuntime` | 循环执行 Action，调用 LLM 或工具 |
-| 决策层 | `CustomerServiceSkill` | 判断下一步应该做什么 |
-| 决策辅助 | `CustomerServiceSlotExtractor` | 从用户消息中抽取订单号、退货单号、退货原因、商品关键词 |
-| 决策辅助 | `CustomerServiceIntentRules` | 集中维护政策问题、退货问题、转人工问题等关键词规则 |
-| 决策辅助 | `CustomerServicePromptBuilder` | 构造意图识别、闲聊回复和工具结果总结 Prompt |
-| Action 抽象 | `AgentAction` 及子类 | 表达 Agent 的下一步动作 |
-| 工具门面 | `ToolManager` | 将 Runtime 的工具请求转换成标准 `ToolCall` |
-| 工具注册 | `ToolRegistry` | 注册工具定义，校验参数，统一返回 `ToolResult` |
-| 业务工具 | `OrderTools` 等 | 查询订单、商品、退货、用户信息 |
-| 知识工具 | `KnowledgeTools` | 检索 Markdown 客服知识库 |
-| 转人工工具 | `HandoffTools` | 创建模拟人工转接工单 |
-| 数据访问 | `Repository` / `knowledge` | 当前用内存 Map 和 Markdown 模拟数据来源 |
+- `AgentRuntime` 只负责通用执行循环，不知道订单、退货或保修规则。
+- `AgentWorkflow` 只决定下一步做什么，不直接访问 Repository 或 HTTP。
+- `ActionHandler` 负责怎样执行某类动作，不决定完整业务状态机。
+- `CapabilityGateway` 只处理能力契约、身份、预算、幂等和 Provider 分发。
+- `Agent Skill Package` 提供说明、Prompt、references 和能力白名单，不替代 Java Workflow 状态机。
 
-## 4. 目标架构借鉴
+## 3. 每一层负责什么
 
-我们希望借鉴 `ecommerce-customer-service-skill-mcp` 项目的核心边界，而不是直接照搬代码。
+| 层 | 当前主要对象 | 负责 | 不负责 |
+| --- | --- | --- | --- |
+| HTTP 与安全 | Controller、SecurityConfig、JwtPrincipalConverter | DTO、校验、JWT、RBAC、错误响应 | 不相信请求体自报身份 |
+| Agent 入口 | CustomerServiceAgent | 组装一轮请求、会话和 Runtime | 不写具体业务规则 |
+| 会话 | ConversationStore、SessionStore | 复合键、本地锁、快照、version CAS | 不执行副作用 |
+| 执行内核 | AgentRuntime | Action 循环、步数、整轮 deadline、Trace、终止 | 不按业务写 switch |
+| 路由 | WorkflowRouter、WorkflowRegistry | 恢复活跃 Workflow 或选择新 Workflow | 不调用业务工具 |
+| 业务决策 | 8 个 AgentWorkflow | 槽位、状态机、确认、下一 Action | 不直接访问数据库或 HTTP |
+| 动作执行 | 7 类 ActionHandler | 追问、确认、LLM、能力、转人工、结束 | 不拥有完整业务流程 |
+| 能力内核 | CapabilityCatalog、Gateway | Schema、身份、allowlist、deadline、幂等 | 不理解对话状态 |
+| 能力实现 | Local/MCP Provider | 适配领域服务或远程 MCP | 不决定多轮流程 |
+| Skill Package | skills/* | 版本、说明、Prompt、references、能力白名单 | 不单独完成确定性状态机 |
+| 人工转接 | Handoff、Outbox、Recovery、Review | 结果未知、有限恢复、人工处置、审计 | 不把未知伪造成成功 |
+| 可观测性 | Trace、Monitor、Eval | 安全事件、指标、反馈和回归证据 | 不保存不必要的原始隐私 |
 
-它给我们的关键启发是：
+## 4. 项目里的 Skill 到底是什么
 
-```text
-ChatRequest          当前这一轮请求
-ConversationState    跨轮保存的会话状态
-TurnContext          当前这一轮的执行上下文
-ActionExecutor       统一执行 Action
-Observation          统一记录 Action 执行结果
-TraceEvent           记录 Agent 每一步执行轨迹
-Capability           Skill 眼中的业务能力
-Tool                 具体可执行工具
-```
+这个项目历史上有两种都叫 Skill 的东西，必须明确区分。
 
-这套拆分的好处是：
+### 4.1 早期 Java Skill
 
-- 当前输入、跨轮状态、本轮执行过程不会混在一起。
-- Runtime 不沉淀具体客服规则。
-- Skill 只负责客服策略和下一步 Action。
-- 工具调用结果可以统一包装成 Observation。
-- 后续做 Trace、评测和 MCP-style 工具边界会更自然。
+`CustomerServiceSkill` 曾同时负责意图判断、槽位收集和动作编排。这更像一个代码内的业务决策器，不是通常所说的声明式 Agent Skill。它目前只作为 Legacy 回滚兼容路径保留。
 
-因此，我们后续会逐步从当前简单架构演进到：
+### 4.2 当前 Agent Skill Package
+
+根目录每个 `skills/<skill-id>/` 包含：
 
 ```text
-ChatRequest
-  ↓
-ConversationStore 读取 ConversationState
-  ↓
-TurnContext(request + state)
-  ↓
-AgentRuntime
-  ↓
-Skill 产生 Action
-  ↓
-ActionExecutor 执行 Action
-  ↓
-Observation + TraceEvent
-  ↓
-保存 ConversationState
+manifest.yaml
+SKILL.md
+prompts/
+references/
 ```
 
-第一阶段不会一次性实现全部对象，但文档和后续代码设计会向这个方向靠拢。
+运行时会真实加载并校验这些文件，记录 Skill ID 和版本，并用 manifest 中的 allowlist 限制该 Workflow 可以调用的 Capability。
 
-## 5. 核心设计思想
-
-## 5.1 Skill 负责决策，Runtime 负责执行
-
-这是当前项目最重要的设计。
-
-`CustomerServiceSkill` 不直接调用工具，也不直接调用大模型。它只负责判断下一步应该是什么 Action。
-
-例如：
-
-- 用户说“帮我查订单 ORD-001”
-- Skill 判断这是订单查询
-- Skill 返回 `CapabilityAction("order_lookup")`
-- Runtime 看到这是工具 Action
-- Runtime 调用 `ToolManager`
-- ToolManager 调用 `OrderTools`
-
-这样做的好处是：
-
-- 决策逻辑和执行逻辑分开。
-- 后续新增工具，不需要改 Runtime 的主流程。
-- 后续新增 Skill，可以复用 Runtime。
-- 调试时可以清楚看到 Agent 每一步做了什么。
-
-可以简单理解为：
+当前更准确的术语关系是：
 
 ```text
-Skill：我决定下一步做什么
-Runtime：我负责把这一步执行掉
-Tool：我负责具体业务能力
+Agent Skill Package = 业务说明 + Prompt + references + 权限清单
+AgentWorkflow        = 可执行、多轮、确定性的业务状态机
+Capability           = 有 Schema 和结果语义的原子业务能力
+MCP                  = Capability 的一种远程发现、调用和暴露方式
+AgentRuntime         = 与具体客服业务无关的通用执行内核
 ```
 
-## 5.2 Action 是 Agent 的“动作语言”
+因此，当前 Skill Package 已接近一般所说的 Agent Skill，但本项目没有把高风险状态机完全交给 Markdown 或模型自由执行。退货确认、身份、并发和副作用仍由 Java Workflow 与 Gateway 约束。
 
-当前项目有几类 Action：
+## 5. 一轮聊天请求怎样执行
 
-| Action | 说明 |
+以用户发送“我要退货”为例：
+
+1. Resource Server 校验 JWT 签名、issuer、audience、时间、subject、tenant 和角色。
+2. `JwtPrincipalConverter` 生成可信 `AuthenticatedPrincipal`。
+3. Controller 只从 Principal 取得 tenantId 和 userId，请求体不能覆盖身份。
+4. `ConversationStore` 用 tenantId、userId、conversationId 组成完整会话键。
+5. 同一实例先用本地锁串行化同一会话，再从 Memory/JDBC SessionStore 读取快照。
+6. `AgentRuntime` 建立步数预算和 30 秒 wall-clock 总预算。
+7. `WorkflowRouter` 优先恢复等待中的任务，否则给已注册 Workflow 评分。
+8. `ReturnApplyWorkflow` 决定追问订单号、原因、确认，或发出 CapabilityAction。
+9. `ActionHandlerRegistry` 找到对应 Handler。
+10. Capability Handler 先检查当前 Skill allowlist，再构造可信 `ExecutionContext`。
+11. Gateway 取整轮剩余时间与能力默认 deadline 的较早值。
+12. 副作用能力在调用 Provider 前竞争幂等执行权；执行放入有界线程池。
+13. Provider 返回 SUCCESS、BUSINESS_REJECTED 或 TECHNICAL_FAILURE。
+14. Workflow 根据结构化 Observation 继续、等待、完成、取消或失败。
+15. Runtime 写入安全 Trace 和最终回复。
+16. ConversationStore 使用读取时的 expectedVersion 做 CAS 保存。
+17. Controller 把 Turn 交给 Monitor 分类，并返回响应。
+
+关键点是：Session CAS 保护状态更新，Capability 幂等保护副作用执行。两者解决的是不同问题，不能互相替代。
+
+## 6. 当前可扩展点
+
+### 6.1 新增业务 Workflow
+
+以现有 `WarrantyQuery` 扩展证明为例：
+
+1. 新增 Skill Package；
+2. 新增实现 `AgentWorkflow` 的类；
+3. 通过 Spring 组件扫描进入 `WorkflowRegistry`；
+4. 如需私有状态升级，注册 `WorkflowStateMigrator`；
+5. 增加路由、状态机和架构边界测试。
+
+不需要修改 Runtime、Router 的业务分支或 Gateway。这里的“无需修改 Router”是指不增加 warranty 特判；新 Workflow 仍需提供自己的 descriptor 和 match 逻辑。
+
+### 6.2 新增 Action
+
+新增 `AgentAction` 与对应 `ActionHandler<T>`。Registry 按 Action 类型注册，Runtime 不增加 `instanceof` 链。
+
+### 6.3 新增 Capability
+
+1. 定义稳定 ID、输入/输出 Schema、身份要求、风险和幂等语义；
+2. 新增 Local 或 MCP Provider；
+3. 把 Capability 加入需要使用它的 Skill allowlist；
+4. 使用契约测试验证三态结果、身份和副作用边界。
+
+Workflow 只依赖 Capability ID 与结构化结果，不依赖具体 Java 方法或远端 URL。
+
+### 6.4 替换本地能力为 MCP
+
+`smartcs.capability.provider-mode` 支持 local、mcp-remote 和混合装配。MCP Client 使用服务端配置的 Bearer JWT；JSON-RPC body 中的普通 `_meta` 不能冒充最终用户。
+
+### 6.5 增加售后查询 Adapter
+
+`AfterSalesTicketResultLookup` 已定义 FOUND、NOT_FOUND、UNAVAILABLE 三态。当前外部售后平台没有只读幂等查询 API，所以默认 Adapter 明确返回 `QUERY_NOT_SUPPORTED`。未来只需增加 HTTP Adapter 并切换配置，不修改 ADMIN Controller、状态机或 Store。
+
+## 7. 状态、并发与可靠性
+
+### 7.1 会话状态
+
+- 单实例：`ConversationStore` 对完整 ConversationKey 加本地锁。
+- 多实例：`SessionStore` 使用 version CAS，旧版本不能覆盖新版本。
+- Workflow 私有状态：带 schemaVersion，并通过注册式迁移链逐版本升级。
+- 当前限制：物理删除后 version 重置，仍有 generation/ABA 风险。
+
+### 7.2 Capability 副作用
+
+- JDBC 幂等表使用唯一 key、owner token 和短租约竞争执行权。
+- Owner 执行慢能力时续租，其他实例不能同时成为执行者。
+- 完成结果可稳定回放，Session 保存失败后的重试不会重复调用已完成 Provider。
+- 如果副作用已经开始但等待超时，返回 `CAPABILITY_RESULT_UNKNOWN`，不声称失败。
+- Provider 已成功但结果尚未保存时仍有崩溃窗口，所以项目不宣称 exactly-once。
+
+### 7.3 整轮与单次调用预算
+
+- Agent 默认最多 10 个 Action。
+- 一轮默认最多 30 秒，并在关键检查点停止继续规划。
+- LLM 单次默认等待 12 秒，SDK 总尝试次数默认为 1。
+- LLM 和 Capability 使用独立有界执行器，队列饱和时快速失败。
+- Java 中断是协作式取消，仍不能替代客户端和下游自身的超时。
+
+## 8. 人工转接可靠性闭环
+
+```mermaid
+flowchart LR
+    Prepare["先保存 PREPARED<br/>tenant + idempotencyKey + request"] --> Call["调用 Memory / 售后 HTTP"]
+    Call -->|权威成功| Confirm["CONFIRMED + result"]
+    Call -->|超时或响应未知| Unknown["RESULT_UNKNOWN"]
+    Unknown --> Worker["Recovery Worker<br/>租约 + 原 key + 有限退避"]
+    Worker -->|成功| Confirm
+    Worker -->|达到上限| Review["NEEDS_MANUAL_REVIEW"]
+    Review --> Admin["ROLE_ADMIN API"]
+    Admin --> Retry["retry"]
+    Admin --> ManualConfirm["confirm"]
+    Admin --> Reconcile["reconcile"]
+    Admin --> Close["close"]
+    Retry --> Prepare
+    ManualConfirm --> Confirm
+    Reconcile -->|FOUND| Confirm
+    Reconcile -->|NOT_FOUND / UNAVAILABLE| NoWrite["零状态写入、零审计"]
+    Close --> Closed["MANUALLY_CLOSED"]
+```
+
+这里有几个刻意的安全设计：
+
+- `PendingHandoffKey` 同时包含 tenantId 和 idempotencyKey，所有单记录操作都不能只传裸 key。
+- 调用外部平台前先持久化请求，缩小“远端可能成功但本地什么也没有”的窗口。
+- 成功响应缺少 ID、状态或创建时间时 fail-closed，不生成 `AS-UNKNOWN` 或本机时间。
+- Worker 只能有限恢复，达到上限后转人工，不无限重试。
+- ADMIN 列表、详情、审计、retry、confirm、reconcile、close 都只使用 JWT 中的租户和 actor。
+- Memory 与 JDBC Store 对 version、状态冲突、结果投影和审计保持一致。
+- JDBC 人工处置在同一事务内更新主记录、成功结果和追加式审计。
+- `reconcile` 只有权威 FOUND 才写入；“查不了”不能被当成“远端不存在”。
+
+## 9. 安全边界
+
+### 9.1 身份与角色
+
+| 角色 | 主要权限 |
 | --- | --- |
-| `LLMAction` | 需要调用大模型 |
-| `CapabilityAction` | 需要调用业务工具 |
-| `AskUserAction` | 信息不足，需要追问用户 |
-| `HandoffAction` | 当前问题需要人工客服介入 |
-| `FinalAnswerAction` | 已经得到最终回复，可以返回用户 |
+| CUSTOMER | Chat、自己的会话/长期记忆、提交反馈 |
+| ADMIN | Monitor、Eval、Tool、PendingHandoff 复核与审计 |
+| MCP_CLIENT | MCP REST 和 JSON-RPC 服务调用 |
 
-为什么要设计 Action？
+未知路径默认拒绝。生产必须关闭 Demo token issuer，并接入真实身份系统。
 
-如果没有 Action，代码可能会变成这样：
+### 9.2 租户与所有权
 
-```java
-if (查订单) {
-    直接调用工具;
-    直接调用大模型;
-    直接返回;
-}
-```
+- Chat 会话使用 tenantId + userId + conversationId。
+- PendingHandoff 使用 tenantId + idempotencyKey，管理查询使用 tenantId + outboxId。
+- 售后 `X-Tenant-Id` 来自当前可信执行上下文。
+- 跨租户不存在和本租户不存在使用同一种 404，避免资源枚举。
 
-短期看简单，长期会导致：
+### 9.3 可观测数据
 
-- 决策、执行、回复混在一起。
-- 很难记录执行轨迹。
-- 很难支持多轮对话。
-- 很难扩展新的 Agent 能力。
+公开 Trace 会递归遮蔽敏感 key，限制字符串、集合、Map 和递归深度，并默认省略用户原话、Prompt、回复和异常原文。MCP 审计保留稳定 ID、结果、错误码和耗时，不记录凭据或完整参数。
 
-有了 Action 之后，Agent 的过程就变成：
+## 10. 数据与部署模式
 
-```text
-Skill 产生 Action
-Runtime 执行 Action
-执行结果写成 Observation
-跨轮任务进度写回 ConversationState
-Skill 根据新状态继续产生下一个 Action
-直到 FinalAnswerAction
-```
+| 能力 | 默认模式 | 可替换模式 |
+| --- | --- | --- |
+| Session / Capability 幂等 / Handoff | memory | jdbc / MySQL |
+| Capability Provider | local | mcp-remote / hybrid |
+| RAG | local | embedding-qdrant |
+| 人工转接创建 | memory | after-sales-http |
+| 售后结果查询 | unavailable | 未来 http Adapter |
 
-这就是一个简化版的 Agent observe-act 循环。
+JDBC 当前共 10 张表：
 
-## 5.3 规则优先，LLM 兜底
+- 4 张业务表：用户、商品、订单、退货；
+- 1 张 Session 表；
+- 1 张 Capability 幂等表；
+- 4 张 PendingHandoff 表：主记录、成功结果、租约 Claim、人工处置审计。
 
-客服场景里，有些意图非常明确：
+Compose 默认启动 MySQL 8.4.0、Qdrant 和 Agent。Agent 容器默认使用 JDBC；宿主机端口可以通过 `SMARTCS_AGENT_PORT` 覆盖，容器内始终监听 8080。
 
-- “查订单”
-- “退货”
-- “多少钱”
-- “我的信息”
+## 11. 当前已经实现的功能
 
-这些高频场景不需要全部交给 LLM 判断，可以先用规则识别。
+- 订单查询、订单列表、商品搜索与库存价格咨询；
+- 多轮退货申请、确认、取消和退货进度查询；
+- 政策 RAG、保修查询、用户资料和长期偏好；
+- 9 个 Agent Skill Package 与 8 个独立业务 Workflow；
+- Local/MCP Capability Provider、JSON-RPC MCP Server 与远程 Client；
+- Memory/JDBC Session、业务数据、Capability 幂等和 Handoff 持久化；
+- JWT/RBAC、租户隔离、资源所有权和 Trace 脱敏；
+- LLM/Capability deadline、有界执行器和整轮 wall-clock 预算；
+- 人工转接 Outbox、租约恢复、ADMIN 复核、追加式审计和三态结果查询 Port；
+- Trace、Monitor、反馈候选、五类离线 Eval 和 GitHub Actions；
+- Docker 多阶段镜像、Compose、liveness/readiness 和真实 MySQL 验收。
 
-当前 `CustomerServiceSkill` 的策略是：
+## 12. 当前不足
 
-1. 先用关键词规则判断常见意图。
-2. 规则无法判断时，再调用 LLM 做语义识别。
-3. LLM 识别出意图后，再转成具体 Action。
+这些边界需要在简历和面试中主动说明：
 
-这样做的好处：
+1. 外部售后平台没有公开按 Idempotency-Key 的只读查询 API，当前 `reconcile` 默认安全返回 503。
+2. Legacy `CustomerServiceSkill`、`ToolManager`、`ToolRegistry` 和适配器仍保留，Phase 9 才评估删除。
+3. 当前是单 Maven Module，尚未证明拆 Module 能带来独立发布价值。
+4. 没有两个真实 Agent 进程同时恢复的故障注入和高并发压测。
+5. JDBC 仍直接使用 DriverManager，没有 HikariCP；Schema 也没有 Flyway/Liquibase 版本管理。
+6. 退货表缺少 orderId 唯一约束，业务编号生成方式不适合高并发。
+7. LLM 执行器还缺 Micrometer 指标和按租户/模型 bulkhead。
+8. RAG 和 Eval 数据集规模较小，离线通过不能代表真实线上准确率。
+9. MCP 还没有签名用户委托和细粒度 scope。
+10. 项目是工程化学习与作品集项目，不能宣称已经达到完整生产级。
 
-- 降低 LLM 调用成本。
-- 高频场景响应更稳定。
-- 避免大模型把明确问题识别错。
-- 面试时可以讲清楚工程取舍。
+## 13. 初学者推荐阅读顺序
 
-面试表达：
+1. `agent/action/AgentAction.java`：理解“下一步动作”的统一抽象。
+2. `workflow/api/AgentWorkflow.java`：理解业务流程只做决策。
+3. `workflow/returnapply/ReturnApplyWorkflow.java`：看完整多轮状态机。
+4. `workflow/core/WorkflowRouter.java`：看活跃任务恢复和新任务路由。
+5. `agent/AgentRuntime.java`：看通用循环、预算和 Trace。
+6. `agent/handler/core/ActionHandlerRegistry.java`：看动作如何插件化。
+7. `capability/core/DefaultCapabilityGateway.java`：看身份、deadline、幂等和 Provider 分发。
+8. `skill/registry/AgentSkillPackageRegistry.java`：看 Skill Package 怎样真正进入运行时。
+9. `session/api/SessionStore.java` 与两个实现：理解 Port/Adapter 和 CAS。
+10. `handoff/outbox/PendingHandoffStore.java`：理解结果未知为什么需要持久化。
+11. `handoff/admin/PendingHandoffAdminService.java`：看可信身份、复核和查询三态。
+12. `mcp/server/McpServerAdapter.java`：看同一 Capability 如何通过 MCP 暴露。
 
-> 我没有把所有决策都交给大模型，而是采用规则优先、LLM 兜底的混合路由方式。对于订单查询、退货申请等高频明确场景，用规则保证稳定性；对于用户表达比较模糊的情况，再使用 LLM 做语义理解。
+阅读时对每个类问四个问题：
 
-## 6. 一轮对话的执行流程
+- 它依赖的是稳定接口还是具体实现？
+- 它决定“做什么”还是执行“怎么做”？
+- 身份和幂等键从哪里来，能否被客户端伪造？
+- 失败时状态、结果和 Trace 分别怎样变化？
 
-以“帮我查一下订单 ORD-001”为例：
+## 14. 面试表达
 
-```text
-1. 前端发送消息到 /api/chat/send
-2. ChatApiController 接收 ChatApiRequest
-3. ChatApiController 构造 ChatRequest
-4. CustomerServiceAgent 根据 conversationId 读取 ConversationState
-5. CustomerServiceAgent 创建 TurnContext
-6. AgentRuntime 获取当前 Skill
-7. Skill 判断用户意图是订单查询
-8. Skill 返回 CapabilityAction(order_lookup)
-9. Runtime 或 ActionExecutor 调用 ToolManager
-10. ToolManager 调用 OrderTools.queryOrderStatus()
-11. 工具返回订单状态和物流信息
-12. 执行结果包装成 Observation
-13. Skill 看到工具结果，返回 LLMAction(response_generation)
-14. Runtime 调用大模型生成中文客服回复
-15. Skill 返回 FinalAnswerAction
-16. Runtime 返回最终回复
-17. CustomerServiceAgent 保存 ConversationState
-18. Controller 返回给前端展示
-```
+可以用下面这段概括架构：
 
-这个流程体现了三个核心点：
+> 我把客服 Agent 拆成 Skill Package、Workflow、Runtime、Action Handler 和 Capability 五个边界。Skill Package 保存说明、Prompt、references 和能力白名单；Workflow 负责确定性多轮状态机；Runtime 只执行通用循环；Handler 执行具体动作；Capability Gateway 统一身份、Schema、deadline、幂等和 Local/MCP Provider。会话状态用本地锁加 JDBC version CAS，副作用另用幂等租约和 Outbox。人工转接在外部调用前保存 PREPARED，结果未知时有限恢复，最终进入 ADMIN 复核和追加式审计，因此不会把超时或缺字段响应伪装成成功。
 
-- Skill 不直接执行，只做决策。
-- Runtime 不关心客服业务，只执行 Action 或委托 ActionExecutor 执行。
-- Tool 不关心话术，只返回业务结果。
+如果面试官问为什么没有立刻拆 Maven 多 Module：
 
-## 7. 当前代码中的关键模块
+> 先用 package、SPI、Registry 和 ArchUnit 稳定依赖方向，再等 Capability、MCP Server 或 Eval 出现独立发布需求后拆 Module。否则只会增加构建复杂度，并不能自动降低耦合。
 
-## 7.1 `ChatApiController`
+## 15. 结论
 
-职责：
+项目已经从早期“大 Skill + ToolManager”的客服 Demo，演进成注册式 Workflow、插件式 Action Handler、统一 Capability 契约和可替换 Adapter 的架构。20.6 的结束含义是第二十批人工转接复核闭环与文档、测试、MySQL、Docker 验收完成，不代表长期路线图的 Phase 9 和所有生产化工作都已结束。
 
-- 提供 HTTP 接口。
-- 使用 Spring Validation 校验接口参数。
-- 构造 `ChatRequest`。
-- 调用 `CustomerServiceAgent.chatWithTrace()`。
-- 返回 `ChatResponse`，包含回复、用户 ID、会话 ID、时间戳和 Trace。
+最核心的工程原则是：
 
-当前已改进：
-
-- 请求体已经从 `Map<String, String>` 改成明确的 `ChatApiRequest` DTO。
-- `ChatApiRequest` 只负责接收前端 JSON，`ChatRequest` 只负责进入 Agent 主链路，两者职责分开。
-- `ChatApiRequest` 已通过 `@NotBlank` 和 `@Size` 声明基础校验规则。
-- 校验失败返回 `ApiErrorResponse`，包含 `errorCode`、`message` 和 `timestamp`。
-- 已新增 `GlobalExceptionHandler`，统一处理 JSON 解析失败、参数校验失败、参数异常和未预期异常。
-
-当前响应对象：
-
-```java
-public class ChatRequest {
-    private String conversationId;
-    private String userId;
-    private String message;
-}
-
-public class ChatResponse {
-    private String conversationId;
-    private String userId;
-    private String reply;
-    private long timestamp;
-    private List<TraceEvent> trace;
-}
-```
-
-## 7.2 `CustomerServiceAgent`
-
-职责：
-
-- 作为客服 Agent 的业务入口。
-- 通过 `ConversationStore` 读取或创建 `ConversationState`。
-- 创建 `TurnContext`。
-- 调用 `AgentRuntime.runTurn()`。
-- 返回 `ChatResponse` 或兼容旧入口的 String 回复。
-
-当前不足：
-
-- 目前还是单一客服 Skill。
-- 后续做 Multi-Agent 时，需要根据意图路由到不同 Skill。
-
-后续计划：
-
-- 保留当前 `CustomerServiceAgent` 作为统一入口。
-- 后续新增售前、售后、投诉等 Skill，并由 `SkillManager` 做路由。
-
-## 7.3 `AgentRuntime`
-
-职责：
-
-- 执行 Agent 主循环。
-- 根据 Action 类型调用 LLM 或工具。
-- 把执行结果写入状态。
-- 防止死循环。
-
-当前优点：
-
-- 已经有清晰的 Action 执行循环。
-- 已经区分 LLMAction、CapabilityAction、AskUserAction 和 FinalAnswerAction。
-- 已经接入 `TurnContext` 和 `TraceEvent`。
-- 已经记录 Action 计划、工具调用、LLM 调用和最终回复。
-- 工具、LLM 和人工转接调用已经记录 `durationMs`。
-- LLM 调用失败时会记录 `llm_failed`，并基于工具结果生成降级回复，避免接口直接 500。
-
-当前不足：
-
-- 当前 Runtime 直接执行 LLM 和工具，后续可以拆出 `ActionExecutor`。
-- Trace 目前主要返回给前端调试，还没有持久化到文件或数据库。
-
-后续计划：
-
-- 后续拆出 `ActionExecutor`，让 Runtime 主循环更轻。
-- 增加 Trace 持久化和聚合统计，服务后续 Monitor 与评测报告。
-
-## 7.4 `CustomerServiceSkill`
-
-职责：
-
-- 判断用户意图。
-- 决定是否调用工具。
-- 决定是否追问用户。
-- 决定是否让 LLM 生成回复。
-
-当前优点：
-
-- 已经支持规则路由和 LLM 兜底。
-- 已经覆盖订单、商品、退货、退货进度、用户信息、闲聊。
-- 已经支持政策类问题路由到 `knowledge_search`。
-- 已经支持人工诉求、投诉和赔偿纠纷路由到 `HandoffAction`。
-- 已经完成第一轮职责拆分：
-  - `CustomerServiceSlotExtractor` 负责槽位抽取。
-  - `CustomerServiceIntentRules` 负责关键词意图规则。
-  - `CustomerServicePromptBuilder` 负责 Prompt 构造。
-- 中文注释较多，适合学习。
-
-当前不足：
-
-- `CustomerServiceSkill` 仍然承担较多 Action 编排逻辑。
-- 后续如果继续增加售前、售后、投诉等意图，单一 Skill 仍然会变长。
-
-后续计划：
-
-- 按业务域拆出 `PreSalesSkill`、`AfterSalesSkill`、`ComplaintSkill`。
-- 或者继续拆出更细的 `IntentRouter`，让 `CustomerServiceSkill` 只负责整体编排。
-
-## 7.5 `ToolManager`
-
-职责：
-
-- 作为 Runtime 调用工具层的门面。
-- 将 `capability + arguments` 转换成 `ToolCall`。
-- 委托 `ToolRegistry` 执行工具。
-- 返回统一 `ToolResult`。
-
-当前优点：
-
-- 保留旧入口，Runtime 改动较小。
-- 工具层已经具备 MCP-style 的调用边界。
-- 工具执行结果可以结构化记录到 Trace。
-- `ToolResult.data` 已经优先返回结构化数据，其中订单、商品、退货、用户和人工转接等业务工具已经升级为明确 DTO，便于评测和监控读取。
-- `ToolDefinition` 已经可以导出 `inputSchema` 和 `outputSchema`，前端 Tools 面板可以直接展示工具入参和出参结构。
-
-当前不足：
-
-- 还没有拆成独立 MCP Server。
-- 当前业务工具仍然使用内存模拟数据，还没有接真实数据库或外部服务。
-
-后续计划：
-
-- 继续补充嵌套输出 schema，让 `orders[]`、`products[]` 等列表字段也能描述元素结构。
-- 后续将 `ToolRegistry` 抽到独立 MCP Server。
-
-## 7.6 `Repository`
-
-职责：
-
-- 当前用内存数据模拟数据库。
-- 为工具提供订单、商品、退货、用户信息查询。
-
-当前优点：
-
-- 不依赖数据库，方便演示和学习。
-- 业务数据和工具逻辑分离。
-
-后续计划：
-
-- 第一阶段继续使用内存数据。
-- 后续如有需要再替换为 MySQL。
-- 面试中可以讲“Repository 层隔离了数据来源”。
-
-## 8. 当前架构的优点
-
-## 8.1 分层比较清楚
-
-当前项目没有把所有逻辑写在 Controller 里，而是拆成：
-
-- Controller
-- Agent
-- Runtime
-- Skill
-- Tool
-- Repository
-
-这已经具备后端项目的基本工程结构。
-
-## 8.2 已经有 Agent 执行循环
-
-`AgentRuntime` 中的循环非常重要。
-
-它说明项目不是简单调用一次 LLM，而是支持：
-
-- 思考下一步
-- 执行动作
-- 观察结果
-- 再决定下一步
-
-这是 Agent 项目的核心形态。
-
-## 8.3 工具调用和回复生成分离
-
-工具只返回业务数据，最终客服话术交给 LLM。
-
-这样可以避免工具层承担话术职责，也方便后续统一调整客服风格。
-
-## 8.4 已经具备后续扩展空间
-
-当前架构可以继续扩展：
-
-- 多轮会话
-- Trace
-- RAG 知识库
-- 人工转接
-- Multi-Agent
-- 评测体系
-
-这些都可以沿着现有架构继续加。
-
-## 9. 当前架构的不足
-
-## 9.1 还不是真正多轮对话
-
-早期版本每次请求都会新建状态。
-
-当前第一版已经通过 `ConversationStore` 按 `conversationId` 保存会话状态，
-可以支持退货、订单查询这类多轮任务。
-
-早期问题：
-
-```text
-用户：我要退货
-Agent：请提供订单号
-用户：ORD-004
-```
-
-早期版本第二轮时，系统不知道用户是在补充退货订单号。
-当前已经通过 `ConversationStore + pending_slot` 解决第一版多轮任务状态。
-
-解决方案：
-
-- `ChatRequest` 表示当前输入。
-- `ConversationStore` 按 `conversationId` 保存状态。
-- `ConversationState` 记录跨轮任务和槽位。
-- `TurnContext` 表示本轮执行过程。
-- `TraceEvent` 记录每一步执行过程，并返回给前端调试控制台。
-
-## 9.2 当前输入和跨轮状态混在一起
-
-过渡阶段 `ConversationState` 仍然保留了当前消息和观察结果，用来兼容旧入口和旧逻辑。
-但主链路已经开始拆分为 `ChatRequest + ConversationState + TurnContext`。
-
-问题：
-
-- 当前消息只属于这一轮。
-- 任务状态需要跨轮保存。
-- 工具观察结果只属于本轮执行过程。
-
-解决方案：
-
-```text
-ChatRequest       当前输入
-ConversationState 跨轮状态
-TurnContext       本轮执行上下文
-```
-
-## 9.3 工具调用结果已完成第一版标准化
-
-当前已经新增 `ToolResult`，工具层统一返回结构化结果。
-
-已经解决：
-
-- 成功、失败可以通过 `success` 区分。
-- 失败原因可以通过 `errorCode` 记录。
-- 工具名通过 `toolName` 记录。
-- 给 LLM 的说明通过 `message` 提供。
-- Trace 中可以记录 `success`、`errorCode` 和结果预览。
-
-后续还可以增强：
-
-- 继续补充返回 schema 和工具示例，让工具协议更接近真实 MCP `tools/list`。
-- 将 `inputSchema` 继续增强为更完整的 JSON Schema。
-- 将 `ToolRegistry` 拆成真正 MCP Server。
-
-## 9.4 可观测性还可以继续增强
-
-当前第一版已经支持 Agent Trace。
-
-现在接口和前端调试控制台可以看到：
-
-- 本轮何时开始。
-- 选择了哪个 Skill。
-- 计划了哪个 Action。
-- 调用了哪个工具。
-- 工具参数是什么。
-- LLM 是否被调用。
-- 最终回复是什么。
-
-后续还需要增强：
-
-- 按 Trace 统计平均耗时、工具失败率和转人工率。
-- Trace 持久化和评测统计。
-
-## 9.5 人工转接已完成第一版
-
-当前已经新增 `HandoffAction` 和 `HandoffTools`。
-
-支持场景：
-
-- 用户明确要求人工客服。
-- 用户投诉或情绪激烈。
-- 涉及赔偿、补偿、维权、起诉等纠纷。
-
-当前链路：
-
-```text
-CustomerServiceSkill
-  ↓
-HandoffAction
-  ↓
-AgentRuntime
-  ↓
-ToolManager / ToolRegistry
-  ↓
-HandoffTools
-  ↓
-返回人工工单号
-```
-
-当前 Trace 可以看到：
-
-- `handoff_requested`
-- `handoff_created`
-- `handoff_failed`
-
-后续可以增强：
-
-- 接入真实工单系统。
-- 使用 LLM 生成更完整的人工摘要。
-- 工具连续失败时自动转人工。
-- 评测转人工准确率。
-
-## 9.6 知识库已完成第一版
-
-早期版本政策类问题只能靠模型回答。
-
-例如：
-
-```text
-超过七天还能退吗？
-发票什么时候开？
-保修期多久？
-```
-
-这些问题应该查知识库，而不是让模型自由发挥。
-
-当前第一版已经完成：
-
-- 新增 Markdown 知识库目录 `src/main/resources/knowledge`。
-- 新增 `KnowledgeDocument` 和 `KnowledgeSearchResult`。
-- 新增 `KnowledgeTools`。
-- 新增 `knowledge_search` 工具。
-- `CustomerServiceSkill` 会把政策类问题路由到知识库。
-- 第一版使用标题、关键词和正文打分检索。
-
-后续还可以增强：
-
-- 扩充知识库文档。
-- 增加召回评测集。
-- 引入 query rewrite、embedding 检索和 rerank。
-
-## 10. 后续目标架构
-
-后续目标架构如下：
-
-```text
-前端聊天页面
-  ↓
-ChatApiController
-  ↓
-ChatApiRequest
-  ↓
-ChatRequest
-  ↓
-CustomerServiceAgent
-  ↓
-ConversationStore 读取会话状态
-  ↓
-TurnContext
-  ↓
-AgentRuntime
-  ↓
-SkillManager 选择 Skill
-  ↓
-CustomerServiceSkill / PreSalesSkill / AfterSalesSkill / ComplaintSkill
-  ↓
-Action
-  ↓
-ActionExecutor
-  ↓
-ToolManager / KnowledgeTools / HandoffTools
-  ↓
-Repository / KnowledgeBase / TicketSystem
-  ↓
-TraceEvent 记录全过程
-  ↓
-返回 ChatResponse(reply + trace)
-```
-
-第一阶段不会一次性实现全部内容，而是逐步演进。
-
-## 11. 推荐开发顺序
-
-结合当前代码情况，建议按以下顺序开发：
-
-1. 多轮会话状态：
-   - 新增 `ChatRequest`。已完成。
-   - 新增 `ConversationStore`。已完成。
-   - 新增 `TurnContext`。已完成第一版。
-   - 支持 `conversationId`。已完成第一版。
-   - `ConversationState` 聚焦跨轮任务状态。已完成第一版。
-
-2. 退货流程槽位填充：
-   - 记录当前等待用户补充什么信息。已完成第一版。
-   - 支持用户分多轮提供订单号和原因。已完成第一版。
-
-3. Agent Trace：
-   - 新增 `TraceEvent`。已完成第一版。
-   - `TurnContext` 记录每一步动作和观察结果。已完成第一版。
-   - API 返回 trace。已完成第一版。
-   - 前端调试控制台展示 trace。已完成第一版。
-
-4. 工具返回标准化：
-   - 新增 `ToolResult`。已完成第一版。
-   - 改造工具返回结构。已完成第一版。
-
-5. 知识库 RAG：
-   - 新增 `knowledge/` 目录。已完成第一版。
-   - 新增 `KnowledgeTools`。已完成第一版。
-   - 支持政策类问答。已完成第一版。
-
-6. 人工转接：
-   - 新增 `HandoffAction`。已完成第一版。
-   - 支持投诉和复杂问题转人工。已完成第一版。
-
-7. 评测体系：
-   - 新增评测用例
-   - 统计意图、工具、转人工和关键词覆盖
-
-8. Skill 第一轮拆分：
-   - `CustomerServiceSlotExtractor`。已完成第一版。
-   - `CustomerServiceIntentRules`。已完成第一版。
-   - `CustomerServicePromptBuilder`。已完成第一版。
-
-9. Controller DTO：
-   - 新增 `ChatApiRequest`。已完成第一版。
-   - 将 HTTP 请求体和 Agent 内部请求对象分开。已完成第一版。
-   - 新增 `ApiErrorResponse`。已完成第一版。
-   - 新增 `GlobalExceptionHandler`。已完成第一版。
-   - 新增 Spring Validation 参数校验和 MVC 层测试。已完成第一版。
-
-## 12. 面试表达
-
-如果面试官问：“你这个客服 Agent 和普通聊天机器人有什么区别？”
-
-可以这样回答：
-
-> 普通聊天机器人通常是用户输入一句话，然后直接把上下文交给大模型生成回复。我的项目不是这样设计的。我把客服 Agent 拆成 Runtime、Skill、Action、Tool 和 Repository 几层。Skill 负责判断用户意图和下一步动作，Runtime 负责执行 Action，Tool 负责查询真实业务数据。这样系统不是单纯依赖大模型自由生成，而是能在订单查询、商品咨询、退换货等场景中调用确定性的业务能力，并且可以通过 Trace 看到 Agent 每一步执行过程。
-
-如果面试官问：“为什么不全靠 LLM？”
-
-可以这样回答：
-
-> 客服场景里很多问题需要确定性，比如订单状态、退货进度、库存数量，这些不能靠模型猜。所以我采用规则优先、LLM 兜底的方式。高频明确场景先走规则和工具调用，表达模糊时再用 LLM 做语义识别。这样既降低成本，也提升可控性。
-
-如果面试官问：“你现在项目最大的不足是什么？”
-
-可以这样回答：
-
-> 当前版本已经有 Agent Runtime、Skill、MCP-style 工具调用层、多轮会话状态、Agent Trace、知识库 RAG、人工转接和四类离线评测第一版。我把当前输入、跨轮状态和本轮执行过程拆成 ChatRequest、ConversationState 和 TurnContext：ChatRequest 表示当前输入，ConversationState 保存跨轮任务状态，TurnContext 保存本轮 Observation 和 TraceEvent。工具层也拆成 ToolDefinition、ToolParameterDefinition、ToolCall、ToolResult 和 ToolRegistry，能统一参数校验、inputSchema、outputSchema、成功失败和错误码；订单、商品、退货、用户和人工转接工具输出也已经从 Map 升级成明确 DTO。前端 Agent Inspector 可以展示 Trace、过滤事件、复制 Trace JSON，并展示工具 input/output schema。Runtime 会记录工具、LLM 和转人工耗时，LLM 调用失败时会记录 `llm_failed` 并基于工具结果生成降级回复。接口层使用 ChatApiRequest、Spring Validation 和 GlobalExceptionHandler 保护 HTTP 边界。CustomerServiceSkill 也做了第一轮拆分，把槽位抽取、意图规则和 Prompt 构造分别拆到独立类里。政策类问题会走 KnowledgeTools 检索 Markdown 知识库；投诉、赔偿、用户要求人工等场景会走 HandoffAction 创建人工工单。评测体系目前覆盖路由、知识库召回、回复质量规则和 Agent 链路回复，并且会输出 JSON 指标报告、历史快照和 trend 趋势报告。当前最大的不足是 Agent 链路评测仍使用 Fake LLM，没有直接评估真实模型输出，下一步会补真实模型回复评测和 LLM-as-Judge。
-
-## 13. 当前结论
-
-当前项目架构方向是正确的。
-
-它已经具备一个客服 Agent 的基本骨架：
-
-- 有入口
-- 有执行循环
-- 有决策层
-- 有 Action
-- 有工具层
-- 有模拟数据
-
-接下来最应该优先补的是：
-
-- 真实 Agent 回复质量评测
-- 工具 schema 继续标准化，后续演进为独立 MCP Server
-- LLM-as-Judge
-- 按售前、售后、投诉继续拆分 Skill
-
-多轮会话、Agent Trace、前端 Agent Inspector、MCP-style 工具层、工具 input/output schema、业务工具 DTO、知识库 RAG、人工转接、LLM 失败降级、离线路由评测、知识库召回评测、回复质量规则评测、Agent 链路回复评测、评测报告 JSON 化、评测历史趋势、结构化工具数据、Skill 第一轮拆分、接口 DTO、参数校验和统一错误响应已经完成，后续重点是真实 Agent 回复质量评测、工具 schema 标准化和更细的业务域拆分。
+> 不让模型自由决定高风险事实，不把未知伪装成失败或成功，并让每个扩展点都能通过稳定接口和自动化证据验证。

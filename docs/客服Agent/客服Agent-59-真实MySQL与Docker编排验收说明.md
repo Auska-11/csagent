@@ -252,3 +252,22 @@ docker compose down
 核心原则：
 
 > 配置文件“看起来正确”、Compose 能解析、真实数据库测试通过、完整容器健康，这四种证据强度不同，不能互相替代。
+
+## 12. 20.6 最终复验补充（2026-07-13）
+
+第二十批收口时再次从最终代码执行了完整复验，而不是只引用本文件早期批次的结果：
+
+- `clean test`：510 项，0 失败、0 错误、0 跳过；
+- 跳过测试 JAR 打包：通过；
+- `RealMySqlPersistenceIT`：1 项，0 失败、0 错误、0 跳过；
+- Agent 镜像：`sha256:6f33ac2cfa911435a20e7b10771383f360e35a7f066b3a2e3737ba6dc3cdfb11`；
+- 容器 JAR 运行时加载 9 个 Skill Package；
+- MySQL 实际存在 10 张目标表，包括新增人工处置审计表；
+- CUSTOMER 调用 PendingHandoff ADMIN API 为 403，ADMIN 为 200；
+- Agent 重启后从 JDBC 恢复 `return_apply` WAITING Workflow，并继续收集订单和退货原因；
+- MySQL 停止时 liveness=200、readiness=503，恢复后 readiness=200；
+- 验收后容器与网络已删除，`csagent_mysql_data`、`csagent_qdrant_data` 卷保留。
+
+由于本机 8080 已被 nginx 使用，Compose 新增 `SMARTCS_AGENT_PORT`，默认仍为 8080，本次使用 18080。
+容器内端口和健康探针仍固定为 8080。完整命令、RBAC、持久化和清理证据见
+`客服Agent-67-第二十批最终验收与架构收口说明.md`。

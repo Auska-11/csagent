@@ -53,5 +53,7 @@ class DockerDeploymentConfigurationTest {
         assertTrue(compose.contains("OPENAI_MAX_RETRIES: ${OPENAI_MAX_RETRIES:-1}"));
         assertTrue(compose.contains("SMARTCS_AGENT_TURN_TIMEOUT_MS: ${SMARTCS_AGENT_TURN_TIMEOUT_MS:-30000}"));
         assertTrue(compose.contains("SMARTCS_LLM_EXECUTION_CALL_TIMEOUT_MS:"));
+        // 宿主机端口必须可覆盖；容器内端口保持 8080，健康探针因此不需要跟着变化。
+        assertTrue(compose.contains("${SMARTCS_AGENT_PORT:-8080}:8080"));
     }
 }
