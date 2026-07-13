@@ -59,6 +59,37 @@ class TraceDataSanitizerTest {
     }
 
     @Test
+    void shouldOmitReviewNotesWithoutHidingStructuredDecisionFields() {
+        Map<String, Object> nested = new LinkedHashMap<>();
+        nested.put("decision_note", "人工确认远端工单已经创建");
+        nested.put("reasonNote", "客户提供了包含隐私的补充说明");
+        nested.put("reason_code", "REMOTE_CONFIRMED");
+        nested.put("action", "CONFIRM");
+
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("decisionNote", "管理员核对手机号后作出决定");
+        raw.put("reason_note", "备注中可能包含任意用户原文");
+        raw.put("reasonCode", "MANUAL_REVIEW");
+        raw.put("action", "RETRY");
+        raw.put("review", nested);
+
+        Map<String, Object> sanitized = TraceDataSanitizer.sanitizeData(raw);
+
+        // decisionNote/reasonNote 是管理员输入的自由文本，无论 camelCase 还是 snake_case，
+        // 都只在 Trace 中留下省略标记；reasonCode/action 则是安全且有排障价值的结构化字段。
+        assertEquals(TraceDataSanitizer.OMITTED, sanitized.get("decisionNote"));
+        assertEquals(TraceDataSanitizer.OMITTED, sanitized.get("reason_note"));
+        assertEquals("MANUAL_REVIEW", sanitized.get("reasonCode"));
+        assertEquals("RETRY", sanitized.get("action"));
+
+        Map<?, ?> safeReview = (Map<?, ?>) sanitized.get("review");
+        assertEquals(TraceDataSanitizer.OMITTED, safeReview.get("decision_note"));
+        assertEquals(TraceDataSanitizer.OMITTED, safeReview.get("reasonNote"));
+        assertEquals("REMOTE_CONFIRMED", safeReview.get("reason_code"));
+        assertEquals("CONFIRM", safeReview.get("action"));
+    }
+
+    @Test
     void shouldCreateImmutableDeepCopyInsteadOfKeepingCallerObjects() {
         List<Object> mutableItems = new ArrayList<>(List.of("first"));
         String[] mutableCodes = {"ARRAY-001"};

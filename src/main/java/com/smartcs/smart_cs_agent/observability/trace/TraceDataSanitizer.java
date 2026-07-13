@@ -54,7 +54,7 @@ public final class TraceDataSanitizer {
             "result", "content", "text", "error", "internalmessage",
             "errormessage", "exceptionmessage", "stacktrace", "messages",
             "prompts", "queries", "summaries", "answers", "responses",
-            "results", "contents", "reply", "replies"
+            "results", "contents", "reply", "replies", "decisionnote", "reasonnote"
     );
 
     private TraceDataSanitizer() {

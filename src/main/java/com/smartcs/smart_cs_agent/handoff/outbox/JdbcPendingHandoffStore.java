@@ -1,5 +1,15 @@
 package com.smartcs.smart_cs_agent.handoff.outbox;
 
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffEvidenceSource;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualAction;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualDecisionContext;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualDecisionResult;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualDecisionStore;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuditCursor;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuditEvent;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuditPage;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuditStore;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuthority;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewCursor;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewNotFoundException;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewPage;
@@ -32,7 +42,10 @@ import java.util.UUID;
  */
 @Component
 @ConditionalOnProperty(name = "smartcs.persistence.mode", havingValue = "jdbc")
-public class JdbcPendingHandoffStore implements PendingHandoffStore, PendingHandoffReviewStore {
+public class JdbcPendingHandoffStore implements PendingHandoffStore,
+        PendingHandoffReviewStore,
+        PendingHandoffManualDecisionStore,
+        PendingHandoffReviewAuditStore {
 
     private static final Set<PendingHandoffStatus> DUE_STATUSES = Set.of(
             PendingHandoffStatus.PREPARED,
@@ -114,6 +127,39 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore, PendingHand
                     updated_at BIGINT NOT NULL,
                     PRIMARY KEY (tenant_id, idempotency_key),
                     INDEX idx_cs_pending_handoff_claim_lease (lease_until)
+                )
+                """);
+        /*
+         * 人工处置审计使用独立的只追加表。这里故意不建立外键：审计历史在主记录未来归档后仍应保留，
+         * 而租户隔离由每次 INSERT/SELECT 都携带 tenant_id 的复合条件保证。
+         *
+         * 唯一键 (tenant_id, outbox_id, to_version) 进一步固定“一次成功状态跃迁只能有一条审计事件”；
+         * 即使以后调用链错误地重复构造事件，数据库也会拒绝第二条并让整个处置事务回滚。
+         */
+        databaseClient.update("""
+                CREATE TABLE IF NOT EXISTS cs_pending_handoff_review_audit (
+                    audit_id VARCHAR(64) NOT NULL,
+                    tenant_id VARCHAR(64) NOT NULL,
+                    outbox_id VARCHAR(64) NOT NULL,
+                    action VARCHAR(32) NOT NULL,
+                    actor_id VARCHAR(128) NOT NULL,
+                    authority_used VARCHAR(32) NOT NULL,
+                    reason_code VARCHAR(64) NOT NULL,
+                    decision_note VARCHAR(256) NOT NULL,
+                    evidence_source VARCHAR(64) NOT NULL,
+                    from_status VARCHAR(32) NOT NULL,
+                    to_status VARCHAR(32) NOT NULL,
+                    from_version BIGINT NOT NULL,
+                    to_version BIGINT NOT NULL,
+                    review_failure_type VARCHAR(128) NOT NULL,
+                    attempt_count_at_decision INT NOT NULL,
+                    scheduled_at BIGINT NULL,
+                    occurred_at BIGINT NOT NULL,
+                    PRIMARY KEY (audit_id),
+                    UNIQUE KEY uk_cs_pending_handoff_review_audit_transition
+                        (tenant_id, outbox_id, to_version),
+                    INDEX idx_cs_pending_handoff_review_audit_page
+                        (tenant_id, outbox_id, occurred_at, audit_id)
                 )
                 """);
     }
@@ -479,84 +525,97 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore, PendingHand
     }
 
     @Override
-    public PendingHandoffRecord retryFromManualReview(String tenantId,
-                                                      String outboxId,
-                                                      long expectedVersion,
-                                                      long scheduledAt) {
-        requireTimestamp(scheduledAt, "scheduledAt");
-        return updateManualReviewState(
-                tenantId,
-                outboxId,
-                expectedVersion,
+    public PendingHandoffReviewAuditPage findAuditPage(
+            String tenantId,
+            String outboxId,
+            PendingHandoffReviewAuditCursor cursor,
+            int limit) {
+        requireText(tenantId, "tenantId");
+        requireText(outboxId, "outboxId");
+        requireReviewLimit(limit);
+        String normalizedTenant = tenantId.trim();
+        String normalizedOutboxId = outboxId.trim();
+        int fetchLimit = limit + 1;
+        String cursorPredicate = cursor == null
+                ? ""
+                : "AND (occurred_at < ? OR (occurred_at = ? AND audit_id < ?))";
+        String pageSql = """
+                SELECT audit_id, tenant_id, outbox_id, action, actor_id,
+                       authority_used, reason_code, decision_note, evidence_source,
+                       from_status, to_status, from_version, to_version,
+                       review_failure_type, attempt_count_at_decision,
+                       scheduled_at, occurred_at
+                FROM cs_pending_handoff_review_audit
+                WHERE tenant_id = ? AND outbox_id = ?
+                %s
+                ORDER BY occurred_at DESC, audit_id DESC
+                LIMIT ?
+                """.formatted(cursorPredicate);
+        List<PendingHandoffReviewAuditEvent> candidates = cursor == null
+                ? databaseClient.queryList(
+                        pageSql,
+                        this::mapAuditEvent,
+                        normalizedTenant,
+                        normalizedOutboxId,
+                        fetchLimit
+                )
+                : databaseClient.queryList(
+                        pageSql,
+                        this::mapAuditEvent,
+                        normalizedTenant,
+                        normalizedOutboxId,
+                        cursor.occurredAt(),
+                        cursor.occurredAt(),
+                        cursor.auditId(),
+                        fetchLimit
+                );
+        boolean hasMore = candidates.size() > limit;
+        List<PendingHandoffReviewAuditEvent> pageEvents = hasMore
+                ? List.copyOf(candidates.subList(0, limit))
+                : candidates;
+        PendingHandoffReviewAuditCursor nextCursor = hasMore
+                ? auditCursorOf(pageEvents.get(pageEvents.size() - 1))
+                : null;
+        return new PendingHandoffReviewAuditPage(pageEvents, nextCursor, hasMore);
+    }
+
+    @Override
+    public PendingHandoffManualDecisionResult retry(PendingHandoffManualDecisionContext context) {
+        Objects.requireNonNull(context, "context cannot be null");
+        // “重试”只表示立即重新排队，真正调用远端仍由 Recovery Worker 完成。
+        return applyManualDecision(
+                context,
+                PendingHandoffManualAction.RETRY,
                 PendingHandoffStatus.RETRY_SCHEDULED,
                 "MANUAL_RETRY_REQUESTED",
-                scheduledAt,
-                scheduledAt
+                null
         );
     }
 
     @Override
-    public PendingHandoffRecord confirmFromManualReview(String tenantId,
-                                                        String outboxId,
-                                                        AfterSalesTicketCreateResult result,
-                                                        long expectedVersion) {
-        requireText(tenantId, "tenantId");
-        requireText(outboxId, "outboxId");
+    public PendingHandoffManualDecisionResult confirm(
+            PendingHandoffManualDecisionContext context,
+            AfterSalesTicketCreateResult result) {
+        Objects.requireNonNull(context, "context cannot be null");
         Objects.requireNonNull(result, "result cannot be null");
-        String normalizedTenant = tenantId.trim();
-        String normalizedOutboxId = outboxId.trim();
-
-        return databaseClient.inTransaction(operations -> {
-            // 事务回调中只能使用 operations，不能调用外层 databaseClient，否则会意外打开新连接。
-            PendingHandoffRecord current = findByTenantAndOutboxIdForUpdate(
-                    operations,
-                    normalizedTenant,
-                    normalizedOutboxId
-            ).orElseThrow(PendingHandoffReviewNotFoundException::new);
-            validateManualReviewTransition(current, expectedVersion);
-
-            saveConfirmedResult(operations, current.key(), result);
-            long now = System.currentTimeMillis();
-            int changed = operations.update("""
-                    UPDATE cs_pending_handoff
-                    SET status = ?, failure_type = ?, next_attempt_at = 0,
-                        version = version + 1, updated_at = ?
-                    WHERE tenant_id = ? AND outbox_id = ?
-                      AND version = ? AND status = ?
-                    """,
-                    PendingHandoffStatus.CONFIRMED.name(),
-                    "NONE",
-                    now,
-                    normalizedTenant,
-                    normalizedOutboxId,
-                    expectedVersion,
-                    PendingHandoffStatus.NEEDS_MANUAL_REVIEW.name());
-            if (changed != 1) {
-                // 结果 INSERT 也在同一事务内；抛异常会统一 rollback，不会留下半成功证据。
-                throw new PendingHandoffVersionConflictException();
-            }
-            return loadStored(operations, current.key())
-                    .map(StoredPendingHandoff::record)
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Confirmed manual handoff could not be loaded"
-                    ));
-        });
+        return applyManualDecision(
+                context,
+                PendingHandoffManualAction.CONFIRM,
+                PendingHandoffStatus.CONFIRMED,
+                "NONE",
+                result
+        );
     }
 
     @Override
-    public PendingHandoffRecord closeFromManualReview(String tenantId,
-                                                      String outboxId,
-                                                      long expectedVersion,
-                                                      long closedAt) {
-        requireTimestamp(closedAt, "closedAt");
-        return updateManualReviewState(
-                tenantId,
-                outboxId,
-                expectedVersion,
+    public PendingHandoffManualDecisionResult close(PendingHandoffManualDecisionContext context) {
+        Objects.requireNonNull(context, "context cannot be null");
+        return applyManualDecision(
+                context,
+                PendingHandoffManualAction.CLOSE,
                 PendingHandoffStatus.MANUALLY_CLOSED,
                 "MANUALLY_CLOSED",
-                Long.MAX_VALUE,
-                closedAt
+                null
         );
     }
 
@@ -858,25 +917,67 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore, PendingHand
         return loadStored(operations, lockedKey.get()).map(StoredPendingHandoff::record);
     }
 
-    private PendingHandoffRecord updateManualReviewState(
-            String tenantId,
-            String outboxId,
-            long expectedVersion,
+    private PendingHandoffManualDecisionResult applyManualDecision(
+            PendingHandoffManualDecisionContext context,
+            PendingHandoffManualAction action,
             PendingHandoffStatus targetStatus,
-            String failureType,
-            long nextAttemptAt,
-            long updatedAt) {
-        requireText(tenantId, "tenantId");
-        requireText(outboxId, "outboxId");
-        String normalizedTenant = tenantId.trim();
-        String normalizedOutboxId = outboxId.trim();
+            String targetFailureType,
+            AfterSalesTicketCreateResult confirmedResult) {
+        if ((action == PendingHandoffManualAction.CONFIRM) != (confirmedResult != null)) {
+            throw new IllegalArgumentException(
+                    "Only CONFIRM decisions may carry a confirmed result"
+            );
+        }
+
         return databaseClient.inTransaction(operations -> {
+            /*
+             * 三个管理员动作都先锁同一条主记录。这样两个管理员、以及管理员与迟到 Worker，必须在
+             * MySQL 的同一把行锁上排队；后取得锁的一方会看到新 version/status 并被稳定拒绝。
+             *
+             * 回调中只使用 connection-bound operations。主表 CAS、确认结果和审计 INSERT 中任何一步
+             * 失败都会抛异常，由 JdbcDatabaseClient 统一 rollback，绝不允许“状态变了但没有审计”。
+             */
             PendingHandoffRecord current = findByTenantAndOutboxIdForUpdate(
                     operations,
-                    normalizedTenant,
-                    normalizedOutboxId
+                    context.tenantId(),
+                    context.outboxId()
             ).orElseThrow(PendingHandoffReviewNotFoundException::new);
-            validateManualReviewTransition(current, expectedVersion);
+            validateManualReviewTransition(current, context.expectedVersion());
+
+            // 时间在真正取得行锁并通过状态校验后生成。若事务曾等待其他持锁者，审计记录的是实际决定时间，
+            // 而不是进入 Repository 的较早时间；RETRY 也从这一刻立即进入 Worker 调度队列。
+            long occurredAt = System.currentTimeMillis();
+            long nextAttemptAt = switch (action) {
+                case RETRY -> occurredAt;
+                case CONFIRM -> 0;
+                case CLOSE -> Long.MAX_VALUE;
+            };
+            Long scheduledAt = action == PendingHandoffManualAction.RETRY ? occurredAt : null;
+
+            PendingHandoffReviewAuditEvent auditEvent = new PendingHandoffReviewAuditEvent(
+                    UUID.randomUUID().toString(),
+                    current.tenantId(),
+                    current.outboxId(),
+                    action,
+                    context.actorId(),
+                    context.authorityUsed(),
+                    context.reasonCode(),
+                    context.decisionNote(),
+                    context.evidenceSource(),
+                    current.status(),
+                    targetStatus,
+                    current.version(),
+                    current.version() + 1,
+                    current.failureType(),
+                    current.attemptCount(),
+                    scheduledAt,
+                    occurredAt
+            );
+
+            if (confirmedResult != null) {
+                // 成功证据与主表状态、审计事件属于同一个人工确认事务。
+                saveConfirmedResult(operations, current.key(), confirmedResult);
+            }
             int changed = operations.update("""
                     UPDATE cs_pending_handoff
                     SET status = ?, failure_type = ?, next_attempt_at = ?,
@@ -885,22 +986,61 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore, PendingHand
                       AND version = ? AND status = ?
                     """,
                     targetStatus.name(),
-                    failureType,
+                    targetFailureType,
                     nextAttemptAt,
-                    updatedAt,
-                    normalizedTenant,
-                    normalizedOutboxId,
-                    expectedVersion,
+                    occurredAt,
+                    context.tenantId(),
+                    context.outboxId(),
+                    context.expectedVersion(),
                     PendingHandoffStatus.NEEDS_MANUAL_REVIEW.name());
             if (changed != 1) {
                 throw new PendingHandoffVersionConflictException();
             }
-            return loadStored(operations, current.key())
+
+            appendAuditEvent(operations, auditEvent);
+            PendingHandoffRecord updated = loadStored(operations, current.key())
                     .map(StoredPendingHandoff::record)
                     .orElseThrow(() -> new IllegalStateException(
-                            "Updated manual handoff could not be loaded"
+                            "Audited manual handoff could not be loaded"
                     ));
+            return new PendingHandoffManualDecisionResult(updated, auditEvent);
         });
+    }
+
+    private void appendAuditEvent(JdbcDatabaseOperations operations,
+                                  PendingHandoffReviewAuditEvent event) {
+        int changed = operations.update("""
+                INSERT INTO cs_pending_handoff_review_audit(
+                    audit_id, tenant_id, outbox_id, action, actor_id,
+                    authority_used, reason_code, decision_note, evidence_source,
+                    from_status, to_status, from_version, to_version,
+                    review_failure_type, attempt_count_at_decision,
+                    scheduled_at, occurred_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                event.auditId(),
+                event.tenantId(),
+                event.outboxId(),
+                event.action().name(),
+                event.actorId(),
+                event.authorityUsed().name(),
+                event.reasonCode(),
+                event.decisionNote(),
+                event.evidenceSource().name(),
+                event.fromStatus().name(),
+                event.toStatus().name(),
+                event.fromVersion(),
+                event.toVersion(),
+                event.reviewFailureType(),
+                event.attemptCountAtDecision(),
+                event.scheduledAt(),
+                event.occurredAt());
+        if (changed != 1) {
+            // 审计不是“尽力而为”的旁路日志；没有成功追加一行就必须让业务状态一起回滚。
+            throw new IllegalStateException(
+                    "Pending handoff review audit insert did not change exactly one row"
+            );
+        }
     }
 
     private void validateManualReviewTransition(PendingHandoffRecord current,
@@ -920,8 +1060,38 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore, PendingHand
         );
     }
 
+    private PendingHandoffReviewAuditEvent mapAuditEvent(ResultSet resultSet) throws SQLException {
+        Object rawScheduledAt = resultSet.getObject("scheduled_at");
+        Long scheduledAt = rawScheduledAt == null
+                ? null
+                : ((Number) rawScheduledAt).longValue();
+        return new PendingHandoffReviewAuditEvent(
+                resultSet.getString("audit_id"),
+                resultSet.getString("tenant_id"),
+                resultSet.getString("outbox_id"),
+                PendingHandoffManualAction.valueOf(resultSet.getString("action")),
+                resultSet.getString("actor_id"),
+                PendingHandoffReviewAuthority.valueOf(resultSet.getString("authority_used")),
+                resultSet.getString("reason_code"),
+                resultSet.getString("decision_note"),
+                PendingHandoffEvidenceSource.valueOf(resultSet.getString("evidence_source")),
+                PendingHandoffStatus.valueOf(resultSet.getString("from_status")),
+                PendingHandoffStatus.valueOf(resultSet.getString("to_status")),
+                resultSet.getLong("from_version"),
+                resultSet.getLong("to_version"),
+                resultSet.getString("review_failure_type"),
+                resultSet.getInt("attempt_count_at_decision"),
+                scheduledAt,
+                resultSet.getLong("occurred_at")
+        );
+    }
+
     private PendingHandoffReviewCursor cursorOf(PendingHandoffRecord record) {
         return new PendingHandoffReviewCursor(record.updatedAt(), record.outboxId());
+    }
+
+    private PendingHandoffReviewAuditCursor auditCursorOf(PendingHandoffReviewAuditEvent event) {
+        return new PendingHandoffReviewAuditCursor(event.occurredAt(), event.auditId());
     }
 
     /**
@@ -956,12 +1126,6 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore, PendingHand
     private void requireReviewLimit(int limit) {
         if (limit < 1 || limit > 100) {
             throw new IllegalArgumentException("limit must be between 1 and 100");
-        }
-    }
-
-    private void requireTimestamp(long value, String field) {
-        if (value < 0) {
-            throw new IllegalArgumentException(field + " cannot be negative");
         }
     }
 

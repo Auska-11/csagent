@@ -1,5 +1,13 @@
 package com.smartcs.smart_cs_agent.handoff.outbox;
 
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffEvidenceSource;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualAction;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualDecisionContext;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualDecisionResult;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuditCursor;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuditEvent;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuditPage;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuthority;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewNotFoundException;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewPage;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffStateConflictException;
@@ -13,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -57,6 +66,10 @@ class JdbcPendingHandoffStoreTest {
                 .anyMatch(sql -> sql.contains("CREATE TABLE IF NOT EXISTS cs_pending_handoff_result")));
         assertTrue(database.createTableSqls.stream()
                 .anyMatch(sql -> sql.contains("idx_cs_pending_handoff_tenant_review")));
+        assertTrue(database.createTableSqls.stream()
+                .anyMatch(sql -> sql.contains("CREATE TABLE IF NOT EXISTS cs_pending_handoff_review_audit")
+                        && sql.contains("uk_cs_pending_handoff_review_audit_transition")
+                        && sql.contains("idx_cs_pending_handoff_review_audit_page")));
     }
 
     @Test
@@ -392,9 +405,9 @@ class JdbcPendingHandoffStoreTest {
                 command("tenant-a", "closed-with-legacy-result", "关闭终态优先"),
                 "owner-closed-result"
         );
-        PendingHandoffRecord closed = store.closeFromManualReview(
-                "tenant-a", manual.outboxId(), manual.version(), 6_000L
-        );
+        PendingHandoffRecord closed = store.close(decisionContext(
+                "tenant-a", manual, manual.version(), PendingHandoffEvidenceSource.NONE
+        )).record();
 
         // 模拟历史异常留下的 MANUALLY_CLOSED + result 组合；读取围栏必须让人工关闭继续胜出。
         database.injectLegacyResult(closed.key(), result("AS-LEGACY-AFTER-CLOSE"));
@@ -429,9 +442,9 @@ class JdbcPendingHandoffStoreTest {
                 command("tenant-a", "closed-rejects-result", "关闭后拒绝确认"),
                 "owner-closed-confirm"
         );
-        PendingHandoffRecord closed = store.closeFromManualReview(
-                "tenant-a", manual.outboxId(), manual.version(), 7_000L
-        );
+        PendingHandoffRecord closed = store.close(decisionContext(
+                "tenant-a", manual, manual.version(), PendingHandoffEvidenceSource.NONE
+        )).record();
 
         assertThrows(
                 PendingHandoffStateConflictException.class,
@@ -445,7 +458,7 @@ class JdbcPendingHandoffStoreTest {
     }
 
     @Test
-    void shouldApplyJdbcManualActionsAndRollbackFailedConfirmation() {
+    void shouldApplyJdbcManualActionsAndAppendCompleteAuditEvents() {
         RecordingJdbcDatabaseClient database = new RecordingJdbcDatabaseClient();
         JdbcPendingHandoffStore store = new JdbcPendingHandoffStore(database, 1);
         PendingHandoffRecord retrySource = moveToManualReview(
@@ -457,20 +470,23 @@ class JdbcPendingHandoffStoreTest {
         PendingHandoffRecord closeSource = moveToManualReview(
                 store, command("tenant-a", "action-close", "关闭"), "owner-close"
         );
-        PendingHandoffRecord rollbackSource = moveToManualReview(
-                store, command("tenant-a", "action-rollback", "事务回滚"), "owner-rollback"
-        );
-
-        PendingHandoffRecord retried = store.retryFromManualReview(
-                "tenant-a", retrySource.outboxId(), retrySource.version(), 2_000L
-        );
+        PendingHandoffManualDecisionResult retryDecision = store.retry(decisionContext(
+                "tenant-a", retrySource, retrySource.version(), PendingHandoffEvidenceSource.NONE
+        ));
         AfterSalesTicketCreateResult result = result("AS-MANUAL-JDBC");
-        PendingHandoffRecord confirmed = store.confirmFromManualReview(
-                "tenant-a", confirmSource.outboxId(), result, confirmSource.version()
-        );
-        PendingHandoffRecord closed = store.closeFromManualReview(
-                "tenant-a", closeSource.outboxId(), closeSource.version(), 3_000L
-        );
+        PendingHandoffManualDecisionResult confirmDecision = store.confirm(decisionContext(
+                "tenant-a",
+                confirmSource,
+                confirmSource.version(),
+                PendingHandoffEvidenceSource.ADMIN_PROVIDED
+        ), result);
+        PendingHandoffManualDecisionResult closeDecision = store.close(decisionContext(
+                "tenant-a", closeSource, closeSource.version(), PendingHandoffEvidenceSource.NONE
+        ));
+
+        PendingHandoffRecord retried = retryDecision.record();
+        PendingHandoffRecord confirmed = confirmDecision.record();
+        PendingHandoffRecord closed = closeDecision.record();
 
         assertEquals(PendingHandoffStatus.RETRY_SCHEDULED, retried.status());
         assertEquals(retrySource.attemptCount(), retried.attemptCount());
@@ -478,46 +494,54 @@ class JdbcPendingHandoffStoreTest {
         assertEquals(result, confirmed.confirmedResult());
         assertEquals(confirmSource.attemptCount(), confirmed.attemptCount());
         assertEquals(PendingHandoffStatus.MANUALLY_CLOSED, closed.status());
+        assertManualAudit(
+                retryDecision,
+                retrySource,
+                PendingHandoffManualAction.RETRY,
+                PendingHandoffEvidenceSource.NONE
+        );
+        assertManualAudit(
+                confirmDecision,
+                confirmSource,
+                PendingHandoffManualAction.CONFIRM,
+                PendingHandoffEvidenceSource.ADMIN_PROVIDED
+        );
+        assertManualAudit(
+                closeDecision,
+                closeSource,
+                PendingHandoffManualAction.CLOSE,
+                PendingHandoffEvidenceSource.NONE
+        );
+        assertEquals(3, database.audits.size());
         assertEquals(3, database.committedTransactions,
-                "retry、confirm、close 都必须在各自事务内完成更新和回读");
+                "retry、confirm、close 都必须在各自事务内完成更新、审计追加和回读");
 
-        database.failNextManualConfirmationUpdate = true;
         assertThrows(
                 PendingHandoffVersionConflictException.class,
-                () -> store.confirmFromManualReview(
+                () -> store.close(decisionContext(
                         "tenant-a",
-                        rollbackSource.outboxId(),
-                        result("AS-MUST-ROLLBACK"),
-                        rollbackSource.version()
-                )
-        );
-        assertEquals(1, database.rolledBackTransactions);
-        assertEquals(
-                PendingHandoffStatus.NEEDS_MANUAL_REVIEW,
-                store.findByTenantAndOutboxId("tenant-a", rollbackSource.outboxId())
-                        .orElseThrow()
-                        .status()
-        );
-        assertFalse(database.results.containsKey(rollbackSource.key()),
-                "CAS 失败时成功结果 INSERT 必须随事务一起回滚");
-
-        assertThrows(
-                PendingHandoffVersionConflictException.class,
-                () -> store.closeFromManualReview(
-                        "tenant-a", retrySource.outboxId(), retrySource.version(), 4_000L
-                )
+                        retrySource,
+                        retrySource.version(),
+                        PendingHandoffEvidenceSource.NONE
+                ))
         );
         assertThrows(
                 PendingHandoffStateConflictException.class,
-                () -> store.closeFromManualReview(
-                        "tenant-a", confirmSource.outboxId(), confirmed.version(), 4_000L
-                )
+                () -> store.close(decisionContext(
+                        "tenant-a",
+                        confirmed,
+                        confirmed.version(),
+                        PendingHandoffEvidenceSource.NONE
+                ))
         );
         assertThrows(
                 PendingHandoffReviewNotFoundException.class,
-                () -> store.closeFromManualReview(
-                        "tenant-b", closeSource.outboxId(), closeSource.version(), 4_000L
-                )
+                () -> store.close(decisionContext(
+                        "tenant-b",
+                        closed,
+                        closed.version(),
+                        PendingHandoffEvidenceSource.NONE
+                ))
         );
         assertThrows(
                 PendingHandoffStateConflictException.class,
@@ -527,6 +551,121 @@ class JdbcPendingHandoffStoreTest {
                 PendingHandoffStateConflictException.class,
                 () -> store.markResultUnknown(closed.key(), "TooLate", closed.version())
         );
+    }
+
+    @Test
+    void shouldRollbackMainResultAndAuditTogetherWhenAuditInsertFails() {
+        RecordingJdbcDatabaseClient database = new RecordingJdbcDatabaseClient();
+        JdbcPendingHandoffStore store = new JdbcPendingHandoffStore(database, 1);
+        PendingHandoffRecord rollbackSource = moveToManualReview(
+                store, command("tenant-a", "action-rollback", "事务回滚"), "owner-rollback"
+        );
+
+        // CONFIRM 在审计 INSERT 前已经写入 result 并更新主表。这里从最后一步注入故障，
+        // 可以同时证明三个容器都由同一个数据库事务保护，而不只是“恰好没有写 result”。
+        database.failNextAuditInsert = true;
+        assertThrows(
+                IllegalStateException.class,
+                () -> store.confirm(decisionContext(
+                        "tenant-a",
+                        rollbackSource,
+                        rollbackSource.version(),
+                        PendingHandoffEvidenceSource.ADMIN_PROVIDED
+                ), result("AS-MUST-ROLLBACK"))
+        );
+
+        assertEquals(1, database.rolledBackTransactions);
+        assertEquals(
+                PendingHandoffStatus.NEEDS_MANUAL_REVIEW,
+                store.findByTenantAndOutboxId("tenant-a", rollbackSource.outboxId())
+                        .orElseThrow()
+                        .status()
+        );
+        assertFalse(database.results.containsKey(rollbackSource.key()),
+                "审计失败时成功结果 INSERT 必须随事务一起回滚");
+        assertTrue(database.audits.isEmpty(),
+                "失败事务既不能留下业务变更，也不能留下声称操作成功的审计事件");
+
+        // 原有 CAS 失败注入仍保留，避免未来调整 SQL 顺序后退化成半成功。
+        database.failNextManualConfirmationUpdate = true;
+        assertThrows(
+                PendingHandoffVersionConflictException.class,
+                () -> store.confirm(decisionContext(
+                        "tenant-a",
+                        rollbackSource,
+                        rollbackSource.version(),
+                        PendingHandoffEvidenceSource.ADMIN_PROVIDED
+                ), result("AS-MUST-ROLLBACK-CAS"))
+        );
+        assertEquals(2, database.rolledBackTransactions);
+        assertFalse(database.results.containsKey(rollbackSource.key()));
+        assertTrue(database.audits.isEmpty());
+    }
+
+    @Test
+    void shouldQueryJdbcAuditTimelineInsideTenantBoundary() {
+        RecordingJdbcDatabaseClient database = new RecordingJdbcDatabaseClient();
+        JdbcPendingHandoffStore store = new JdbcPendingHandoffStore(database, 1);
+        PendingHandoffRecord tenantA = moveToManualReview(
+                store, command("tenant-a", "audit-tenant-a", "A 租户审计"), "owner-audit-a"
+        );
+        PendingHandoffRecord tenantB = moveToManualReview(
+                store, command("tenant-b", "audit-tenant-b", "B 租户审计"), "owner-audit-b"
+        );
+        PendingHandoffManualDecisionResult tenantADecision = store.close(decisionContext(
+                "tenant-a", tenantA, tenantA.version(), PendingHandoffEvidenceSource.NONE
+        ));
+        store.close(decisionContext(
+                "tenant-b", tenantB, tenantB.version(), PendingHandoffEvidenceSource.NONE
+        ));
+
+        PendingHandoffReviewAuditPage ownPage = store.findAuditPage(
+                "tenant-a", tenantA.outboxId(), null, 10
+        );
+        PendingHandoffReviewAuditPage crossTenantPage = store.findAuditPage(
+                "tenant-b", tenantA.outboxId(), null, 10
+        );
+
+        assertFalse(ownPage.hasMore());
+        assertEquals(List.of(tenantADecision.auditEvent()), ownPage.events());
+        assertTrue(crossTenantPage.events().isEmpty(),
+                "只知道 outboxId 不能跨租户读取管理员身份和决定备注");
+        assertTrue(store.findAuditPage("tenant-a", "missing-outbox", null, 10)
+                .events()
+                .isEmpty());
+    }
+
+    @Test
+    void shouldPageJdbcAuditsByOccurredAtAndAuditIdWithoutTieDuplicates() {
+        RecordingJdbcDatabaseClient database = new RecordingJdbcDatabaseClient();
+        JdbcPendingHandoffStore store = new JdbcPendingHandoffStore(database, 1);
+        String outboxId = "outbox-audit-keyset";
+        long sameOccurredAt = 9_000L;
+
+        // 毫秒时间戳可能相同，所以游标必须同时携带 auditId。这里故意逆序注入，
+        // 证明结果来自 SQL 排序而不是 Map 的偶然迭代顺序。
+        database.injectClosedAudit("audit-a", "tenant-a", outboxId, 3, sameOccurredAt);
+        database.injectClosedAudit("audit-c", "tenant-a", outboxId, 1, sameOccurredAt);
+        database.injectClosedAudit("audit-b", "tenant-a", outboxId, 2, sameOccurredAt);
+        database.injectClosedAudit("audit-z-other", "tenant-b", outboxId, 1, sameOccurredAt);
+
+        PendingHandoffReviewAuditPage first = store.findAuditPage(
+                "tenant-a", outboxId, null, 2
+        );
+        PendingHandoffReviewAuditPage second = store.findAuditPage(
+                "tenant-a", outboxId, first.nextCursor(), 2
+        );
+
+        assertTrue(first.hasMore());
+        assertEquals(List.of("audit-c", "audit-b"), first.events().stream()
+                .map(PendingHandoffReviewAuditEvent::auditId)
+                .toList());
+        assertEquals(new PendingHandoffReviewAuditCursor(sameOccurredAt, "audit-b"),
+                first.nextCursor());
+        assertFalse(second.hasMore());
+        assertEquals(List.of("audit-a"), second.events().stream()
+                .map(PendingHandoffReviewAuditEvent::auditId)
+                .toList());
     }
 
     @Test
@@ -607,22 +746,78 @@ class JdbcPendingHandoffStoreTest {
             long expectedVersion) {
         assertThrows(
                 expectedType,
-                () -> store.retryFromManualReview(
-                        tenantId, source.outboxId(), expectedVersion, 5_000L
-                )
+                () -> store.retry(decisionContext(
+                        tenantId,
+                        source,
+                        expectedVersion,
+                        PendingHandoffEvidenceSource.NONE
+                ))
         );
         assertThrows(
                 expectedType,
-                () -> store.confirmFromManualReview(
-                        tenantId, source.outboxId(), result("AS-JDBC-CONFLICT-MATRIX"), expectedVersion
-                )
+                () -> store.confirm(decisionContext(
+                        tenantId,
+                        source,
+                        expectedVersion,
+                        PendingHandoffEvidenceSource.ADMIN_PROVIDED
+                ), result("AS-JDBC-CONFLICT-MATRIX"))
         );
         assertThrows(
                 expectedType,
-                () -> store.closeFromManualReview(
-                        tenantId, source.outboxId(), expectedVersion, 5_000L
-                )
+                () -> store.close(decisionContext(
+                        tenantId,
+                        source,
+                        expectedVersion,
+                        PendingHandoffEvidenceSource.NONE
+                ))
         );
+    }
+
+    private PendingHandoffManualDecisionContext decisionContext(
+            String tenantId,
+            PendingHandoffRecord source,
+            long expectedVersion,
+            PendingHandoffEvidenceSource evidenceSource) {
+        return new PendingHandoffManualDecisionContext(
+                tenantId,
+                source.outboxId(),
+                expectedVersion,
+                "admin-jdbc",
+                PendingHandoffReviewAuthority.ADMIN,
+                "TEST_MANUAL_DECISION",
+                "测试人工处置备注",
+                evidenceSource
+        );
+    }
+
+    private void assertManualAudit(PendingHandoffManualDecisionResult decision,
+                                   PendingHandoffRecord source,
+                                   PendingHandoffManualAction action,
+                                   PendingHandoffEvidenceSource evidenceSource) {
+        PendingHandoffRecord record = decision.record();
+        PendingHandoffReviewAuditEvent audit = decision.auditEvent();
+
+        assertEquals(source.tenantId(), audit.tenantId());
+        assertEquals(source.outboxId(), audit.outboxId());
+        assertEquals(action, audit.action());
+        assertEquals("admin-jdbc", audit.actorId());
+        assertEquals(PendingHandoffReviewAuthority.ADMIN, audit.authorityUsed());
+        assertEquals("TEST_MANUAL_DECISION", audit.reasonCode());
+        assertEquals("测试人工处置备注", audit.decisionNote());
+        assertEquals(evidenceSource, audit.evidenceSource());
+        assertEquals(PendingHandoffStatus.NEEDS_MANUAL_REVIEW, audit.fromStatus());
+        assertEquals(record.status(), audit.toStatus());
+        assertEquals(source.version(), audit.fromVersion());
+        assertEquals(record.version(), audit.toVersion());
+        assertEquals(source.failureType(), audit.reviewFailureType());
+        assertEquals(source.attemptCount(), audit.attemptCountAtDecision());
+        assertEquals(record.attemptCount(), audit.attemptCountAtDecision());
+        assertTrue(audit.occurredAt() >= source.updatedAt());
+        if (action == PendingHandoffManualAction.RETRY) {
+            assertEquals(record.nextAttemptAt(), audit.scheduledAt());
+        } else {
+            assertNull(audit.scheduledAt());
+        }
     }
 
     private PendingHandoffRecord moveToManualReview(JdbcPendingHandoffStore store,
@@ -671,6 +866,7 @@ class JdbcPendingHandoffStoreTest {
         private final Map<PendingHandoffKey, Row> rows = new ConcurrentHashMap<>();
         private final Map<PendingHandoffKey, ResultRow> results = new ConcurrentHashMap<>();
         private final Map<PendingHandoffKey, ClaimRow> claims = new ConcurrentHashMap<>();
+        private final Map<String, AuditRow> audits = new ConcurrentHashMap<>();
         private final List<String> createTableSqls = new ArrayList<>();
         private final List<String> dueQuerySqls = new ArrayList<>();
         private final ThreadLocal<Boolean> transactionActive =
@@ -693,6 +889,7 @@ class JdbcPendingHandoffStoreTest {
         };
         private boolean skipNextConfirmationStatusUpdate;
         private boolean failNextManualConfirmationUpdate;
+        private boolean failNextAuditInsert;
         private int committedTransactions;
         private int rolledBackTransactions;
 
@@ -712,7 +909,22 @@ class JdbcPendingHandoffStoreTest {
                 createTableSqls.add(sql);
                 return 0;
             }
-            // 必须先判断更长的结果表前缀，否则它也会匹配 cs_pending_handoff。
+            // 审计表、结果表和 claim 表都共享主表前缀，必须先识别更长的名字，
+            // 否则 17 列审计 INSERT 会被误当成 21 列主记录。
+            if (normalized.startsWith("INSERT INTO cs_pending_handoff_review_audit")) {
+                if (failNextAuditInsert) {
+                    failNextAuditInsert = false;
+                    throw new IllegalStateException("Injected audit insert failure");
+                }
+                if (args.length != 17) {
+                    throw new AssertionError("Audit INSERT must provide all 17 columns");
+                }
+                AuditRow candidate = AuditRow.from(args);
+                if (audits.putIfAbsent(candidate.auditId, candidate) != null) {
+                    throw duplicate();
+                }
+                return 1;
+            }
             if (normalized.startsWith("INSERT INTO cs_pending_handoff_result")) {
                 PendingHandoffKey key = key(args[0], args[1]);
                 ResultRow candidate = new ResultRow(
@@ -811,6 +1023,10 @@ class JdbcPendingHandoffStoreTest {
         private <T> List<T> executeQueryList(String sql,
                                              RowMapper<T> mapper,
                                              Object... args) {
+            // 和 INSERT 一样，审计表名必须先于主表匹配。
+            if (sql.contains("FROM cs_pending_handoff_review_audit")) {
+                return queryAuditPage(sql, mapper, args);
+            }
             if (!sql.contains("FROM cs_pending_handoff")) {
                 throw new IllegalArgumentException("Unexpected query SQL: " + sql);
             }
@@ -881,6 +1097,7 @@ class JdbcPendingHandoffStoreTest {
             Map<PendingHandoffKey, Row> rowsBefore = new ConcurrentHashMap<>(rows);
             Map<PendingHandoffKey, ResultRow> resultsBefore = new ConcurrentHashMap<>(results);
             Map<PendingHandoffKey, ClaimRow> claimsBefore = new ConcurrentHashMap<>(claims);
+            Map<String, AuditRow> auditsBefore = new ConcurrentHashMap<>(audits);
             transactionActive.set(true);
             try {
                 T result = work.execute(boundOperations);
@@ -893,6 +1110,8 @@ class JdbcPendingHandoffStoreTest {
                 results.putAll(resultsBefore);
                 claims.clear();
                 claims.putAll(claimsBefore);
+                audits.clear();
+                audits.putAll(auditsBefore);
                 rolledBackTransactions++;
                 throw failure;
             } finally {
@@ -969,6 +1188,53 @@ class JdbcPendingHandoffStoreTest {
                 }
             }
             return mapped;
+        }
+
+        private <T> List<T> queryAuditPage(String sql, RowMapper<T> mapper, Object[] args) {
+            boolean hasCursor = args.length == 6;
+            assertAuditQuerySql(sql, hasCursor);
+            String tenantId = args[0].toString();
+            String outboxId = args[1].toString();
+            long cursorOccurredAt = hasCursor ? number(args[2]).longValue() : Long.MAX_VALUE;
+            String cursorAuditId = hasCursor ? args[4].toString() : null;
+            int limit = number(args[hasCursor ? 5 : 2]).intValue();
+
+            List<AuditRow> ordered = audits.values().stream()
+                    .filter(row -> row.tenantId.equals(tenantId))
+                    .filter(row -> row.outboxId.equals(outboxId))
+                    .filter(row -> !hasCursor
+                            || row.occurredAt < cursorOccurredAt
+                            || (row.occurredAt == cursorOccurredAt
+                            && row.auditId.compareTo(cursorAuditId) < 0))
+                    .sorted(Comparator.comparingLong(AuditRow::occurredAt)
+                            .reversed()
+                            .thenComparing(AuditRow::auditId, Comparator.reverseOrder()))
+                    .limit(limit)
+                    .toList();
+
+            List<T> mapped = new ArrayList<>();
+            for (AuditRow row : ordered) {
+                mapped.add(mapAudit(row, mapper));
+            }
+            return mapped;
+        }
+
+        private void assertAuditQuerySql(String sql, boolean hasCursor) {
+            String normalized = normalizeSql(sql);
+            requireSqlFragment(normalized,
+                    "SELECT audit_id, tenant_id, outbox_id, action, actor_id,");
+            requireSqlFragment(normalized,
+                    "review_failure_type, attempt_count_at_decision, scheduled_at, occurred_at");
+            requireSqlFragment(normalized,
+                    "FROM cs_pending_handoff_review_audit WHERE tenant_id = ? AND outbox_id = ?");
+            requireSqlFragment(normalized,
+                    "ORDER BY occurred_at DESC, audit_id DESC LIMIT ?");
+            String keyset = "AND (occurred_at < ? OR (occurred_at = ? AND audit_id < ?))";
+            if (hasCursor) {
+                requireSqlFragment(normalized, keyset);
+            } else {
+                requireSqlAbsent(normalized, keyset);
+            }
         }
 
         private void assertReviewQuerySql(String sql,
@@ -1120,33 +1386,29 @@ class JdbcPendingHandoffStoreTest {
             requireSqlFragment(sql, "UPDATE cs_pending_handoff SET status = ?");
             requireSqlFragment(sql, "WHERE tenant_id = ? AND outbox_id = ?");
             requireSqlFragment(sql, "AND version = ? AND status = ?");
-            boolean confirmation = sql.contains("next_attempt_at = 0");
+            boolean confirmation = PendingHandoffStatus.CONFIRMED.name().equals(args[0].toString());
             if (confirmation && failNextManualConfirmationUpdate) {
                 failNextManualConfirmationUpdate = false;
                 return 0;
             }
-            int tenantIndex = confirmation ? 3 : 4;
-            int outboxIndex = confirmation ? 4 : 5;
-            int versionIndex = confirmation ? 5 : 6;
-            int sourceStatusIndex = confirmation ? 6 : 7;
             PendingHandoffKey key = findKeyByOutbox(
-                    args[tenantIndex].toString(),
-                    args[outboxIndex].toString()
+                    args[4].toString(),
+                    args[5].toString()
             );
             if (key == null) {
                 return 0;
             }
             Row existing = rows.get(key);
-            if (number(existing.values[18]).longValue() != number(args[versionIndex]).longValue()
-                    || !existing.values[14].toString().equals(args[sourceStatusIndex].toString())) {
+            if (number(existing.values[18]).longValue() != number(args[6]).longValue()
+                    || !existing.values[14].toString().equals(args[7].toString())) {
                 return 0;
             }
             Object[] changed = existing.values.clone();
             changed[14] = args[0];
             changed[15] = args[1];
-            changed[17] = confirmation ? 0L : args[2];
+            changed[17] = args[2];
             changed[18] = number(changed[18]).longValue() + 1;
-            changed[20] = confirmation ? args[2] : args[3];
+            changed[20] = args[3];
             rows.put(key, new Row(changed));
             return 1;
         }
@@ -1243,6 +1505,34 @@ class JdbcPendingHandoffStoreTest {
             }
         }
 
+        private <T> T mapAudit(AuditRow row, RowMapper<T> mapper) {
+            ResultSet resultSet = mock(ResultSet.class);
+            try {
+                when(resultSet.getString("audit_id")).thenReturn(row.auditId);
+                when(resultSet.getString("tenant_id")).thenReturn(row.tenantId);
+                when(resultSet.getString("outbox_id")).thenReturn(row.outboxId);
+                when(resultSet.getString("action")).thenReturn(row.action);
+                when(resultSet.getString("actor_id")).thenReturn(row.actorId);
+                when(resultSet.getString("authority_used")).thenReturn(row.authorityUsed);
+                when(resultSet.getString("reason_code")).thenReturn(row.reasonCode);
+                when(resultSet.getString("decision_note")).thenReturn(row.decisionNote);
+                when(resultSet.getString("evidence_source")).thenReturn(row.evidenceSource);
+                when(resultSet.getString("from_status")).thenReturn(row.fromStatus);
+                when(resultSet.getString("to_status")).thenReturn(row.toStatus);
+                when(resultSet.getLong("from_version")).thenReturn(row.fromVersion);
+                when(resultSet.getLong("to_version")).thenReturn(row.toVersion);
+                when(resultSet.getString("review_failure_type"))
+                        .thenReturn(row.reviewFailureType);
+                when(resultSet.getInt("attempt_count_at_decision"))
+                        .thenReturn(row.attemptCountAtDecision);
+                when(resultSet.getObject("scheduled_at")).thenReturn(row.scheduledAt);
+                when(resultSet.getLong("occurred_at")).thenReturn(row.occurredAt);
+                return mapper.map(resultSet);
+            } catch (SQLException e) {
+                throw new IllegalStateException("Failed to execute audit RowMapper", e);
+            }
+        }
+
         private PendingHandoffStatus statusOf(PendingHandoffKey key) {
             return PendingHandoffStatus.valueOf(rows.get(key).values[14].toString());
         }
@@ -1257,6 +1547,32 @@ class JdbcPendingHandoffStoreTest {
         private void injectLegacyResult(PendingHandoffKey key,
                                         AfterSalesTicketCreateResult result) {
             results.put(key, new ResultRow(result.ticketId(), result.status(), result.createdAt()));
+        }
+
+        private void injectClosedAudit(String auditId,
+                                       String tenantId,
+                                       String outboxId,
+                                       long fromVersion,
+                                       long occurredAt) {
+            audits.put(auditId, new AuditRow(
+                    auditId,
+                    tenantId,
+                    outboxId,
+                    PendingHandoffManualAction.CLOSE.name(),
+                    "admin-injected",
+                    PendingHandoffReviewAuthority.ADMIN.name(),
+                    "TEST_HISTORY",
+                    "历史人工关闭",
+                    PendingHandoffEvidenceSource.NONE.name(),
+                    PendingHandoffStatus.NEEDS_MANUAL_REVIEW.name(),
+                    PendingHandoffStatus.MANUALLY_CLOSED.name(),
+                    fromVersion,
+                    fromVersion + 1,
+                    "TEST_REQUIRES_REVIEW",
+                    1,
+                    null,
+                    occurredAt
+            ));
         }
 
         private static PendingHandoffKey key(Object tenantId, Object idempotencyKey) {
@@ -1294,6 +1610,49 @@ class JdbcPendingHandoffStoreTest {
         }
 
         private record ResultRow(String ticketId, String status, String createdAt) {
+        }
+
+        /** 与审计 INSERT 的 17 列一一对应，避免测试替身悄悄漏存后来新增的审计字段。 */
+        private record AuditRow(
+                String auditId,
+                String tenantId,
+                String outboxId,
+                String action,
+                String actorId,
+                String authorityUsed,
+                String reasonCode,
+                String decisionNote,
+                String evidenceSource,
+                String fromStatus,
+                String toStatus,
+                long fromVersion,
+                long toVersion,
+                String reviewFailureType,
+                int attemptCountAtDecision,
+                Long scheduledAt,
+                long occurredAt) {
+
+            private static AuditRow from(Object[] args) {
+                return new AuditRow(
+                        args[0].toString(),
+                        args[1].toString(),
+                        args[2].toString(),
+                        args[3].toString(),
+                        args[4].toString(),
+                        args[5].toString(),
+                        args[6].toString(),
+                        args[7].toString(),
+                        args[8].toString(),
+                        args[9].toString(),
+                        args[10].toString(),
+                        number(args[11]).longValue(),
+                        number(args[12]).longValue(),
+                        args[13].toString(),
+                        number(args[14]).intValue(),
+                        args[15] == null ? null : number(args[15]).longValue(),
+                        number(args[16]).longValue()
+                );
+            }
         }
 
         private record ClaimRow(String ownerToken, long leaseUntil) {

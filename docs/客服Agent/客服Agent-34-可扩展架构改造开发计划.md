@@ -4,11 +4,11 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 第二十批已完成 20.1 与 20.2，下一步进入 20.3 追加式人工处置审计 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 第二十批已完成 20.1 至 20.3，下一步进入 20.4 ADMIN API |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 451 个默认测试及 1 个显式真实 MySQL IT 通过；20.2 clean test、打包、旧卷迁移和真实行锁竞态均已验收 |
+| 当前验证规模 | 465 个默认测试及 1 个显式真实 MySQL IT 通过；20.3 全量测试、打包、真实事务回滚和审计分页均已验收 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -1140,7 +1140,7 @@ Demo 旁路和 LangChain4j 0.35“max-retries 实为总尝试次数”的依赖�
 增至 418 项，0 失败、0 错误、0 跳过。详细说明见
 `客服Agent-61-LLM重试上限与整轮时间预算说明.md`。
 
-### Phase 8 第二十批进度（2026-07-13，20.1 与 20.2 已完成）
+### Phase 8 第二十批进度（2026-07-13，20.1 至 20.3 已完成）
 
 人工转接复核入口不能建立在“记录没有租户归属”的数据模型上。因此第二十批先完成租户安全地基：
 `ExecutionContext.tenantId` 已贯通 `LocalHandoffCapabilityProvider`、`HandoffTools`、
@@ -1175,8 +1175,27 @@ MANUALLY_CLOSED + result 组合保持人工关闭优先。
 20.2 已通过 451 个默认测试（0 失败、0 错误、0 跳过）、跳过测试打包和 1 个显式真实 MySQL IT。真实
 MySQL 验收覆盖分页、权威结果投影、三种人工操作、双客户端并发确认，以及使用 Latch 固定先后顺序的
 “人工关闭与迟到 Worker 确认”正反竞态；本机旧数据卷也已先执行显式租户迁移并通过三项零残留检查。
-临时容器验收后已停止删除。后续依次推进 20.3 追加式人工处置审计、20.4 ROLE_ADMIN HTTP API 与脱敏
-DTO、20.5 可替换的售后结果查询 Port，最后由 20.6 完成文档、全量测试、打包和容器总验收。
+临时容器验收后已停止删除。
+
+20.3 已把 `PendingHandoffReviewStore` 收紧为只读查询，并新增唯一人工写入口
+`PendingHandoffManualDecisionStore` 与只读 `PendingHandoffReviewAuditStore`。人工决定上下文保存可信
+tenant/outbox/version、actor、实际权限、结构化原因、脱敏单行备注和证据来源；审计事件保存动作、前后
+状态与版本、原始复核失败类型、真实尝试次数快照和服务端发生时间。旧的三个无审计写方法已经删除，调用方
+无法在编译期绕过审计。
+
+Memory Adapter 把 Record 与不可变 auditHistory 放进同一个 `StoredEntry`，通过一次 Map CAS 原子发布。
+JDBC Adapter 新增 17 列 `cs_pending_handoff_review_audit` 追加式表，并在同一事务完成主行锁、version/status
+校验、确认结果写入、主表 CAS、审计 INSERT 和回读；审计失败会让主表和结果一起回滚。审计查询使用
+`tenantId + outboxId + occurredAt + auditId` 复合 keyset 分页，跨租户与不存在都返回空页。专项说明和
+生产建表脚本见 `客服Agent-64-人工处置追加式审计说明.md` 与 `客服Agent-64-人工处置审计建表.sql`。
+
+20.3 已通过 465 个默认测试（0 失败、0 错误、0 跳过）、跳过测试 JAR 打包和 1 个显式真实 MySQL IT。
+真实数据库验收除正常三动作和并发行锁外，还在同一真实事务 Connection 的 audit INSERT 前注入失败，
+确认 result、主表和 audit 全部回滚；并验证同毫秒事件按 auditId 倒序稳定翻页。MySQL 临时容器已停止并
+删除，数据卷保留。本批没有重复构建 Agent 镜像，完整镜像与 Compose 总验收按计划留在 20.6。
+
+后续依次推进 20.4 ROLE_ADMIN HTTP API 与脱敏 DTO、20.5 可替换的售后结果查询 Port，最后由 20.6
+完成 README/架构文档、全量测试、打包和容器总验收。
 
 ### 验收标准
 
@@ -1388,12 +1407,12 @@ smartcs:
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（20.2 当前为 451 个默认测试，另有 1 个显式真实 MySQL IT）。
+- [x] 旧测试全部保留并通过（20.3 当前为 465 个默认测试，另有 1 个显式真实 MySQL IT）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。
 - [x] Docker 镜像构建、完整 Compose 启动、readiness 掉线恢复和 Agent 重启持久化通过。
-- [ ] README、核心架构图和开发计划已同步到 20.2 实现状态；20.6 仍需按最终代码与验收结果总收口。
+- [ ] 专项文档和开发计划已同步到 20.3；README 与核心架构图仍由 20.6 按最终代码和验收结果总收口。
 
 ## 16. 第一批实施记录（已完成）
 

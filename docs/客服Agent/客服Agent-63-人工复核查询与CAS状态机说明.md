@@ -1,5 +1,9 @@
 # 客服 Agent 人工复核查询与 CAS 状态机说明
 
+> 版本说明：本文记录 20.2 当时的状态机地基。20.3 已将 `PendingHandoffReviewStore` 收紧为只读，删除下文
+> 三个 `*FromManualReview` 写方法，并用强制追加审计的 `PendingHandoffManualDecisionStore` 替代。
+> 新代码请以 `客服Agent-64-人工处置追加式审计说明.md` 为准；本文中的旧方法名只用于理解演进历史。
+
 ## 1. 本小批次解决了什么问题
 
 后台恢复器把自动处理不了的人工转接记录推进到 `NEEDS_MANUAL_REVIEW` 后，系统以前只有“记录已经需要

@@ -1,5 +1,11 @@
 package com.smartcs.smart_cs_agent.handoff.outbox;
 
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffEvidenceSource;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualAction;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualDecisionContext;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualDecisionResult;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuditPage;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuthority;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewNotFoundException;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewPage;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffStateConflictException;
@@ -8,6 +14,10 @@ import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateResult;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -337,22 +347,39 @@ class InMemoryPendingHandoffStoreTest {
                 store, command("tenant-a", "manual-close", "关闭"), "owner-close"
         );
 
-        long scheduledAt = 2_000L;
-        PendingHandoffRecord retried = store.retryFromManualReview(
-                "tenant-a", retrySource.outboxId(), retrySource.version(), scheduledAt
-        );
+        PendingHandoffManualDecisionResult retryDecision = store.retry(context(
+                "tenant-a",
+                retrySource,
+                retrySource.version(),
+                "RETRY_AFTER_REVIEW",
+                PendingHandoffEvidenceSource.NONE
+        ));
         AfterSalesTicketCreateResult result = new AfterSalesTicketCreateResult(
                 "AS-MANUAL", "PENDING", "2026-07-13T00:00:00Z"
         );
-        PendingHandoffRecord confirmed = store.confirmFromManualReview(
-                "tenant-a", confirmSource.outboxId(), result, confirmSource.version()
-        );
-        PendingHandoffRecord closed = store.closeFromManualReview(
-                "tenant-a", closeSource.outboxId(), closeSource.version(), 3_000L
-        );
+        PendingHandoffManualDecisionResult confirmDecision = store.confirm(context(
+                "tenant-a",
+                confirmSource,
+                confirmSource.version(),
+                "REMOTE_TICKET_VERIFIED",
+                PendingHandoffEvidenceSource.ADMIN_PROVIDED
+        ), result);
+        PendingHandoffManualDecisionResult closeDecision = store.close(context(
+                "tenant-a",
+                closeSource,
+                closeSource.version(),
+                "NO_TICKET_REQUIRED",
+                PendingHandoffEvidenceSource.NONE
+        ));
+
+        PendingHandoffRecord retried = retryDecision.record();
+        PendingHandoffRecord confirmed = confirmDecision.record();
+        PendingHandoffRecord closed = closeDecision.record();
 
         assertEquals(PendingHandoffStatus.RETRY_SCHEDULED, retried.status());
-        assertEquals(scheduledAt, retried.nextAttemptAt());
+        assertEquals(retryDecision.auditEvent().occurredAt(), retried.nextAttemptAt(),
+                "人工 retry 使用服务端决定时间立即排队，不能信任客户端时间戳");
+        assertEquals(retried.nextAttemptAt(), retryDecision.auditEvent().scheduledAt());
         assertEquals(retrySource.attemptCount(), retried.attemptCount(),
                 "人工排队本身不等于发生了一次远端调用");
         assertEquals(PendingHandoffStatus.CONFIRMED, confirmed.status());
@@ -360,24 +387,46 @@ class InMemoryPendingHandoffStoreTest {
         assertEquals(confirmSource.attemptCount(), confirmed.attemptCount());
         assertEquals(PendingHandoffStatus.MANUALLY_CLOSED, closed.status());
         assertEquals(Long.MAX_VALUE, closed.nextAttemptAt());
+        assertEquals(PendingHandoffManualAction.RETRY, retryDecision.auditEvent().action());
+        assertEquals(PendingHandoffManualAction.CONFIRM, confirmDecision.auditEvent().action());
+        assertEquals(PendingHandoffManualAction.CLOSE, closeDecision.auditEvent().action());
+        assertEquals("TEST_REQUIRES_REVIEW", closeDecision.auditEvent().reviewFailureType());
+        assertEquals(closeSource.attemptCount(), closeDecision.auditEvent().attemptCountAtDecision());
+        assertTrue(closeDecision.auditEvent().decisionNote().contains("[REDACTED]"));
+
+        assertEquals(1, store.findAuditPage("tenant-a", retrySource.outboxId(), null, 10).events().size());
+        assertEquals(1, store.findAuditPage("tenant-a", confirmSource.outboxId(), null, 10).events().size());
+        assertEquals(1, store.findAuditPage("tenant-a", closeSource.outboxId(), null, 10).events().size());
 
         assertThrows(
                 PendingHandoffVersionConflictException.class,
-                () -> store.closeFromManualReview(
-                        "tenant-a", retrySource.outboxId(), retrySource.version(), 4_000L
-                )
+                () -> store.close(context(
+                        "tenant-a",
+                        retrySource,
+                        retrySource.version(),
+                        "STALE_CLOSE",
+                        PendingHandoffEvidenceSource.NONE
+                ))
         );
         assertThrows(
                 PendingHandoffStateConflictException.class,
-                () -> store.closeFromManualReview(
-                        "tenant-a", confirmSource.outboxId(), confirmed.version(), 4_000L
-                )
+                () -> store.close(context(
+                        "tenant-a",
+                        confirmed,
+                        confirmed.version(),
+                        "ALREADY_CONFIRMED",
+                        PendingHandoffEvidenceSource.NONE
+                ))
         );
         assertThrows(
                 PendingHandoffReviewNotFoundException.class,
-                () -> store.closeFromManualReview(
-                        "tenant-b", closeSource.outboxId(), closeSource.version(), 4_000L
-                )
+                () -> store.close(context(
+                        "tenant-b",
+                        closeSource,
+                        closeSource.version(),
+                        "CROSS_TENANT_CLOSE",
+                        PendingHandoffEvidenceSource.NONE
+                ))
         );
         assertThrows(
                 PendingHandoffStateConflictException.class,
@@ -447,6 +496,106 @@ class InMemoryPendingHandoffStoreTest {
         assertEquals(PendingHandoffStatus.PREPARED, store.findByKey(prepared.key()).orElseThrow().status());
     }
 
+    @Test
+    void shouldAtomicallyKeepOnlyOneAuditForConcurrentManualDecisions() throws Exception {
+        InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore(1);
+        PendingHandoffRecord manual = moveToManualReview(
+                store,
+                command("tenant-a", "manual-concurrent", "并发处置"),
+                "owner-concurrent"
+        );
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<Boolean> first = executor.submit(() -> closeConcurrently(
+                    store, manual, "admin-first", ready, start
+            ));
+            Future<Boolean> second = executor.submit(() -> closeConcurrently(
+                    store, manual, "admin-second", ready, start
+            ));
+            ready.await();
+            start.countDown();
+
+            int successCount = (first.get() ? 1 : 0) + (second.get() ? 1 : 0);
+            assertEquals(1, successCount);
+            assertEquals(PendingHandoffStatus.MANUALLY_CLOSED,
+                    store.findByKey(manual.key()).orElseThrow().status());
+            assertEquals(1,
+                    store.findAuditPage("tenant-a", manual.outboxId(), null, 10).events().size(),
+                    "CAS 失败方构造的候选事件绝不能进入审计历史");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void shouldPageAuditHistoryWithoutCrossingTenantOrOutboxBoundary() {
+        InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore(1);
+        PendingHandoffRecord manual = moveToManualReview(
+                store,
+                command("tenant-a", "audit-page", "审计分页"),
+                "owner-page-1"
+        );
+
+        PendingHandoffRecord retriedOnce = store.retry(context(
+                "tenant-a", manual, manual.version(), "FIRST_RETRY", PendingHandoffEvidenceSource.NONE
+        )).record();
+        PendingHandoffRecord manualAgain = returnToManualReview(store, retriedOnce, "owner-page-2");
+        PendingHandoffRecord retriedTwice = store.retry(context(
+                "tenant-a", manualAgain, manualAgain.version(), "SECOND_RETRY", PendingHandoffEvidenceSource.NONE
+        )).record();
+        PendingHandoffRecord manualThird = returnToManualReview(store, retriedTwice, "owner-page-3");
+        store.close(context(
+                "tenant-a", manualThird, manualThird.version(), "FINAL_CLOSE", PendingHandoffEvidenceSource.NONE
+        ));
+
+        // 同租户另一条记录和另一租户的记录都各自有审计，但不能混进目标时间线。
+        PendingHandoffRecord sameTenantOtherOutbox = moveToManualReview(
+                store, command("tenant-a", "audit-other", "另一记录"), "owner-other"
+        );
+        store.close(context(
+                "tenant-a",
+                sameTenantOtherOutbox,
+                sameTenantOtherOutbox.version(),
+                "OTHER_CLOSE",
+                PendingHandoffEvidenceSource.NONE
+        ));
+        PendingHandoffRecord otherTenant = moveToManualReview(
+                store, command("tenant-b", "audit-page", "另一租户"), "owner-tenant-b"
+        );
+        store.close(context(
+                "tenant-b", otherTenant, otherTenant.version(), "OTHER_TENANT", PendingHandoffEvidenceSource.NONE
+        ));
+
+        PendingHandoffReviewAuditPage firstPage = store.findAuditPage(
+                "tenant-a", manual.outboxId(), null, 2
+        );
+        PendingHandoffReviewAuditPage secondPage = store.findAuditPage(
+                "tenant-a", manual.outboxId(), firstPage.nextCursor(), 2
+        );
+        List<String> auditIds = java.util.stream.Stream.concat(
+                        firstPage.events().stream(),
+                        secondPage.events().stream()
+                )
+                .map(event -> event.auditId())
+                .toList();
+
+        assertTrue(firstPage.hasMore());
+        assertFalse(secondPage.hasMore());
+        assertEquals(3, auditIds.size());
+        assertEquals(3, auditIds.stream().distinct().count());
+        assertTrue(firstPage.events().stream().allMatch(event ->
+                event.tenantId().equals("tenant-a") && event.outboxId().equals(manual.outboxId())));
+        assertTrue(store.findAuditPage("tenant-b", manual.outboxId(), null, 10).events().isEmpty());
+        assertTrue(store.findAuditPage("tenant-a", "missing-outbox", null, 10).events().isEmpty());
+        assertThrows(IllegalArgumentException.class,
+                () -> store.findAuditPage("tenant-a", manual.outboxId(), null, 0));
+        assertThrows(IllegalArgumentException.class,
+                () -> store.findAuditPage("tenant-a", manual.outboxId(), null, 101));
+    }
+
     private void assertAllManualActionsThrow(
             Class<? extends Throwable> expectedType,
             InMemoryPendingHandoffStore store,
@@ -455,22 +604,85 @@ class InMemoryPendingHandoffStoreTest {
             long expectedVersion) {
         assertThrows(
                 expectedType,
-                () -> store.retryFromManualReview(
-                        tenantId, source.outboxId(), expectedVersion, 5_000L
-                )
+                () -> store.retry(context(
+                        tenantId,
+                        source,
+                        expectedVersion,
+                        "CONFLICT_RETRY",
+                        PendingHandoffEvidenceSource.NONE
+                ))
         );
         assertThrows(
                 expectedType,
-                () -> store.confirmFromManualReview(
-                        tenantId, source.outboxId(), result("AS-CONFLICT-MATRIX"), expectedVersion
-                )
+                () -> store.confirm(context(
+                        tenantId,
+                        source,
+                        expectedVersion,
+                        "CONFLICT_CONFIRM",
+                        PendingHandoffEvidenceSource.ADMIN_PROVIDED
+                ), result("AS-CONFLICT-MATRIX"))
         );
         assertThrows(
                 expectedType,
-                () -> store.closeFromManualReview(
-                        tenantId, source.outboxId(), expectedVersion, 5_000L
-                )
+                () -> store.close(context(
+                        tenantId,
+                        source,
+                        expectedVersion,
+                        "CONFLICT_CLOSE",
+                        PendingHandoffEvidenceSource.NONE
+                ))
         );
+    }
+
+    private boolean closeConcurrently(InMemoryPendingHandoffStore store,
+                                      PendingHandoffRecord source,
+                                      String actorId,
+                                      CountDownLatch ready,
+                                      CountDownLatch start) throws InterruptedException {
+        ready.countDown();
+        start.await();
+        try {
+            store.close(new PendingHandoffManualDecisionContext(
+                    source.tenantId(),
+                    source.outboxId(),
+                    source.version(),
+                    actorId,
+                    PendingHandoffReviewAuthority.ADMIN,
+                    "CONCURRENT_CLOSE",
+                    "并发关闭",
+                    PendingHandoffEvidenceSource.NONE
+            ));
+            return true;
+        } catch (PendingHandoffVersionConflictException conflict) {
+            return false;
+        }
+    }
+
+    private PendingHandoffManualDecisionContext context(
+            String tenantId,
+            PendingHandoffRecord source,
+            long expectedVersion,
+            String reasonCode,
+            PendingHandoffEvidenceSource evidenceSource) {
+        return new PendingHandoffManualDecisionContext(
+                tenantId,
+                source.outboxId(),
+                expectedVersion,
+                "admin-1",
+                PendingHandoffReviewAuthority.ADMIN,
+                reasonCode,
+                "核对备注，联系方式 13800138000",
+                evidenceSource
+        );
+    }
+
+    private PendingHandoffRecord returnToManualReview(InMemoryPendingHandoffStore store,
+                                                       PendingHandoffRecord retry,
+                                                       String owner) {
+        PendingHandoffClaim claim = store.tryClaim(
+                retry.key(), retry.version(), owner, retry.nextAttemptAt(), 1_000
+        ).orElseThrow();
+        return store.markNeedsManualReview(claim, "TEST_REQUIRES_REVIEW");
     }
 
     private PendingHandoffRecord moveToManualReview(InMemoryPendingHandoffStore store,

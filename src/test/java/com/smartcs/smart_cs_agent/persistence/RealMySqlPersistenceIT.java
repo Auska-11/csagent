@@ -13,6 +13,11 @@ import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffKey;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffRecord;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStatus;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffVersionConflictException;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffEvidenceSource;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualAction;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualDecisionContext;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuditPage;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuthority;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewPage;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffStateConflictException;
 import com.smartcs.smart_cs_agent.session.api.SessionRecord;
@@ -64,6 +69,8 @@ class RealMySqlPersistenceIT {
         verifyDueResultExclusionBeforeLimit(database, suffix);
         verifyManualConfirmationConcurrency(database, suffix);
         verifyManualCloseAndLateConfirmationOrdering(database, suffix);
+        verifyAuditFailureRollsBackWholeDecision(database, suffix);
+        verifyAuditKeysetTieBreak(database, suffix);
         verifyQueryTimeout(database);
     }
 
@@ -200,10 +207,19 @@ class RealMySqlPersistenceIT {
         assertEquals("NEEDS_MANUAL_REVIEW", manual.status().name());
         assertEquals("CONFIRMED", second.findByKey(otherTenant.key()).orElseThrow().status().name());
 
-        PendingHandoffRecord closed = second.closeFromManualReview(
-                tenantId, manual.outboxId(), manual.version(), System.currentTimeMillis()
-        );
+        PendingHandoffRecord closed = second.close(manualContext(
+                manual,
+                PendingHandoffEvidenceSource.NONE,
+                "LEASE_EXPIRED_NO_ACTION",
+                "真实 MySQL 租约测试完成后关闭"
+        )).record();
         assertEquals(PendingHandoffStatus.MANUALLY_CLOSED, closed.status());
+        PendingHandoffReviewAuditPage closeAudit = second.findAuditPage(
+                tenantId, manual.outboxId(), null, 10
+        );
+        assertEquals(1, closeAudit.events().size());
+        assertEquals(PendingHandoffManualAction.CLOSE, closeAudit.events().get(0).action());
+        assertTrue(second.findAuditPage(otherTenantId, manual.outboxId(), null, 10).events().isEmpty());
 
         PendingHandoffRecord retrySource = prepareManualReview(
                 first, tenantId, "real-review-retry-" + suffix, "real-review-owner-1"
@@ -251,25 +267,43 @@ class RealMySqlPersistenceIT {
         );
         assertTrue(!pagedIds.contains(staleMain.outboxId()));
 
-        PendingHandoffRecord retried = first.retryFromManualReview(
-                tenantId, retrySource.outboxId(), retrySource.version(), System.currentTimeMillis()
-        );
-        PendingHandoffRecord manuallyConfirmed = first.confirmFromManualReview(
-                tenantId,
-                confirmSource.outboxId(),
+        PendingHandoffRecord retried = first.retry(manualContext(
+                retrySource,
+                PendingHandoffEvidenceSource.NONE,
+                "RETRY_APPROVED",
+                "管理员批准立即重新排队"
+        )).record();
+        PendingHandoffRecord manuallyConfirmed = first.confirm(
+                manualContext(
+                        confirmSource,
+                        PendingHandoffEvidenceSource.ADMIN_PROVIDED,
+                        "REMOTE_TICKET_VERIFIED",
+                        "已在受信任售后后台核对"
+                ),
                 new AfterSalesTicketCreateResult(
                         "AS-REAL-MANUAL", "PENDING", "2026-07-13T00:00:01Z"
-                ),
-                confirmSource.version()
-        );
-        PendingHandoffRecord reviewClosed = first.closeFromManualReview(
-                tenantId, closeSource.outboxId(), closeSource.version(), System.currentTimeMillis()
-        );
+                )
+        ).record();
+        PendingHandoffRecord reviewClosed = first.close(manualContext(
+                closeSource,
+                PendingHandoffEvidenceSource.NONE,
+                "NO_TICKET_REQUIRED",
+                "业务确认无需继续创建工单"
+        )).record();
         assertEquals(PendingHandoffStatus.RETRY_SCHEDULED, retried.status());
         assertEquals(retrySource.attemptCount(), retried.attemptCount());
         assertEquals(PendingHandoffStatus.CONFIRMED, manuallyConfirmed.status());
         assertEquals(confirmSource.attemptCount(), manuallyConfirmed.attemptCount());
         assertEquals(PendingHandoffStatus.MANUALLY_CLOSED, reviewClosed.status());
+        assertEquals(PendingHandoffManualAction.RETRY,
+                first.findAuditPage(tenantId, retrySource.outboxId(), null, 10)
+                        .events().get(0).action());
+        assertEquals(PendingHandoffManualAction.CONFIRM,
+                first.findAuditPage(tenantId, confirmSource.outboxId(), null, 10)
+                        .events().get(0).action());
+        assertEquals(PendingHandoffManualAction.CLOSE,
+                first.findAuditPage(tenantId, closeSource.outboxId(), null, 10)
+                        .events().get(0).action());
         assertTrue(first.findByTenantAndOutboxId(otherTenantId, retrySource.outboxId()).isEmpty());
     }
 
@@ -408,6 +442,9 @@ class RealMySqlPersistenceIT {
             assertEquals(PendingHandoffStatus.CONFIRMED, finalRecord.status());
             assertTrue(Set.of("AS-CONCURRENT-A", "AS-CONCURRENT-B")
                     .contains(finalRecord.confirmedResult().ticketId()));
+            // 两个管理员使用同一个 expectedVersion 竞争时，行锁和 CAS 只能允许一个事务提交；
+            // 因而业务状态、成功结果和审计历史都必须恰好只有一份。
+            assertEquals(1, first.findAuditPage(tenantId, manual.outboxId(), null, 10).events().size());
         } finally {
             start.countDown();
             executor.shutdownNow();
@@ -420,8 +457,14 @@ class RealMySqlPersistenceIT {
                                        CountDownLatch start) {
         await(start);
         try {
-            store.confirmFromManualReview(
-                    manual.tenantId(), manual.outboxId(), result, manual.version()
+            store.confirm(
+                    manualContext(
+                            manual,
+                            PendingHandoffEvidenceSource.ADMIN_PROVIDED,
+                            "CONCURRENT_REMOTE_VERIFICATION",
+                            "并发确认测试"
+                    ),
+                    result
             );
             return "SUCCESS";
         } catch (PendingHandoffVersionConflictException expected) {
@@ -462,12 +505,12 @@ class RealMySqlPersistenceIT {
             assertTrue(lateConfirmationDatabase.awaitConfirmationFence(3, TimeUnit.SECONDS),
                     "迟到 confirm 必须先停在终态围栏之前");
 
-            PendingHandoffRecord closed = closingStore.closeFromManualReview(
-                    tenantId,
-                    closeWinsSource.outboxId(),
-                    closeWinsSource.version(),
-                    System.currentTimeMillis()
-            );
+            PendingHandoffRecord closed = closingStore.close(manualContext(
+                    closeWinsSource,
+                    PendingHandoffEvidenceSource.NONE,
+                    "CLOSE_WINS_RACE",
+                    "关闭先获得行锁"
+            )).record();
             assertEquals(PendingHandoffStatus.MANUALLY_CLOSED, closed.status());
 
             lateConfirmationDatabase.releaseConfirmationFence();
@@ -513,12 +556,12 @@ class RealMySqlPersistenceIT {
 
             Future<String> close = orderingExecutor.submit(() -> {
                 try {
-                    competingCloseStore.closeFromManualReview(
-                            tenantId,
-                            confirmWinsSource.outboxId(),
-                            confirmWinsSource.version(),
-                            System.currentTimeMillis()
-                    );
+                    competingCloseStore.close(manualContext(
+                            confirmWinsSource,
+                            PendingHandoffEvidenceSource.NONE,
+                            "COMPETING_CLOSE",
+                            "与 Worker 成功确认竞争"
+                    ));
                     return "UNEXPECTED_SUCCESS";
                 } catch (PendingHandoffStateConflictException expected) {
                     return "STATE_CONFLICT";
@@ -555,6 +598,127 @@ class RealMySqlPersistenceIT {
                 FROM cs_pending_handoff_result
                 WHERE tenant_id = ? AND idempotency_key = ?
                 """, key.tenantId(), key.idempotencyKey());
+    }
+
+    private void verifyAuditFailureRollsBackWholeDecision(JdbcDatabaseClient database,
+                                                          String suffix) {
+        AuditInsertFailingJdbcDatabaseClient failingDatabase = auditFailingDatabaseClient(5);
+        JdbcPendingHandoffStore store = new JdbcPendingHandoffStore(failingDatabase, 1);
+        String tenantId = "tenant-audit-rollback-" + suffix;
+        PendingHandoffRecord manual = prepareManualReview(
+                store,
+                tenantId,
+                "real-audit-rollback-" + suffix,
+                "real-audit-rollback-owner"
+        );
+
+        /*
+         * SQL 替身只能模拟 rollback。故障 Client 仍让 result INSERT 和主表 UPDATE 在真实 MySQL 的同一
+         * Connection 上执行，只在 audit INSERT 交给驱动前抛错；随后由生产 inTransaction 执行真实
+         * rollback。这样不要求应用账号拥有 CREATE TRIGGER/SUPER 等不合理的生产权限。
+         */
+        failingDatabase.failNextAuditInsert();
+        assertThrows(
+                IllegalStateException.class,
+                () -> store.confirm(
+                        manualContext(
+                                manual,
+                                PendingHandoffEvidenceSource.ADMIN_PROVIDED,
+                                "FORCED_AUDIT_FAILURE",
+                                "触发真实数据库回滚"
+                        ),
+                        result("AS-MUST-ROLLBACK-REAL")
+                )
+        );
+
+        PendingHandoffRecord unchanged = store.findByTenantAndOutboxId(
+                tenantId, manual.outboxId()
+        ).orElseThrow();
+        assertEquals(PendingHandoffStatus.NEEDS_MANUAL_REVIEW, unchanged.status());
+        assertEquals(manual.version(), unchanged.version());
+        assertEquals(0L, confirmationResultCount(database, manual.key()));
+        assertTrue(store.findAuditPage(tenantId, manual.outboxId(), null, 10).events().isEmpty());
+    }
+
+    private void verifyAuditKeysetTieBreak(JdbcDatabaseClient database,
+                                           String suffix) {
+        JdbcPendingHandoffStore store = new JdbcPendingHandoffStore(database, 1);
+        String tenantId = "tenant-audit-page-" + suffix;
+        PendingHandoffRecord firstManual = prepareManualReview(
+                store,
+                tenantId,
+                "real-audit-page-" + suffix,
+                "real-audit-page-owner-1"
+        );
+        PendingHandoffRecord retried = store.retry(manualContext(
+                firstManual,
+                PendingHandoffEvidenceSource.NONE,
+                "FIRST_RETRY",
+                "第一次人工决定"
+        )).record();
+        PendingHandoffClaim secondClaim = store.tryClaim(
+                retried.key(),
+                retried.version(),
+                "real-audit-page-owner-2",
+                retried.nextAttemptAt(),
+                5_000
+        ).orElseThrow();
+        PendingHandoffRecord secondManual = store.markNeedsManualReview(
+                secondClaim, "REAL_MYSQL_REVIEW_AGAIN"
+        );
+        store.close(manualContext(
+                secondManual,
+                PendingHandoffEvidenceSource.NONE,
+                "FINAL_CLOSE",
+                "第二次人工决定"
+        ));
+
+        // 把两条真实生成的事件固定到同一毫秒，只改变测试排序坐标，不修改业务字段。
+        long sameOccurredAt = 12_345L;
+        database.update("""
+                UPDATE cs_pending_handoff_review_audit
+                SET occurred_at = ?
+                WHERE tenant_id = ? AND outbox_id = ?
+                """, sameOccurredAt, tenantId, firstManual.outboxId());
+
+        PendingHandoffReviewAuditPage firstPage = store.findAuditPage(
+                tenantId, firstManual.outboxId(), null, 1
+        );
+        PendingHandoffReviewAuditPage secondPage = store.findAuditPage(
+                tenantId, firstManual.outboxId(), firstPage.nextCursor(), 1
+        );
+
+        assertTrue(firstPage.hasMore());
+        assertEquals(1, firstPage.events().size());
+        assertEquals(1, secondPage.events().size());
+        assertTrue(!secondPage.hasMore());
+        assertTrue(firstPage.events().get(0).auditId()
+                        .compareTo(secondPage.events().get(0).auditId()) > 0,
+                "相同 occurredAt 时必须按 auditId DESC 稳定排序");
+        assertTrue(!firstPage.events().get(0).auditId()
+                        .equals(secondPage.events().get(0).auditId()),
+                "复合游标翻页不能重复返回同一审计事件");
+    }
+
+    /**
+     * 真实数据库用例统一从当前记录构造可信人工上下文，避免每个调用点手工排列八个字段。
+     * actorId 在真实应用中由已验证 JWT Principal 提供；IT 使用固定管理员标识验证它会进入审计表。
+     */
+    private PendingHandoffManualDecisionContext manualContext(
+            PendingHandoffRecord record,
+            PendingHandoffEvidenceSource evidenceSource,
+            String reasonCode,
+            String decisionNote) {
+        return new PendingHandoffManualDecisionContext(
+                record.tenantId(),
+                record.outboxId(),
+                record.version(),
+                "admin-real-mysql-it",
+                PendingHandoffReviewAuthority.ADMIN,
+                reasonCode,
+                decisionNote,
+                evidenceSource
+        );
     }
 
     private AfterSalesTicketCreateResult result(String ticketId) {
@@ -597,6 +761,75 @@ class RealMySqlPersistenceIT {
         String username = System.getProperty("smartcs.real.mysql.username", "smartcs");
         String password = System.getProperty("smartcs.real.mysql.password", "smartcs-local-password");
         return new GatedJdbcDatabaseClient(url, username, password, queryTimeoutSeconds);
+    }
+
+    private AuditInsertFailingJdbcDatabaseClient auditFailingDatabaseClient(int queryTimeoutSeconds) {
+        String url = System.getProperty(
+                "smartcs.real.mysql.url",
+                "jdbc:mysql://127.0.0.1:3307/smart_cs_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"
+        );
+        String username = System.getProperty("smartcs.real.mysql.username", "smartcs");
+        String password = System.getProperty("smartcs.real.mysql.password", "smartcs-local-password");
+        return new AuditInsertFailingJdbcDatabaseClient(
+                url, username, password, queryTimeoutSeconds
+        );
+    }
+
+    /**
+     * 只在真实 MySQL IT 中使用的故障注入器。它不模拟数据库，所有正常 SQL 仍委托给同一个事务连接；
+     * 唯一作用是在指定的一次审计 INSERT 前抛异常，以验证生产 rollback 路径。
+     */
+    private static final class AuditInsertFailingJdbcDatabaseClient extends JdbcDatabaseClient {
+
+        private final AtomicBoolean failNextAuditInsert = new AtomicBoolean(false);
+
+        private AuditInsertFailingJdbcDatabaseClient(String url,
+                                                     String username,
+                                                     String password,
+                                                     int queryTimeoutSeconds) {
+            super(
+                    "jdbc",
+                    "com.mysql.cj.jdbc.Driver",
+                    url,
+                    username,
+                    password,
+                    3_000,
+                    10_000,
+                    queryTimeoutSeconds
+            );
+        }
+
+        private void failNextAuditInsert() {
+            failNextAuditInsert.set(true);
+        }
+
+        @Override
+        public <T> T inTransaction(TransactionWork<T> work) {
+            return super.inTransaction(operations -> work.execute(new JdbcDatabaseOperations() {
+                @Override
+                public int update(String sql, Object... args) {
+                    if (sql.trim().startsWith("INSERT INTO cs_pending_handoff_review_audit")
+                            && failNextAuditInsert.compareAndSet(true, false)) {
+                        throw new IllegalStateException("Forced audit insert failure for real MySQL IT");
+                    }
+                    return operations.update(sql, args);
+                }
+
+                @Override
+                public <R> Optional<R> queryOne(String sql,
+                                                RowMapper<R> mapper,
+                                                Object... args) {
+                    return operations.queryOne(sql, mapper, args);
+                }
+
+                @Override
+                public <R> List<R> queryList(String sql,
+                                            RowMapper<R> mapper,
+                                            Object... args) {
+                    return operations.queryList(sql, mapper, args);
+                }
+            }));
+        }
     }
 
     /** 在普通 confirm 行锁前后建立可控顺序，并观测人工 close 已尝试获取同一行锁。 */

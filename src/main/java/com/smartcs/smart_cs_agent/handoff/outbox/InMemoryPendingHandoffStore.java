@@ -1,5 +1,13 @@
 package com.smartcs.smart_cs_agent.handoff.outbox;
 
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualAction;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualDecisionContext;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualDecisionResult;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualDecisionStore;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuditCursor;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuditEvent;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuditPage;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewAuditStore;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewCursor;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewNotFoundException;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewPage;
@@ -11,9 +19,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -31,7 +41,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
         havingValue = "memory",
         matchIfMissing = true
 )
-public class InMemoryPendingHandoffStore implements PendingHandoffStore, PendingHandoffReviewStore {
+public class InMemoryPendingHandoffStore implements PendingHandoffStore,
+        PendingHandoffReviewStore,
+        PendingHandoffManualDecisionStore,
+        PendingHandoffReviewAuditStore {
 
     /*
      * Map 的 key 必须同时包含 tenantId 和 idempotencyKey。若仍使用 String，租户 A 的成功结果或
@@ -50,6 +63,10 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore, Pending
             Comparator.comparingLong(PendingHandoffRecord::updatedAt)
                     .reversed()
                     .thenComparing(PendingHandoffRecord::outboxId, Comparator.reverseOrder());
+    private static final Comparator<PendingHandoffReviewAuditEvent> AUDIT_ORDER =
+            Comparator.comparingLong(PendingHandoffReviewAuditEvent::occurredAt)
+                    .reversed()
+                    .thenComparing(PendingHandoffReviewAuditEvent::auditId, Comparator.reverseOrder());
 
     /** 手动构造和单元测试使用与生产默认值一致的 30 秒宽限期。 */
     public InMemoryPendingHandoffStore() {
@@ -69,7 +86,7 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore, Pending
     public PendingHandoffPreparation prepare(PendingHandoffCommand command) {
         PendingHandoffKey key = command.key();
         String fingerprint = PendingHandoffFingerprint.of(command);
-        StoredEntry candidate = new StoredEntry(fingerprint, newRecord(command));
+        StoredEntry candidate = new StoredEntry(fingerprint, newRecord(command), List.of());
         StoredEntry existing = records.putIfAbsent(key, candidate);
         if (existing == null) {
             return new PendingHandoffPreparation(candidate.record(), true);
@@ -325,70 +342,57 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore, Pending
     }
 
     @Override
-    public PendingHandoffRecord retryFromManualReview(String tenantId,
-                                                      String outboxId,
-                                                      long expectedVersion,
-                                                      long scheduledAt) {
-        requireTimestamp(scheduledAt, "scheduledAt");
-        return updateManualReview(
-                tenantId,
-                outboxId,
-                expectedVersion,
-                current -> copyWithStateAt(
-                        current,
-                        PendingHandoffStatus.RETRY_SCHEDULED,
-                        "MANUAL_RETRY_REQUESTED",
-                        null,
-                        current.attemptCount(),
-                        scheduledAt,
-                        scheduledAt
-                )
-        );
+    public PendingHandoffManualDecisionResult retry(PendingHandoffManualDecisionContext context) {
+        return applyManualDecision(context, PendingHandoffManualAction.RETRY, null);
     }
 
     @Override
-    public PendingHandoffRecord confirmFromManualReview(String tenantId,
-                                                        String outboxId,
-                                                        AfterSalesTicketCreateResult result,
-                                                        long expectedVersion) {
-        java.util.Objects.requireNonNull(result, "result cannot be null");
-        long now = System.currentTimeMillis();
-        return updateManualReview(
-                tenantId,
-                outboxId,
-                expectedVersion,
-                current -> copyWithStateAt(
-                        current,
-                        PendingHandoffStatus.CONFIRMED,
-                        "NONE",
-                        result,
-                        current.attemptCount(),
-                        0,
-                        now
-                )
-        );
+    public PendingHandoffManualDecisionResult confirm(PendingHandoffManualDecisionContext context,
+                                                      AfterSalesTicketCreateResult result) {
+        Objects.requireNonNull(result, "result cannot be null");
+        return applyManualDecision(context, PendingHandoffManualAction.CONFIRM, result);
     }
 
     @Override
-    public PendingHandoffRecord closeFromManualReview(String tenantId,
-                                                      String outboxId,
-                                                      long expectedVersion,
-                                                      long closedAt) {
-        requireTimestamp(closedAt, "closedAt");
-        return updateManualReview(
-                tenantId,
-                outboxId,
-                expectedVersion,
-                current -> copyWithStateAt(
-                        current,
-                        PendingHandoffStatus.MANUALLY_CLOSED,
-                        "MANUALLY_CLOSED",
-                        null,
-                        current.attemptCount(),
-                        Long.MAX_VALUE,
-                        closedAt
-                )
+    public PendingHandoffManualDecisionResult close(PendingHandoffManualDecisionContext context) {
+        return applyManualDecision(context, PendingHandoffManualAction.CLOSE, null);
+    }
+
+    @Override
+    public PendingHandoffReviewAuditPage findAuditPage(String tenantId,
+                                                       String outboxId,
+                                                       PendingHandoffReviewAuditCursor cursor,
+                                                       int limit) {
+        requireText(tenantId, "tenantId");
+        requireText(outboxId, "outboxId");
+        requireReviewLimit(limit);
+        String normalizedTenant = tenantId.trim();
+        String normalizedOutboxId = outboxId.trim();
+
+        // 不存在与跨租户都返回同一个空页面，避免管理查询被当成 outboxId 探测器。
+        Optional<Map.Entry<PendingHandoffKey, StoredEntry>> optionalEntry = findStoredEntry(
+                normalizedTenant,
+                normalizedOutboxId
         );
+        if (optionalEntry.isEmpty()) {
+            return new PendingHandoffReviewAuditPage(List.of(), null, false);
+        }
+
+        List<PendingHandoffReviewAuditEvent> candidates = optionalEntry.get().getValue()
+                .auditHistory()
+                .stream()
+                .filter(event -> isAfterAuditCursor(event, cursor))
+                .sorted(AUDIT_ORDER)
+                .limit(limit + 1L)
+                .toList();
+        boolean hasMore = candidates.size() > limit;
+        List<PendingHandoffReviewAuditEvent> pageEvents = hasMore
+                ? List.copyOf(candidates.subList(0, limit))
+                : candidates;
+        PendingHandoffReviewAuditCursor nextCursor = hasMore
+                ? auditCursorOf(pageEvents.get(pageEvents.size() - 1))
+                : null;
+        return new PendingHandoffReviewAuditPage(pageEvents, nextCursor, hasMore);
     }
 
     public int size() {
@@ -424,7 +428,12 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore, Pending
             throw new PendingHandoffVersionConflictException();
         }
         PendingHandoffRecord updatedRecord = updater.apply(existing.record());
-        StoredEntry updated = new StoredEntry(existing.fingerprint(), updatedRecord);
+        // Recovery/同步写操作不会产生人工审计，但必须原样携带已有历史，不能在后续状态投影时丢失。
+        StoredEntry updated = new StoredEntry(
+                existing.fingerprint(),
+                updatedRecord,
+                existing.auditHistory()
+        );
         if (!records.replace(key, existing, updated)) {
             throw new PendingHandoffVersionConflictException();
         }
@@ -474,19 +483,103 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore, Pending
         );
     }
 
-    private PendingHandoffRecord updateManualReview(
+    private PendingHandoffManualDecisionResult applyManualDecision(
+            PendingHandoffManualDecisionContext context,
+            PendingHandoffManualAction action,
+            AfterSalesTicketCreateResult result) {
+        Objects.requireNonNull(context, "context cannot be null");
+        Map.Entry<PendingHandoffKey, StoredEntry> located = findStoredEntry(
+                context.tenantId(),
+                context.outboxId()
+        ).orElseThrow(PendingHandoffReviewNotFoundException::new);
+        StoredEntry existing = located.getValue();
+        PendingHandoffRecord current = existing.record();
+
+        // 先比较调用方看到的版本，再判断状态；这样 stale 页面无法通过异常类型探测最新状态。
+        if (current.version() != context.expectedVersion()) {
+            throw new PendingHandoffVersionConflictException();
+        }
+        if (current.status() != PendingHandoffStatus.NEEDS_MANUAL_REVIEW) {
+            throw new PendingHandoffStateConflictException(current.status());
+        }
+
+        long occurredAt = System.currentTimeMillis();
+        PendingHandoffRecord updatedRecord = switch (action) {
+            case RETRY -> copyWithStateAt(
+                    current,
+                    PendingHandoffStatus.RETRY_SCHEDULED,
+                    "MANUAL_RETRY_REQUESTED",
+                    null,
+                    current.attemptCount(),
+                    occurredAt,
+                    occurredAt
+            );
+            case CONFIRM -> copyWithStateAt(
+                    current,
+                    PendingHandoffStatus.CONFIRMED,
+                    "NONE",
+                    Objects.requireNonNull(result, "result cannot be null"),
+                    current.attemptCount(),
+                    0,
+                    occurredAt
+            );
+            case CLOSE -> copyWithStateAt(
+                    current,
+                    PendingHandoffStatus.MANUALLY_CLOSED,
+                    "MANUALLY_CLOSED",
+                    null,
+                    current.attemptCount(),
+                    Long.MAX_VALUE,
+                    occurredAt
+            );
+        };
+        Long scheduledAt = action == PendingHandoffManualAction.RETRY ? occurredAt : null;
+        PendingHandoffReviewAuditEvent auditEvent = new PendingHandoffReviewAuditEvent(
+                UUID.randomUUID().toString(),
+                current.tenantId(),
+                current.outboxId(),
+                action,
+                context.actorId(),
+                context.authorityUsed(),
+                context.reasonCode(),
+                context.decisionNote(),
+                context.evidenceSource(),
+                current.status(),
+                updatedRecord.status(),
+                current.version(),
+                updatedRecord.version(),
+                current.failureType(),
+                current.attemptCount(),
+                scheduledAt,
+                occurredAt
+        );
+
+        List<PendingHandoffReviewAuditEvent> updatedHistory = new ArrayList<>(existing.auditHistory());
+        updatedHistory.add(auditEvent);
+        StoredEntry updated = new StoredEntry(
+                existing.fingerprint(),
+                updatedRecord,
+                List.copyOf(updatedHistory)
+        );
+
+        /*
+         * record 与 auditHistory 在同一个不可变 StoredEntry 中，且只通过一次 map.replace CAS 发布。
+         * 两个管理员同时读取同一版本时，只有一个能替换成功；失败方构造出的事件从未进入 Map，
+         * 因而不会出现“业务没有改变但审计声称成功”的伪历史。
+         */
+        if (!records.replace(located.getKey(), existing, updated)) {
+            throw new PendingHandoffVersionConflictException();
+        }
+        return new PendingHandoffManualDecisionResult(updatedRecord, auditEvent);
+    }
+
+    private Optional<Map.Entry<PendingHandoffKey, StoredEntry>> findStoredEntry(
             String tenantId,
-            String outboxId,
-            long expectedVersion,
-            java.util.function.Function<PendingHandoffRecord, PendingHandoffRecord> updater) {
-        PendingHandoffRecord existing = findByTenantAndOutboxId(tenantId, outboxId)
-                .orElseThrow(PendingHandoffReviewNotFoundException::new);
-        return replace(existing.key(), expectedVersion, current -> {
-            if (current.status() != PendingHandoffStatus.NEEDS_MANUAL_REVIEW) {
-                throw new PendingHandoffStateConflictException(current.status());
-            }
-            return updater.apply(current);
-        });
+            String outboxId) {
+        return records.entrySet().stream()
+                .filter(entry -> entry.getValue().record().tenantId().equals(tenantId))
+                .filter(entry -> entry.getValue().record().outboxId().equals(outboxId))
+                .findFirst();
     }
 
     private boolean isAfterCursor(PendingHandoffRecord record, PendingHandoffReviewCursor cursor) {
@@ -502,15 +595,23 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore, Pending
         return new PendingHandoffReviewCursor(record.updatedAt(), record.outboxId());
     }
 
+    private boolean isAfterAuditCursor(PendingHandoffReviewAuditEvent event,
+                                       PendingHandoffReviewAuditCursor cursor) {
+        if (cursor == null) {
+            return true;
+        }
+        return event.occurredAt() < cursor.occurredAt()
+                || (event.occurredAt() == cursor.occurredAt()
+                && event.auditId().compareTo(cursor.auditId()) < 0);
+    }
+
+    private PendingHandoffReviewAuditCursor auditCursorOf(PendingHandoffReviewAuditEvent event) {
+        return new PendingHandoffReviewAuditCursor(event.occurredAt(), event.auditId());
+    }
+
     private void requireReviewLimit(int limit) {
         if (limit < 1 || limit > 100) {
             throw new IllegalArgumentException("limit must be between 1 and 100");
-        }
-    }
-
-    private void requireTimestamp(long value, String field) {
-        if (value < 0) {
-            throw new IllegalArgumentException(field + " cannot be negative");
         }
     }
 
@@ -562,7 +663,14 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore, Pending
         return compact.length() <= 128 ? compact : compact.substring(0, 128);
     }
 
-    private record StoredEntry(String fingerprint, PendingHandoffRecord record) {
+    private record StoredEntry(
+            String fingerprint,
+            PendingHandoffRecord record,
+            List<PendingHandoffReviewAuditEvent> auditHistory) {
+
+        private StoredEntry {
+            auditHistory = auditHistory == null ? List.of() : List.copyOf(auditHistory);
+        }
     }
 
     private record ClaimEntry(String ownerToken, long leaseUntil) {
