@@ -6,7 +6,9 @@ Smart CS Agent 是一个面向电商客服场景的任务型 Agent 系统，基�
 
 面试时可以这样开场：
 
-> 我做的是一个电商客服 Agent，不只是调用大模型生成回复，而是把客服任务拆成 Skill 决策、Runtime 执行、Tool 业务能力和 Monitor/Eval 质量闭环。系统能处理订单查询、退货申请、商品咨询、政策问答和人工转接，并且能通过 Trace 和评测集验证每一步是否可靠。
+> 我做的是一个电商客服 Agent，不只是调用大模型生成回复，而是把客服任务拆成 Skill Package、
+> Workflow 决策、Runtime 执行、Capability 业务能力和 Monitor/Eval 质量闭环。系统能处理订单查询、
+> 退货申请、商品咨询、政策问答和人工转接，并且能通过 Trace 和评测集验证每一步是否可靠。
 
 ## 2. 面试主线
 
@@ -26,18 +28,20 @@ Smart CS Agent 是一个面向电商客服场景的任务型 Agent 系统，基�
 
 ## 3. 架构亮点
 
-### 3.1 Skill / Runtime / Tool 分层
+### 3.1 Skill Package / Workflow / Runtime / Capability 分层
 
 核心思想：
 
-- `Skill` 负责判断当前应该做什么。
-- `Runtime` 负责执行 `Skill` 规划出的动作。
-- `Tool` 负责具体业务能力，比如查订单、查商品、退货、查知识库。
+- `Skill Package` 负责指令、知识资料、版本和 Capability allowlist。
+- `Workflow` 负责判断当前应该做什么，并保存任务状态。
+- `Runtime` 负责执行 Workflow 规划出的通用 Action。
+- `Capability Provider` 负责具体业务能力，比如查订单、查商品、退货、查知识库。
 - `Trace` 负责记录执行过程。
 
 可以这样讲：
 
-> 我没有把所有逻辑都写在 Controller 或一个大 Service 里，而是把 Agent 拆成决策层、执行层和工具层。这样新增工具或调整某个意图时，不需要大改整体流程。
+> 我没有把所有逻辑都写在 Controller 或一个大 Service 里，而是把指令资料、任务状态机、通用执行循环
+> 和原子业务能力拆开。新增业务 Workflow 或 Provider 时，不需要修改 AgentRuntime 的循环。
 
 面试官可能追问：
 
@@ -68,25 +72,30 @@ Agent：已为你提交退货申请
 
 这条链路体现了 Agent 不只是单轮问答，而是能记住“上一轮正在收集退货申请所需信息”。
 
-### 3.3 MCP-style 工具层
+### 3.3 Capability 与 MCP 层
 
-工具层已经有统一结构：
+当前能力层使用一套权威协议：
 
-- `ToolDefinition`
-- `ToolCall`
-- `ToolResult`
+- `CapabilityDefinition`
+- `CapabilityCall`
+- `CapabilityResult`
 - `inputSchema`
 - `outputSchema`
+- `CapabilityGateway` / `CapabilityProvider`
 - `/api/mcp/tools`
 - `/api/mcp/tools/call`
+- `/mcp` 的 `initialize`、`tools/list`、`tools/call`
 
 可以这样讲：
 
-> 我先做了一个本地 MCP-style 工具边界，让每个工具都有名称、描述、输入 schema、输出 schema 和统一返回结构。这样做的好处是工具可以被 Agent 调用，也可以被前端和测试直接检查。后续如果要迁移到独立 MCP Server，边界已经比较清晰。
+> 我把本地和远程能力统一为 Capability 契约，每个能力都有稳定 ID、输入/输出 schema 和三态结果。
+> Workflow 只依赖 Gateway，不感知能力来自本地 Provider 还是 MCP。REST Catalog 与 MCP tools/list 共用
+> 同一组定义，因此不会出现两套 schema 漂移。
 
 注意不要说“已经完整实现 MCP 协议”。更稳妥的说法是：
 
-> 当前是 MCP-style Adapter，重点是工具协议边界和 schema 标准化，不是完整 MCP Server。
+> 当前实现了项目需要的 MCP JSON-RPC 子集和 HTTP Bearer 身份边界，但没有声称覆盖 MCP 规范的全部
+> 能力，例如动态 Catalog 原子替换、签名用户委托和完整生命周期仍未实现。
 
 ### 3.4 RAG 知识库检索
 
@@ -164,15 +173,19 @@ Trace 能看到：
 
 ### 4.1 简历一句话
 
-智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，支持多轮任务状态、MCP-style 工具调用、RAG 知识库、Agent Trace、Monitor 反馈闭环、LLM-as-Judge 与离线评测，提升客服场景下大模型应用的可控性、可观测性和可验证性。
+智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill Package / Workflow /
+Runtime / Capability 分层架构，支持多轮任务状态、MCP/JSON-RPC 能力调用、RAG 知识库、Agent Trace、
+Monitor 反馈闭环、LLM-as-Judge 与离线评测，提升客服场景下大模型应用的可控性、可观测性和可验证性。
 
 ### 4.2 简历项目描述
 
 可以写成 3 到 5 条：
 
-- 设计 Skill / Runtime / Tool 分层架构，将意图识别、工具调用、业务查询、知识库检索和回复生成解耦，支持订单查询、商品咨询、退货申请、政策问答和人工转接等客服场景。
+- 设计 Skill Package / Workflow / Runtime / Capability 分层架构，将指令与授权、任务状态机、通用执行
+  循环和原子业务能力解耦，支持订单查询、商品咨询、退货申请、政策问答和人工转接等客服场景。
 - 实现多轮会话状态管理，使用 `ConversationState` 保存任务槽位、短期消息窗口和摘要记忆，支持退货申请等跨轮槽位填充流程。
-- 设计 MCP-style 工具注册与调用层，统一 `ToolDefinition`、`ToolCall`、`ToolResult`、`inputSchema` 和 `outputSchema`，并提供 MCP Adapter 接口暴露工具列表和工具调用能力。
+- 设计统一 Capability 契约，以 `CapabilityDefinition`、`CapabilityCall`、`CapabilityResult` 和
+  输入/输出 schema 作为唯一协议；REST 与 MCP 共用 Catalog，本地和远程 Provider 可配置替换。
 - 构建 Agent Trace、Monitor 指标和用户反馈闭环，将无用反馈沉淀为 Eval 候选样本，支持审核、导出、半自动合并正式评测集和回归测试。
 - 建设五类离线评测，包括路由评测、知识库召回评测、回复质量规则评测、Agent 链路评测和 LLM-as-Judge 评测，并输出 JSON 报告、历史快照和趋势指标。
 
@@ -192,7 +205,9 @@ Trace 能看到：
 
 ### R：结果
 
-项目支持订单查询、商品咨询、退货申请、政策问答、人工转接等核心客服场景；前端可以查看 Trace、Memory、Tools、Monitor 和 Eval 报告；测试覆盖路由、RAG、回复质量、Agent 链路和 LLM-as-Judge，最近一次完整测试通过 99 个测试用例。
+项目支持订单查询、商品咨询、退货申请、政策问答、人工转接等核心客服场景；前端可以查看 Trace、
+Memory、Tools、Monitor 和 Eval 报告；测试覆盖路由、RAG、回复质量、Agent 链路和 LLM-as-Judge，
+Phase 9.5 的 499 个默认测试全部通过，并完成真实 MySQL、JAR 和 Docker/Compose 验收。
 
 ## 6. 高频面试问答
 
@@ -200,17 +215,23 @@ Trace 能看到：
 
 普通 ChatBot 更关注生成回复，这个项目关注任务执行。它会识别意图、追问缺失信息、调用业务工具、检索知识库、记录 Trace，并通过 Eval 验证链路质量。
 
-### Q2：为什么要拆 Skill、Runtime、Tool？
+### Q2：为什么要拆 Skill Package、Workflow、Runtime、Capability？
 
-因为三者变化原因不同。`Skill` 变化来自业务策略，`Runtime` 变化来自执行机制，`Tool` 变化来自外部业务能力。拆开后更容易测试和扩展。
+因为四者变化原因不同：Skill Package 随指令和资料变化，Workflow 随业务状态机变化，Runtime 随通用
+执行机制变化，Capability 随领域系统或传输方式变化。拆开后可以独立测试，也避免把 Agent Skill 和
+可执行 Java Workflow 混成一个概念。
 
-### Q3：为什么先做 MCP-style，而不是直接完整 MCP Server？
+### Q3：为什么只实现 MCP 的项目所需子集？
 
-项目当前重点是把工具边界做清楚，包括工具定义、输入输出 schema、统一调用和错误处理。完整 MCP Server 会增加部署和协议复杂度，等本地边界稳定后再迁移更合理。
+项目已实现 `/mcp` 的 `initialize`、`tools/list`、`tools/call` 和 Bearer 身份边界，并让 REST/MCP 共用
+Capability Catalog。当前没有业务需求支撑完整协议生命周期、动态 Catalog 原子替换和签名用户委托；
+先把实际需要的协议边界做对，比声称“完整支持”更准确。
 
 ### Q4：RAG 为什么没有直接用向量数据库？
 
-当前知识库规模较小，优先使用 Markdown + 查询改写 + 多路召回 + rerank。这样更可解释，也方便通过召回评测定位问题。后续知识量上来后，可以把 `KnowledgeTools` 的底层检索替换为向量检索。
+默认 local 模式使用 Markdown + 查询改写 + 多路召回 + rerank，保证小知识库场景可解释、可离线评测；
+项目也已提供可选 embedding + Qdrant 模式，并在外部服务失败时回退本地检索。生产选择取决于知识规模、
+召回质量、成本和外部依赖 SLA，而不是为了使用向量库而使用。
 
 ### Q5：如何判断 Agent 回复质量？
 
@@ -218,7 +239,10 @@ Trace 能看到：
 
 ### Q6：如果工具调用失败怎么办？
 
-工具统一返回 `ToolResult`，失败时包含 `success=false`、`errorCode` 和错误信息。Runtime 会把失败记录到 Trace，LLM 失败时也有模板化降级回复，避免接口直接崩溃。
+能力统一返回 `CapabilityResult`，用 `SUCCESS`、`BUSINESS_REJECTED`、`TECHNICAL_FAILURE` 区分成功、
+业务拒绝和技术失败，并携带稳定 `errorCode`。副作用超时等“结果未知”会使用专用错误码和 Outbox 状态
+继续保留语义。Runtime 会把 Observation 记录到 Trace；LLM 失败时也有结构化降级回复，避免接口直接
+崩溃或把未知副作用误报成普通失败。
 
 ### Q7：用户反馈闭环有什么价值？
 
@@ -250,13 +274,18 @@ Trace 能看到：
 
 ## 8. 30 秒版本
 
-> 这个项目是一个电商客服 Agent。我把它拆成 Skill、Runtime、Tool 三层，支持订单查询、商品咨询、退货申请、政策问答和人工转接。为了让 Agent 不黑盒，我做了 Trace、Monitor 和前端调试面板；为了让质量可验证，我做了路由、RAG、回复质量、Agent 链路和 LLM-as-Judge 五类评测；为了形成持续优化闭环，我把用户负反馈沉淀成 Eval 候选样本，经过审核和断言补齐后合并进回归测试集。
+> 这个项目是一个电商客服 Agent。我把它拆成 Skill Package、Workflow、Runtime 和 Capability 四层，
+> 支持订单查询、商品咨询、退货申请、政策问答和人工转接。为了让 Agent 不黑盒，我做了 Trace、Monitor
+> 和前端调试面板；为了让质量可验证，我做了路由、RAG、回复质量、Agent 链路和 LLM-as-Judge 五类
+> 评测；用户负反馈还能经过审核后沉淀进回归测试集。
 
 ## 9. 2 分钟版本
 
 > 我做的是一个基于 Spring Boot + LangChain4j 的电商客服 Agent。它不是简单调用大模型聊天，而是一个任务执行系统。用户进来后，Agent 会先判断意图，如果信息不完整就追问，比如退货申请会先问订单号，再问退货原因；信息齐全后通过统一工具层调用订单、商品、退货、用户或知识库工具。
 >
-> 架构上我拆成 Skill、Runtime、Tool 三层。Skill 负责决策下一步动作，Runtime 负责执行动作，Tool 负责具体业务能力。工具层做了 MCP-style 标准化，每个工具都有 inputSchema、outputSchema 和统一 ToolResult，所以前端、测试和 Agent 都能用同一套边界。
+> 架构上我拆成 Skill Package、Workflow、Runtime 和 Capability。Skill Package 保存指令、资料与能力
+> allowlist，Workflow 负责状态和下一步决策，Runtime 只执行通用 Action 循环，Capability Provider 提供
+> 原子业务能力。本地与 MCP Provider 共用 inputSchema、outputSchema 和三态 CapabilityResult，所以
+> Workflow、前端、测试和协议 Adapter 使用同一套边界。
 >
 > 为了避免 Agent 黑盒，我给每轮对话记录 Trace，能看到意图、Action、工具参数、工具结果、LLM 调用和耗时。为了验证质量，我做了五类离线评测，包括路由评测、知识库召回评测、回复质量规则评测、Agent 链路评测和 LLM-as-Judge。最后还做了 Monitor 和用户反馈闭环，用户点击无用后会生成 Eval 候选样本，审核和补齐断言后可以合并进正式评测集，形成回归测试。
-

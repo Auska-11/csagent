@@ -1,8 +1,8 @@
 # 客服 Agent 项目简历与面试完整手册
 
 > 整理日期：2026-07-14
-> 代码基线：Phase 9.4，Legacy 执行链清理与 Maven Modules 决策完成
-> 验证结果：clean test 共 499 项全绿；Phase 8 的真实 MySQL IT 和完整 Compose 故障恢复已有证据，Phase 9.5 将复验
+> 代码基线：Phase 9.5，Legacy 执行链清理、Maven Modules 决策与最终验收完成
+> 验证结果：clean test 共 499 项全绿；真实 MySQL IT、JAR、Agent 镜像、完整 Compose 业务链路与数据库掉线恢复均已复验
 > 使用原则：只描述代码已经证明的能力；规划中的能力必须明确说“尚未完成”
 
 ## 1. 这份文档怎么用
@@ -357,7 +357,7 @@ SessionStore 有两种实现：
 - InMemorySessionStore：默认测试和本地 Demo。
 - JdbcSessionStore：MySQL 持久化。
 
-会话快照只保存跨轮需要的数据，不保存本轮 Observation、ToolResult 等临时对象。每次写入携带 expectedVersion，旧版本更新会得到 CAS 冲突。
+会话快照只保存跨轮需要的数据，不保存本轮 Observation、`CapabilityResult` 等临时对象。每次写入携带 expectedVersion，旧版本更新会得到 CAS 冲突。
 
 ### 6.6 Workflow 状态演进
 
@@ -643,9 +643,14 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 
 ### 9.4 Docker 与部署
 
-1. Dockerfile 的 Skill 打包、Agent 镜像构建和容器内 9 个 manifest 已在 Docker 24.0.7 实际验证。
-2. Compose 的 MySQL 持久卷、readiness 掉线恢复和 Agent 重启续接已经通过故障注入。
+1. Dockerfile 的 Skill 打包、Agent 镜像构建和容器内 9 个 manifest 已在 Phase 9.5 再次实际验证，旧
+   Legacy class 数量为 0。
+2. Compose 的 MySQL 持久卷、readiness 掉线恢复和恢复后会话读取已经通过故障注入；验收后容器与
+   网络已停止，数据卷保留。
 3. 生产部署仍缺镜像漏洞扫描/SBOM、镜像签名、CI 中的 Docker 验收和滚动发布验证。
+
+Phase 9.5 的命令、制品摘要、订单/政策 Trace 和故障恢复证据见
+[`客服Agent-73-Phase9最终验收与架构改造完成说明.md`](客服Agent-73-Phase9最终验收与架构改造完成说明.md)。
 
 ### 9.5 架构遗留
 
@@ -810,7 +815,7 @@ Liveness 只判断 JVM 是否活着；Readiness 判断实例当前是否适合�
 ### 14.1 演示前准备
 
 - 使用本地 memory 模式，减少外部依赖。
-- 准备 CUSTOMER、ADMIN 和 MCP_CLIENT 三种 Demo JWT。
+- 准备 CUSTOMER 与 ADMIN Demo JWT；ADMIN 可以验收 MCP，独立服务联调时再使用 MCP_CLIENT JWT。
 - 提前运行 `mvn test`，确认 499 项通过。
 - 提前打开首页、Monitor、Eval 和 Trace 面板。
 - 不在现场首次尝试真实模型、Qdrant 或外部售后平台。

@@ -4,11 +4,11 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 9.1 至 9.4 已完成；9.5 最终 MySQL、JAR、Docker/Compose 复验待执行 |
+| 状态 | Phase 9.1 至 9.5 全部完成；本轮架构改造目标已关闭 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、基线保护、分批删除；Phase 9 已清理迁移期双轨兼容 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | Phase 9.4 为 499 个默认测试与 JAR 通过；MySQL、Agent 镜像与 Compose 曾在 Phase 8 通过，9.5 将复验 |
+| 当前验证规模 | 499 个默认测试、Eval、真实 MySQL IT、JAR、Agent 镜像与完整 Compose 故障恢复全部通过 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -20,24 +20,24 @@
 执行已插件化，CapabilityGateway 可以接本地或 MCP Provider，多轮退货 Workflow 具备粘性状态、
 身份、确认、并发和幂等保护，并新增 `WarrantyQuery` 作为零核心业务特判的扩展证明。
 
-这里的“核心目标完成”不等于整份长期路线图全部结束。Phase 7 的生产路由迁移已经完成，但旧
-`CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的应用日志与 MCP 普通审计安全已经
-收口，售后/Embedding/Qdrant 也已有独立 HTTP 超时；人工转接已具备调用前 PREPARED、结果未知持久化、
-成功回放、租约和后台有限补建；真实 MySQL 与完整容器故障注入、Capability 执行中 deadline、
-LLM 总尝试次数上限和协作式 wall-clock 总预算也已完成。第二十批已完成租户安全地基、租户内人工
-复核查询及 retry/confirm/close CAS Store、追加式处置审计、ROLE_ADMIN HTTP API 和售后三态结果查询
-Port。20.6 已完成 README、核心架构图、简历手册、全量测试、真实 MySQL、镜像与 Compose 总验收，并在
-验收后删除临时容器、保留数据卷。当前下游没有公开查询协议，因此真实 HTTP 查询 Adapter 仍不可用。
-按租户 LLM 隔离，以及 Phase 9 的 Legacy 删除仍是后续演进项，不能把它们误写成已完成。
+这里的“架构改造目标完成”不等于项目已经达到生产终局。Phase 9 已物理删除旧
+`CustomerServiceSkill`、Legacy Workflow Adapter、`ToolManager`、`ToolRegistry` 和重复 Tool Schema；
+Handler/API 直接依赖 `CapabilityGateway`，7 个独立 Local Provider 覆盖 9 个稳定 Capability。默认测试、
+Eval、真实 MySQL、JAR、镜像、完整 Compose 业务链路和数据库掉线恢复均已复验，验收后容器与网络已删除，
+数据卷保留。
+
+后续仍需处理按租户 LLM 隔离、两个真实 Agent 进程的故障注入、连接池与数据库迁移、集中式安全审计，
+以及下游售后平台缺少只读幂等查询协议等生产约束。这些属于下一轮生产化目标，不能误写为 Phase 9
+未完成，也不能误写为当前已经具备。
 
 ## 2. 为什么需要这次改造（改造前问题）
 
-当前项目已经具备比较完整的 Agent 工程骨架：
+改造启动前，项目已经具备比较完整的 Agent 工程骨架：
 
 - `CustomerServiceAgent` 作为应用入口。
 - `AgentRuntime` 执行 Action 循环。
-- `Skill` 决定下一步动作。
-- `ToolManager` / `ToolRegistry` 统一调用业务工具。
+- 当时由 Java `Skill` 决定下一步动作。
+- 当时由 `ToolManager` / `ToolRegistry` 统一调用业务工具。
 - `ConversationState` / `TurnContext` 保存跨轮和本轮状态。
 - MCP-style REST Adapter 和 JSON-RPC 风格入口。
 - Trace、Monitor、Eval、RAG、记忆和人工转接。
@@ -1249,7 +1249,7 @@ Runtime、Handler、Capability、MCP、Outbox 与 Review 当前架构；简历�
 - 公开 Trace 通过敏感字段与容量边界检查。
 - 日志和 MCP 审计通过敏感字段检查。
 
-## Phase 9：清理兼容层与多 Module 评估
+## Phase 9：清理兼容层与多 Module 评估（已完成）
 
 ### 目标
 
@@ -1257,21 +1257,15 @@ Runtime、Handler、Capability、MCP、Outbox 与 Review 当前架构；简历�
 
 ### 任务
 
-- [ ] 删除 Legacy Skill/Workflow Adapter。
-- [ ] 删除旧 ToolManager 兼容入口。
-- [ ] 删除重复的 Tool Schema 和旧路由逻辑。
-- [ ] 删除已失效的注释和架构文档。
-- [ ] 更新 README 架构图、运行配置和 Demo 流程。
-- [ ] 更新 Eval case，记录新旧架构指标对比。
-- [ ] 评估拆分 Maven Modules：
-  - [ ] `agent-kernel`
-  - [ ] `skill-sdk`
-  - [ ] `capability-sdk`
-  - [ ] `customer-service-workflows`
-  - [ ] `local-capabilities`
-  - [ ] `mcp-adapter`
-  - [ ] `application`
-- [ ] 只有 ArchUnit 边界稳定、构建时间和发布需求确有价值时才拆 Module。
+- [x] 删除 Legacy Skill/Workflow Adapter。
+- [x] 删除旧 ToolManager 兼容入口。
+- [x] 删除重复的 Tool Schema 和旧路由逻辑。
+- [x] 删除已失效的注释并更新当前架构文档。
+- [x] 更新 README 架构图、运行配置和 Demo 流程。
+- [x] 更新 Eval case，记录新架构指标基线。
+- [x] 评估拆分 Maven Modules；`agent-kernel`、`skill-sdk`、`capability-sdk`、业务 Workflow、Local
+  Provider、MCP Adapter 和 application 保留为未来候选边界。
+- [x] 当前只有一个 JAR/镜像/发布生命周期，因此保持单 Module；只有独立部署或复用收益成立时再拆。
 
 ### 验收标准
 
@@ -1415,7 +1409,7 @@ smartcs:
 ### Agent Kernel
 
 - [x] AgentRuntime 只包含通用循环、预算、取消、Trace 和终止控制。
-- [x] AgentRuntime 不依赖任何客服具体 Workflow、Repository 或 MCP 实现；ToolManager 只保留 Legacy 测试构造接缝。
+- [x] AgentRuntime 不依赖任何客服具体 Workflow、Repository 或 MCP 实现；旧 ToolManager 构造接缝已删除。
 - [x] 新 Action 通过注册 Handler 扩展。
 
 ### Agent Skill Package
@@ -1429,33 +1423,33 @@ smartcs:
 - [x] 订单、商品、退货申请、退货查询、政策问答已从大 Skill 拆出。
 - [x] 活跃 Workflow 支持恢复、取消、完成和失败。
 - [x] WorkflowState 隔离、可持久化并具备 schemaVersion 与注册式迁移链。
-- [ ] 副作用 Workflow 在执行前确认。
+- [x] 副作用 Workflow 在执行前确认。
 
 ### Capability 与 MCP
 
-- [ ] Capability Catalog 是 Schema 唯一来源。
+- [x] Capability Catalog 是 Schema 唯一来源。
 - [x] Local/MCP Provider 可配置替换。
 - [x] Workflow 不感知 MCP 传输。
-- [ ] 所有 Provider 通过统一契约测试。
-- [ ] 副作用能力具备授权、事务和幂等。
+- [x] 所有 Provider 通过统一契约测试。
+- [x] 副作用能力具备授权、事务和幂等。
 
 ### 安全与可靠性
 
 - [x] HTTP 用户身份由已验证 JWT Principal 注入，不信任模型、请求体或 MCP `_meta` 身份字段。
-- [ ] 会话、订单、退货、工单和 Monitor 管理操作有所有权/角色校验。
+- [x] 会话、订单、退货、工单和 Monitor 管理操作有所有权/角色校验。
 - [x] 同一会话通过进程内锁与 Session revision CAS 防止并发丢失更新。
 - [x] 公开 Trace 完成统一敏感信息脱敏与容量限制。
 - [x] 应用日志和 MCP 审计完成敏感信息脱敏。
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（20.6 最终为 510 个默认测试；另有 1 个显式真实 MySQL IT）。
+- [x] 清理失效 Legacy 测试后，Phase 9.5 的 499 个默认测试与 1 个显式真实 MySQL IT 全部通过。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。
 - [x] Docker 镜像构建、完整 Compose 启动、readiness 掉线恢复和 Agent 重启持久化通过。
-- [x] 专项文档和开发计划已同步到 20.6。
-- [x] README、核心架构图和简历手册已由 20.6 按最终代码和验收结果总收口。
+- [x] 专项文档和开发计划已同步到 Phase 9.5。
+- [x] README、核心架构图和简历手册已按 Phase 9.5 最终代码与验收结果总收口。
 
 ## 16. 第一批实施记录（已完成）
 
@@ -1645,7 +1639,7 @@ Phase 7 的最终验收结论、核心文件 diff 证据和 Legacy 清理条件�
 这些不足不影响本轮“可插拔核心接缝 + 扩展证明”的验收，但会影响多实例、动态更新和正式生产安全，
 因此不能在后续迭代中忽略。
 
-## 21. Phase 9：兼容层清理与模块化决策（进行中）
+## 21. Phase 9：兼容层清理与模块化决策（已完成）
 
 Phase 8 已在 20.6 完成最终架构验收。Phase 9 不再扩充业务面，而是删除迁移过程中保留的双轨入口，
 使文档中的 Workflow/Capability 主链路与生产代码完全一致。
@@ -1662,7 +1656,8 @@ Phase 8 已在 20.6 完成最终架构验收。Phase 9 不再扩充业务面，�
   `ToolManager`、`ToolRegistry` 兼容链、旧 Tool 协议与重复 Schema，并通过 495 项干净测试。
 - [x] 9.4 Eval/测试 Fixture 不再构造 Legacy 类型，README、架构、路线图和面试材料已更新；基于依赖
   与发布单元审计决定暂不拆 Maven Modules，并新增 package 架构门禁。
-- [ ] 9.5 完成默认测试、真实 MySQL、JAR、Docker/Compose 最终验收。
+- [x] 9.5 完成 499 个默认测试、Eval、真实 MySQL、JAR、Docker/Compose、业务链路与数据库故障恢复
+  最终验收；验收后已停止容器并保留数据卷。
 
 ### 21.2 关键决策
 
@@ -1681,3 +1676,7 @@ Workflow ID，并负责闲聊和模糊意图。Phase 9.2 将保持 ID 不变，�
 
 9.4 Maven Modules 决策、依赖审计、未来触发条件和 package 边界门禁见
 [`客服Agent-72-Phase9MavenModules决策与包边界说明.md`](客服Agent-72-Phase9MavenModules决策与包边界说明.md)。
+
+9.5 的真实 MySQL、JAR、容器制品、订单/政策主链路、9 个 Capability、readiness 掉线恢复和容器清理
+证据见
+[`客服Agent-73-Phase9最终验收与架构改造完成说明.md`](客服Agent-73-Phase9最终验收与架构改造完成说明.md)。

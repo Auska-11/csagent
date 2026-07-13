@@ -4,9 +4,10 @@
 >
 > 改造目标：分离 Agent Skill Package 与 Executable Workflow，引入可插拔 Action Handler 和 Capability Gateway/MCP Provider；以“新增业务 Skill 不修改 AgentRuntime、核心 Router 或 CapabilityGateway，并通过全量测试”为最终成功标准。
 
-> 当前状态：Phase 9.3 已删除旧 `CustomerServiceSkill`/Adapter、ToolManager、ToolRegistry 和重复 Tool
-> Schema；9 个 Capability 由 7 个独立 Local Provider 或远程 MCP Provider 承接。本文后续章节保留
-> 早期演进记录，当前事实以 `客服Agent-01`、`客服Agent-34` 和 `客服Agent-71/72` 为准。
+> 当前状态：Phase 9.5 已完成。旧 `CustomerServiceSkill`/Adapter、ToolManager、ToolRegistry 和重复 Tool
+> Schema 已删除；9 个 Capability 由 7 个独立 Local Provider 或远程 MCP Provider 承接；默认测试、
+> 真实 MySQL、JAR 和 Docker/Compose 已完成最终复验。本文后续章节保留早期演进记录，当前事实以
+> `客服Agent-01`、`客服Agent-34` 和 `客服Agent-71/72/73` 为准。
 > 详细说明见 [`客服Agent-35-订单查询Workflow迁移说明.md`](客服Agent-35-订单查询Workflow迁移说明.md)
 >、[`客服Agent-36-退货查询Workflow迁移说明.md`](客服Agent-36-退货查询Workflow迁移说明.md)
 >、[`客服Agent-37-商品咨询Workflow迁移说明.md`](客服Agent-37-商品咨询Workflow迁移说明.md)
@@ -31,11 +32,14 @@ Smart CS Agent 是一个面向电商客服场景的任务型 Agent 项目。
 
 最终希望在简历中表达为：
 
-> 基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill / Runtime / Tool 分层架构，将意图识别、工具调用、业务查询、知识库检索和回复生成解耦；支持多轮任务状态、工具调用 Trace、人工转接、接口参数校验、知识库召回评测、回复质量规则评测和评测趋势报告，提升客服场景下大模型应用的可控性、可观测性和可验证性。
+> 基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Skill Package / Workflow / Runtime /
+> Capability 分层架构，将指令资料、任务状态机、通用执行循环和业务能力解耦；支持多轮任务状态、
+> MCP/JSON-RPC、Trace、人工转接、RAG 和评测闭环，提升客服场景下大模型应用的可控性、可观测性和
+> 可验证性。
 
-## 2. 当前项目基础
+## 2. Phase 1 时的项目基础（历史记录）
 
-当前项目已经具备以下基础：
+当时项目已经具备以下基础：
 
 - Spring Boot Web 服务
 - LangChain4j 模型调用配置

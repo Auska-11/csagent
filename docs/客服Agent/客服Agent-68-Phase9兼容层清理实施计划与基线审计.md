@@ -1,5 +1,8 @@
 # 客服 Agent Phase 9 兼容层清理实施计划与基线审计
 
+> 状态：Phase 9.1 至 9.5 全部完成（2026-07-14）
+> 最终验收：[`客服Agent-73-Phase9最终验收与架构改造完成说明.md`](客服Agent-73-Phase9最终验收与架构改造完成说明.md)
+
 ## 1. Phase 9 要解决什么
 
 Phase 7 和 Phase 8 已经建立 Workflow、Capability、MCP、Skill Package、安全、幂等和可观测主链路，
@@ -120,12 +123,14 @@ Knowledge Provider，删除 Adapter/Registry/旧 Tool 协议和重复 DTO。9.3 
 
 ### 9.5 最终验收
 
-- [ ] 全量默认测试通过。
-- [ ] 显式真实 MySQL 集成测试通过。
-- [ ] Spring Boot JAR 构建与启动通过。
-- [ ] Agent Docker 镜像构建通过。
-- [ ] Compose 启停、readiness 和关键客服链路通过，验收后停止容器。
-- [ ] `rg` 证明生产代码不存在目标 Legacy 依赖。
+- [x] 499 个默认测试通过，失败、错误和跳过均为 0。
+- [x] 显式 `RealMySqlPersistenceIT` 通过。
+- [x] Spring Boot JAR 构建与独立启动通过，JAR 内包含 9 个 Skill manifest。
+- [x] Agent Docker 镜像构建通过，容器 JAR 不包含目标 Legacy class。
+- [x] Compose、JWT、订单、政策 RAG、REST/MCP 9 个 Capability 和恢复后会话读取通过。
+- [x] MySQL 停止时 liveness=200/readiness=503，恢复后 readiness=200。
+- [x] 架构门禁和容器制品检查证明生产代码不存在目标 Legacy 依赖。
+- [x] 验收后执行 `docker compose down`，停止项目容器与网络且保留数据卷。
 
 ## 5. 每批提交与回滚原则
 
@@ -164,3 +169,12 @@ sh mvnw -q -DskipTests package
 Phase 9.2 删除 Legacy Skill/Adapter 生产链并迁移测试、Eval 后，干净构建的默认测试共 508 项，失败、错误和跳过
 均为 0；Spring Boot JAR 构建通过。详细调用链、最小权限说明、退货路由缺陷和迁移清单见
 [`客服Agent-69-Phase9通用客服Workflow与LegacySkill清理说明.md`](客服Agent-69-Phase9通用客服Workflow与LegacySkill清理说明.md)。
+
+## 9. Phase 9 最终结论
+
+第 6 节完成定义的六项条件均已满足，Phase 9 不再处于“等待稳定后删除”的状态。当前代码只有
+Workflow/Capability 主链路；Skill Package、Workflow 和 MCP 的职责已经分开；Maven Modules 有明确的
+暂不拆分结论；默认测试、Eval、真实 MySQL、JAR 和 Docker/Compose 均留下可复现证据。
+
+完整命令、制品摘要、业务 Trace、故障注入和仍需继续生产化的边界见
+[`客服Agent-73-Phase9最终验收与架构改造完成说明.md`](客服Agent-73-Phase9最终验收与架构改造完成说明.md)。

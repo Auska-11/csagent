@@ -1,7 +1,7 @@
 # Smart CS Agent 当前架构设计
 
 > 更新日期：2026-07-14
-> 代码基线：Phase 9.4，Legacy 执行链已清理，Maven Modules 决策已完成
+> 代码基线：Phase 9.5，Legacy 执行链清理、Maven Modules 决策与最终验收已完成
 > 阅读原则：本文描述当前代码已经实现的架构，不把后续规划写成既成事实。
 
 ## 1. 项目定位
@@ -348,8 +348,8 @@ Compose 默认启动 MySQL 8.4.0、Qdrant 和 Agent。Agent 容器默认使用 J
 
 项目已经从早期“大 Skill + ToolManager”的客服 Demo，演进成注册式 Workflow、插件式 Action Handler、
 统一 Capability 契约和可替换 Adapter 的架构。Phase 9 已物理删除旧 Skill/Tool 双轨执行链，并用 7 个
-独立 Local Provider 覆盖 9 个能力。当前重点转向生产验收和仍未完成的真实生产约束，而不是继续维护
-迁移兼容层。
+独立 Local Provider 覆盖 9 个能力。默认测试、真实 MySQL、JAR 和 Docker/Compose 最终验收已经完成，
+当前重点转向连接池、数据库迁移、多实例故障注入和集中安全审计等生产化约束，而不是继续维护迁移兼容层。
 
 最核心的工程原则是：
 

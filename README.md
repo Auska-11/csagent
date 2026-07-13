@@ -59,6 +59,7 @@ flowchart TD
 - 当前输入、跨轮状态、本轮执行过程分别放在 `ChatRequest`、`ConversationState`、`TurnContext`。
 - Local/MCP Provider 共用 Capability 契约，Workflow 不感知能力位于本地还是远程。
 - Phase 9 已物理删除 Legacy Skill/Workflow Adapter、ToolManager、ToolRegistry 和重复 Tool Schema；运行时只有 Workflow/Capability 主链路。
+- Phase 9.5 已通过 499 个默认测试、真实 MySQL、JAR、容器制品、订单/政策主链路和 readiness 掉线恢复总验收；验收后项目容器已停止。
 - 当前有意保留单 Maven Module：一个 JAR、一个镜像、一个发布生命周期；用架构测试约束包边界，达到独立发布触发条件后再拆 Module。
 - HTTP 身份只来自已验证 JWT Principal，不能由请求体、LLM 参数或 MCP `_meta` 覆盖。
 - Session CAS、Capability 幂等和 Handoff Outbox 分别保护会话状态、副作用执行和外部结果未知，三者不能互相替代。
@@ -558,8 +559,10 @@ docker compose down
 ```
 
 该命令默认保留 `mysql_data` 卷；只有明确希望清空数据库时才使用 `docker compose down -v`。镜像构建、
-9 个 Skill 清单、readiness 掉线恢复和 Agent 重启持久化的真实证据见
-[真实 MySQL 与 Docker 编排验收说明](docs/客服Agent/客服Agent-59-真实MySQL与Docker编排验收说明.md)。
+9 个 Skill 清单、readiness 掉线恢复和 Agent 重启持久化的早期证据见
+[真实 MySQL 与 Docker 编排验收说明](docs/客服Agent/客服Agent-59-真实MySQL与Docker编排验收说明.md)；
+Phase 9 清理后的最终复验证据见
+[Phase 9 最终验收与架构改造完成说明](docs/客服Agent/客服Agent-73-Phase9最终验收与架构改造完成说明.md)。
 
 `.env` 已经被 `.gitignore` 忽略，仓库只保留 `.env.example`，避免把真实 API Key 提交进去。
 
@@ -650,6 +653,7 @@ docker compose down
 - [第二十批最终验收与架构收口说明](docs/客服Agent/客服Agent-67-第二十批最终验收与架构收口说明.md)
 - [Phase 9 独立 Capability Provider 与 ToolRegistry 清理说明](docs/客服Agent/客服Agent-71-Phase9独立CapabilityProvider与ToolRegistry清理说明.md)
 - [Phase 9 Maven Modules 决策与包边界说明](docs/客服Agent/客服Agent-72-Phase9MavenModules决策与包边界说明.md)
+- [Phase 9 最终验收与架构改造完成说明](docs/客服Agent/客服Agent-73-Phase9最终验收与架构改造完成说明.md)
 
 ## 简历表达参考
 
@@ -659,8 +663,8 @@ docker compose down
 
 - 设计 Agent Skill Package / Workflow / Runtime / Capability 分层架构，将指令与知识、任务状态机、通用执行循环和原子业务能力解耦，支持订单查询、商品咨询、退货申请、政策问答和人工转接等客服场景。
 - 实现多轮会话状态管理，使用 `ConversationState` 保存任务槽位、短期消息窗口和摘要记忆，支持退货申请等跨轮槽位填充流程。
-- 设计 MCP-style 工具注册与调用层，统一 `ToolDefinition`、`ToolCall`、`ToolResult`、`inputSchema` 和 `outputSchema`，并提供 MCP Adapter 接口暴露工具列表和工具调用能力。
-- 实现 `/mcp` JSON-RPC 风格入口，支持 `initialize`、`tools/list` 和 `tools/call`，让内部工具注册表具备独立 MCP Server 的协议边界。
+- 设计统一 Capability 契约，以 `CapabilityDefinition`、`CapabilityCall`、`CapabilityResult` 和输入/输出 schema 作为唯一协议；7 个独立 Local Provider 覆盖 9 个能力，Workflow 只依赖 `CapabilityGateway`。
+- 实现 `/mcp` JSON-RPC 风格入口，支持 `initialize`、`tools/list` 和 `tools/call`，REST 与 MCP 共用同一 Capability Catalog，并支持 Local/MCP Provider 配置替换。
 - 接入 Spring Security Resource Server，统一校验 JWT 签名、issuer、audience、有效期、租户和角色；区分 CUSTOMER、ADMIN 与 MCP_CLIENT，并禁止 MCP 服务通过普通元数据冒充最终用户。
 - 实现 RAG 双模式：默认 local 模式保证测试和演示稳定，高级模式接入 OpenAI-compatible embedding API 与 Qdrant 向量数据库，并在外部服务失败时回退本地检索。
 - 实现轻量 Multi-Agent 路由，将用户消息分配到售前、售后、投诉和通用专家域，并通过 Trace 记录路由原因和置信度。
