@@ -321,6 +321,22 @@ $env:SMARTCS_SECURITY_JWT_SECRET="replace-with-at-least-32-random-bytes"
 http://localhost:8080
 ```
 
+使用 Docker Compose 启动完整依赖时，可复制 `.env.example` 后执行：
+
+```powershell
+Copy-Item .env.example .env
+docker compose up -d --build
+docker compose ps
+```
+
+Compose 自带 MySQL，宿主机默认端口为 3307，Agent 会等待数据库健康后启动，并通过
+`/actuator/health/readiness` 暴露容器健康状态。单独验收真实 MySQL 时可只启动数据库：
+
+```powershell
+docker compose up -d mysql
+mvn -Dtest=RealMySqlPersistenceIT test
+```
+
 默认使用内存数据。如果要开启 MySQL 持久化，先创建数据库：
 
 ```sql
@@ -514,7 +530,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次完整测试通过 394 个测试用例。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
+最近一次完整测试通过 396 个测试用例；另有 1 项显式真实 MySQL IT 通过。评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
 
@@ -568,6 +584,7 @@ docker compose down
 - [PendingHandoffStore 持久化基础说明](docs/客服Agent/客服Agent-56-PendingHandoffStore持久化基础说明.md)
 - [Outbox 调用前准备与成功结果回放说明](docs/客服Agent/客服Agent-57-Outbox调用前准备与成功结果回放说明.md)
 - [Outbox 租约与后台有限恢复说明](docs/客服Agent/客服Agent-58-Outbox租约与后台有限恢复说明.md)
+- [真实 MySQL 与 Docker 编排验收说明](docs/客服Agent/客服Agent-59-真实MySQL与Docker编排验收说明.md)
 
 ## 简历表达参考
 

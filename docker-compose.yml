@@ -1,4 +1,25 @@
 services:
+  mysql:
+    image: mysql:8.4.0
+    container_name: smart-cs-mysql
+    ports:
+      - "${SMARTCS_MYSQL_PORT:-3307}:3306"
+    environment:
+      MYSQL_DATABASE: ${SMARTCS_MYSQL_DATABASE:-smart_cs_agent}
+      MYSQL_USER: ${SMARTCS_MYSQL_USER:-smartcs}
+      MYSQL_PASSWORD: ${SMARTCS_MYSQL_PASSWORD:-smartcs-local-password}
+      MYSQL_ROOT_PASSWORD: ${SMARTCS_MYSQL_ROOT_PASSWORD:-root-local-password}
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
   qdrant:
     image: qdrant/qdrant:v1.9.7
     container_name: smart-cs-qdrant
@@ -18,9 +39,9 @@ services:
       - "8080:8080"
     environment:
       SERVER_PORT: 8080
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL}
-      OPENAI_MODEL_NAME: ${OPENAI_MODEL_NAME}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-dummy-test-key}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_MODEL_NAME: ${OPENAI_MODEL_NAME:-dummy-model}
       # 生产部署必须关闭 demo issuer，并覆盖 JWT 密钥。
       SMARTCS_SECURITY_DEMO_ISSUER_ENABLED: ${SMARTCS_SECURITY_DEMO_ISSUER_ENABLED:-true}
       SMARTCS_SECURITY_ISSUER: ${SMARTCS_SECURITY_ISSUER:-smart-cs-agent}
@@ -44,6 +65,7 @@ services:
       # 外部售后工单平台不能无限占用 Agent 会话线程。
       SMARTCS_AFTER_SALES_CONNECT_TIMEOUT_MS: ${SMARTCS_AFTER_SALES_CONNECT_TIMEOUT_MS:-3000}
       SMARTCS_AFTER_SALES_READ_TIMEOUT_MS: ${SMARTCS_AFTER_SALES_READ_TIMEOUT_MS:-10000}
+      SMARTCS_HANDOFF_MODE: ${SMARTCS_HANDOFF_MODE:-memory}
       # 后台恢复默认关闭；开启前必须确认售后平台真正支持 Idempotency-Key。
       SMARTCS_HANDOFF_RECOVERY_ENABLED: ${SMARTCS_HANDOFF_RECOVERY_ENABLED:-false}
       SMARTCS_HANDOFF_RECOVERY_BATCH_SIZE: ${SMARTCS_HANDOFF_RECOVERY_BATCH_SIZE:-10}
@@ -61,18 +83,28 @@ services:
       SMARTCS_MEMORY_SUMMARY_MAX_LENGTH: ${SMARTCS_MEMORY_SUMMARY_MAX_LENGTH:-2000}
       # 单轮 Agent Action 步数预算，必须保持为正数。
       SMARTCS_AGENT_MAX_ITERATIONS: ${SMARTCS_AGENT_MAX_ITERATIONS:-10}
-      # 默认仍是 memory；使用外部 MySQL 时可在 .env 中覆盖以下配置。
-      SMARTCS_PERSISTENCE_MODE: ${SMARTCS_PERSISTENCE_MODE:-memory}
+      # Compose 自带 MySQL，因此默认使用 jdbc；单独运行 JAR 时 application.yml 仍默认 memory。
+      SMARTCS_PERSISTENCE_MODE: ${SMARTCS_PERSISTENCE_MODE:-jdbc}
       SMARTCS_JDBC_DRIVER: ${SMARTCS_JDBC_DRIVER:-com.mysql.cj.jdbc.Driver}
-      SMARTCS_JDBC_URL: "${SMARTCS_JDBC_URL:-jdbc:mysql://host.docker.internal:3306/smart_cs_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}"
-      SMARTCS_JDBC_USERNAME: ${SMARTCS_JDBC_USERNAME:-root}
-      SMARTCS_JDBC_PASSWORD: ${SMARTCS_JDBC_PASSWORD:-}
+      SMARTCS_JDBC_URL: "${SMARTCS_JDBC_URL:-jdbc:mysql://mysql:3306/smart_cs_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}"
+      SMARTCS_JDBC_USERNAME: ${SMARTCS_JDBC_USERNAME:-smartcs}
+      SMARTCS_JDBC_PASSWORD: ${SMARTCS_JDBC_PASSWORD:-smartcs-local-password}
       SMARTCS_JDBC_CONNECT_TIMEOUT_MS: ${SMARTCS_JDBC_CONNECT_TIMEOUT_MS:-3000}
       SMARTCS_JDBC_SOCKET_TIMEOUT_MS: ${SMARTCS_JDBC_SOCKET_TIMEOUT_MS:-10000}
       SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS: ${SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS:-5}
     depends_on:
-      - qdrant
+      mysql:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
     restart: unless-stopped
 
 volumes:
+  mysql_data:
   qdrant_data:

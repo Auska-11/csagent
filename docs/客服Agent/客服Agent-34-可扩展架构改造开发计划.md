@@ -4,11 +4,11 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成十六批收口，Outbox 已支持租约与后台有限恢复，真实数据库和容器验收仍在继续 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成十七批收口，真实 MySQL 核心语义已验收，Agent 镜像与容器掉线恢复仍待运行 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 394 个默认测试全部通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入包 |
+| 当前验证规模 | 396 个默认测试及 1 个显式真实 MySQL IT 通过；Spring Boot JAR 打包通过，9 个 Skill Package 均已入本地 JAR |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -1090,6 +1090,19 @@ lease 到期后重新进入 due 列表，不会永久卡住。
 管理 API/UI、租约心跳、历史清理和真实 MySQL 多实例故障验收。详细说明见
 `客服Agent-58-Outbox租约与后台有限恢复说明.md`。
 
+### Phase 8 第十七批进度（2026-07-13）
+
+Dockerfile 已显式复制根目录 `skills/`，并增加 readiness HEALTHCHECK。Compose 新增固定 MySQL 8.4.0、
+持久卷、mysqladmin 健康检查、Agent JDBC 默认配置和 service_healthy 启动依赖；宿主机使用 3307，避免与
+已有 3306 MySQL 冲突。默认测试新增 Docker 静态门禁，总数增至 396。
+
+真实启动的 MySQL 8.4.0 容器已达到 healthy，显式 `RealMySqlPersistenceIT` 实际通过，覆盖双 Store
+Session CAS、Capability 幂等并发单调用、Outbox 租约过期接管和真实 `SELECT SLEEP` 查询超时。
+
+本批仍不能把 Docker 运行验收标记完成：`docker compose build smart-cs-agent` 因桌面执行审批额度不足被
+系统拒绝，尚无 Agent 镜像构建、容器内 Skill 清单、完整 Compose readiness、数据库掉线/恢复和容器重启
+续接证据。详细记录见 `客服Agent-59-真实MySQL与Docker编排验收说明.md`。
+
 ### 验收标准
 
 - 不能通过猜测 conversationId 读取或清除其他用户会话。
@@ -1300,7 +1313,7 @@ smartcs:
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 394 个测试）。
+- [x] 旧测试全部保留并通过（当前默认套件共 396 个测试，另有 1 个真实 MySQL IT）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。
