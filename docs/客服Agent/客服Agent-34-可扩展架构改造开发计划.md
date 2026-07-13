@@ -4,17 +4,17 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 第二十批 20.1 至 20.6 已完成并关闭，Phase 9 尚未启动 |
+| 状态 | Phase 9.1 至 9.4 已完成；9.5 最终 MySQL、JAR、Docker/Compose 复验待执行 |
 | 制定日期 | 2026-07-11 |
-| 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
+| 改造方式 | 渐进迁移、基线保护、分批删除；Phase 9 已清理迁移期双轨兼容 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 510 个默认测试、1 个显式真实 MySQL IT、JAR、Agent 镜像与完整 Compose 总验收通过 |
+| 当前验证规模 | Phase 9.4 为 499 个默认测试与 JAR 通过；MySQL、Agent 镜像与 Compose 曾在 Phase 8 通过，9.5 将复验 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
 本文档是客服 Agent 后续架构改造的主执行计划。`docs/开发计划` 中的 v1-v4 保留为项目早期演进记录，不再作为本次架构改造的主要依据。
 
-### 1.1 当前实施结论（2026-07-13）
+### 1.1 当前实施结论（2026-07-14）
 
 本轮设定的“核心可扩展架构目标”已经落地：Skill Package 与 Workflow 已分离，Runtime 的 Action
 执行已插件化，CapabilityGateway 可以接本地或 MCP Provider，多轮退货 Workflow 具备粘性状态、
@@ -1613,14 +1613,17 @@ ChatApiController
 | MCP Server/Client 协议 | `McpJsonRpcControllerTest`、`McpToolControllerTest`、`HttpMcpClientTransportTest` |
 | JWT 与 HTTP 角色边界 | `HttpSecurityIntegrationTest`、`DemoIssuerDisabledIntegrationTest`、`JwtPrincipalConverterTest` |
 | Trace 隐私与容量边界 | `TraceDataSanitizerTest`、`AgentRuntimeTraceTest`、`ChatApiControllerMvcTest` |
-| Local/MCP 输出契约一致 | `ToolRegistryCapabilityProviderTest`、`McpCapabilityProviderTest` |
+| Local/MCP 输出契约一致 | `LocalOrderCapabilityProviderTest`、`LocalKnowledgeSearchCapabilityProviderTest`、`McpCapabilityProviderTest` |
 | 新 Skill 零核心业务特判 | `WarrantySkillExtensionProofTest` |
 | 人工升级独立路由与工单边界 | `EscalationWorkflowTest`、`EscalationWorkflowIntegrationTest`、`HandoffActionHandlerTest` |
 
 Phase 7 的最终验收结论、核心文件 diff 证据和 Legacy 清理条件见
 [`客服Agent-41-Phase7架构验收报告.md`](客服Agent-41-Phase7架构验收报告.md)。
 
-## 20. 仍然存在的不足（后续路线图）
+## 20. Phase 8 收口时仍存在的不足（历史基线）
+
+> 本节记录开启 Phase 9 前的真实状态。下面第 1、2 项已在 Phase 9.2/9.3 完成物理删除；其余生产化
+> 限制仍需继续处理。当前进度以第 21 节为准。
 
 1. Phase 7 的订单、退货查询、商品咨询、政策问答、用户资料和人工升级已经由独立 Workflow 接管
    生产路由；`CustomerServiceSkill` 仍保留同名 Legacy 分支作为稳定期回滚路径。只有 Eval 指标、
@@ -1657,7 +1660,8 @@ Phase 8 已在 20.6 完成最终架构验收。Phase 9 不再扩充业务面，�
 - [x] 9.2 用真正的通用客服 Workflow 替代 Legacy Skill/Adapter，收紧为零 Capability，并通过 508 项干净构建默认测试。
 - [x] 9.3 Handler/API 直连 Capability 契约，九个能力由七个独立 Provider 提供；已删除
   `ToolManager`、`ToolRegistry` 兼容链、旧 Tool 协议与重复 Schema，并通过 495 项干净测试。
-- [ ] 9.4 更新 Eval、README、架构与面试材料，完成 Maven Modules 决策。
+- [x] 9.4 Eval/测试 Fixture 不再构造 Legacy 类型，README、架构、路线图和面试材料已更新；基于依赖
+  与发布单元审计决定暂不拆 Maven Modules，并新增 package 架构门禁。
 - [ ] 9.5 完成默认测试、真实 MySQL、JAR、Docker/Compose 最终验收。
 
 ### 21.2 关键决策
@@ -1674,3 +1678,6 @@ Workflow ID，并负责闲聊和模糊意图。Phase 9.2 将保持 ID 不变，�
 
 9.3 第二批独立 Provider、`ToolRegistry`/重复 Schema 物理删除和 495 项干净测试证据见
 [`客服Agent-71-Phase9独立CapabilityProvider与ToolRegistry清理说明.md`](客服Agent-71-Phase9独立CapabilityProvider与ToolRegistry清理说明.md)。
+
+9.4 Maven Modules 决策、依赖审计、未来触发条件和 package 边界门禁见
+[`客服Agent-72-Phase9MavenModules决策与包边界说明.md`](客服Agent-72-Phase9MavenModules决策与包边界说明.md)。

@@ -45,7 +45,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * 【和 ResponseQualityEvaluationTest 有什么区别？】
  * ResponseQualityEvaluationTest 直接评估静态 candidateReply。
- * 这个测试会真实跑过 CustomerServiceAgent、ConversationStore、Skill、Runtime 和 Tool。
+ * 这个测试会真实跑过 CustomerServiceAgent、ConversationStore、Skill、Runtime 和独立 Capability Provider。
+ *
+ * <p>Phase 9 已移除 ToolRegistry 测试夹具，本测试通过 WorkflowTestSupport 装配与生产相同的 7 个
+ * Local Provider，因此评测不会继续证明一条已经删除的兼容链。</p>
  *
  * 为了保证测试稳定，这里仍然使用 Fake LLM，不调用真实模型。
  * 所以它是“稳定的端到端链路评测”，不是线上 LLM 质量评测。

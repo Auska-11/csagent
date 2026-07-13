@@ -4,7 +4,9 @@
 >
 > 改造目标：分离 Agent Skill Package 与 Executable Workflow，引入可插拔 Action Handler 和 Capability Gateway/MCP Provider；以“新增业务 Skill 不修改 AgentRuntime、核心 Router 或 CapabilityGateway，并通过全量测试”为最终成功标准。
 
-> Phase 7 当前进度：订单、退货查询、商品咨询、政策问答、用户资料和人工升级的生产 Workflow 已完成；旧 `CustomerServiceSkill` 分支进入稳定观察期，后续按 Phase 9 条件清理。
+> 当前状态：Phase 9.3 已删除旧 `CustomerServiceSkill`/Adapter、ToolManager、ToolRegistry 和重复 Tool
+> Schema；9 个 Capability 由 7 个独立 Local Provider 或远程 MCP Provider 承接。本文后续章节保留
+> 早期演进记录，当前事实以 `客服Agent-01`、`客服Agent-34` 和 `客服Agent-71/72` 为准。
 > 详细说明见 [`客服Agent-35-订单查询Workflow迁移说明.md`](客服Agent-35-订单查询Workflow迁移说明.md)
 >、[`客服Agent-36-退货查询Workflow迁移说明.md`](客服Agent-36-退货查询Workflow迁移说明.md)
 >、[`客服Agent-37-商品咨询Workflow迁移说明.md`](客服Agent-37-商品咨询Workflow迁移说明.md)

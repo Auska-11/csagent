@@ -1,8 +1,8 @@
 # 客服 Agent 项目简历与面试完整手册
 
-> 整理日期：2026-07-13
-> 代码基线：Phase 8 第二十批 20.6 架构与人工转接复核闭环收口
-> 验证结果：clean test 共 510 项全绿；LLM/Capability deadline、真实 MySQL IT 和完整 Compose 故障恢复均有实际证据
+> 整理日期：2026-07-14
+> 代码基线：Phase 9.4，Legacy 执行链清理与 Maven Modules 决策完成
+> 验证结果：clean test 共 499 项全绿；Phase 8 的真实 MySQL IT 和完整 Compose 故障恢复已有证据，Phase 9.5 将复验
 > 使用原则：只描述代码已经证明的能力；规划中的能力必须明确说“尚未完成”
 
 ## 1. 这份文档怎么用
@@ -47,13 +47,14 @@ Smart CS Agent 是一个面向电商客服场景的 Java 智能 Agent 系统。�
 
 | 指标 | 当前值 | 应怎样理解 |
 | --- | ---: | --- |
-| 默认自动化测试 | 510 项 | 当前工作区 `clean test` 实测通过 |
-| 测试源码文件 | 119 个 | 包含单元、集成、架构边界、Eval 和显式真实 MySQL IT |
-| Java 主代码文件 | 321 个 | 反映项目已经超过单文件 Demo 规模 |
+| 默认自动化测试 | 499 项 | 当前工作区 `clean test` 实测通过 |
+| 测试源码文件 | 121 个 | 包含单元、集成、架构边界、Eval 和显式真实 MySQL IT |
+| Java 主代码文件 | 298 个 | Phase 9 删除 3000 余行 Legacy Tool 兼容实现后统计 |
 | 离线评测样本 | 36 条 | 路由 16、召回 8、规则回复 6、链路回复 3、Judge 3 |
 | Agent Skill Package | 9 个 | 运行时从 manifest、SKILL.md 和 references 加载 |
-| 独立业务 Workflow | 8 个 | 另保留一个 Legacy 回滚适配器 |
+| 独立业务 Workflow | 8 个 | 另有 1 个通用客服兜底 Workflow，不再有 Legacy Adapter |
 | 稳定 Capability ID | 9 个 | Local 与 MCP 共用同一命名和契约 |
+| 独立 Local Provider | 7 个 | 覆盖 9 个稳定 Capability，不经过 ToolRegistry |
 | Turn 最终结果类型 | 5 类 | 成功、业务拒绝、技术失败、安全拒绝、用户取消 |
 | 持久化表 | 10 张 | 4 张业务表、Session、Capability 幂等和 4 张 Handoff 表 |
 
@@ -95,7 +96,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java 智能 Agent 系统。�
 3. 建立统一 Capability 契约和 Local/MCP Provider 适配层，9 个稳定能力 ID 共用输入输出 Schema、三态结果、身份要求、风险等级和幂等策略，使 Workflow 不感知能力位于本地还是远程。
 4. 实现多轮会话状态、SessionStore 内存/JDBC 双实现、版本 CAS、Workflow 状态迁移链、副作用幂等租约，以及 LLM/Capability 执行 deadline 与整轮 wall-clock 预算；覆盖会话重建、并发冲突、结果未知回放及 Session 保存失败后的防重复调用。
 5. 接入 Spring Security JWT Resource Server 和角色权限矩阵，使用 tenantId、userId、conversationId 复合所有权边界，并对公开 Trace 做递归脱敏、限长和不可变快照。
-6. 建立 Trace、Monitor、用户反馈到 Eval 候选样本的质量闭环，维护 36 条离线评测样本、510 项默认测试和显式真实 MySQL IT，接入 GitHub Actions 作为持续回归门禁。
+6. 建立 Trace、Monitor、用户反馈到 Eval 候选样本的质量闭环，维护 36 条离线评测样本、499 项默认测试和显式真实 MySQL IT，接入 GitHub Actions 作为持续回归门禁。
 
 ### 3.4 四条精简版
 
@@ -104,7 +105,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java 智能 Agent 系统。�
 - 设计可插拔 Agent 架构，按 Runtime、Workflow、Action Handler、Capability 分层，完成 8 个业务 Workflow 和 9 个 Skill Package 的运行时接入。
 - 统一 Local/MCP 能力契约，支持 JSON-RPC tools/list、tools/call、远程发现、有限重试和基础熔断，并通过 Capability allowlist 控制最小权限。
 - 实现会话 JDBC 持久化、版本 CAS、Workflow 状态迁移和副作用幂等租约，验证重建恢复、并发冲突与故障重试不重复调用 Provider。
-- 建立 JWT/RBAC、Trace 脱敏、Monitor 五类 Turn 结果和离线 Eval 体系，当前 510 项默认测试、真实 MySQL IT、Docker 故障恢复与 36 条评测样本通过既定断言。
+- 建立 JWT/RBAC、Trace 脱敏、Monitor 五类 Turn 结果和离线 Eval 体系，当前 499 项默认测试、真实 MySQL IT、Docker 故障恢复与 36 条评测样本通过既定断言。
 
 ### 3.5 简历关键词
 
@@ -184,7 +185,8 @@ flowchart TD
 项目中曾经存在两种容易混淆的 Skill：
 
 1. 早期 Java Skill
-   CustomerServiceSkill 同时包含意图判断、槽位逻辑和 Action 决策，职责较重。它现在主要作为 Legacy 回滚路径保留。
+   CustomerServiceSkill 曾同时包含意图判断、槽位逻辑和 Action 决策，职责较重。Phase 9 已将稳定
+   `customer_service` ID 迁到通用 Workflow，并物理删除该 Java Skill 与 Legacy Adapter。
 
 2. 当前 Agent Skill Package
    根目录 skills 下的 manifest.yaml、SKILL.md、Prompt 和 references 组成声明式能力包。它描述“这个业务是什么、允许调用什么能力、需要加载什么参考资料”，但真正可执行的状态机由 AgentWorkflow 实现。
@@ -647,8 +649,9 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 
 ### 9.5 架构遗留
 
-1. CustomerServiceSkill、ToolManager、ToolRegistry 和 LegacySkillWorkflowAdapter 仍作为回滚兼容层存在。
-2. 当前是单 Maven Module，包边界已经形成，但还没有独立发布需求，因此暂未拆多 Module。
+1. Legacy Skill/Tool 双轨链路已删除；当前仍需持续防止兼容类型被重新引入，已有物理删除门禁。
+2. 当前有意保持单 Maven Module：只有一个 JAR/镜像发布单元，且核心共享上下文仍有双向依赖；已有
+   package 架构门禁，待 MCP Server 独立部署或 Agent Core 被第二个应用复用时再拆。
 3. 专家域 Multi-Agent 路由当前主要记录 agent_routed Trace，真正执行选择仍由 WorkflowRouter 完成。
 
 ## 10. 下一步生产化路线
@@ -664,7 +667,7 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 7. 建设集中式安全审计、保留期、访问控制和告警。
 8. 为 LLM 执行器增加 Micrometer 指标和按租户/模型 bulkhead。
 9. 把镜像扫描、SBOM 和 Compose smoke test 加入 CI。
-10. 稳定运行后逐步删除 Legacy Skill 和 ToolRegistry 兼容路径。
+10. 满足独立部署或复用触发条件后，先抽 contracts，再评估拆分 core、adapters、MCP 和 application Modules。
 
 ## 11. 面试中的 STAR 讲法
 
@@ -689,15 +692,15 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 
 - 形成 9 个 Skill Package、8 个独立业务 Workflow 和 9 个稳定 Capability。
 - 新增 WarrantyQuery 时不需要修改 Runtime、Router 和 Gateway 的业务分支。
-- 默认测试从早期约 115 项增长到 510 项并保持全绿，另有 LLM/Capability deadline、真实 MySQL IT 和完整 Docker 故障恢复通过。
+- 默认测试从早期约 115 项增长到 499 项并保持全绿，另有 LLM/Capability deadline、真实 MySQL IT 和完整 Docker 故障恢复通过。
 - 建立 36 条离线评测样本、JSON 报告、历史趋势和反馈回归闭环。
-- 同时保留 Legacy 回滚路径，避免一次性重写带来的高风险。
+- 迁移期用允许清单和行为基线保留可回滚路径，稳定后在 Phase 9 物理删除 Legacy 链，避免长期双轨维护。
 
 ## 12. 项目介绍话术
 
 ### 12.1 30 秒版本
 
-我做了一个基于 Spring Boot 和 LangChain4j 的电商客服 Agent。它不是简单调用大模型，而是把订单、退货、商品、政策问答和人工升级拆成独立 Workflow，再通过 Action Handler 和 Capability Gateway 调用本地或 MCP 远程能力。项目还实现了多轮会话持久化、幂等防重、人工转接 Outbox 与 ADMIN 复核、LLM/Capability deadline、整轮协作式 wall-clock 预算、JWT/RBAC、RAG、Trace/Monitor 和离线评测。目前有 9 个 Skill Package、8 个独立业务 Workflow，默认 510 项测试通过，并完成真实 MySQL 与完整 Docker 故障恢复验收。
+我做了一个基于 Spring Boot 和 LangChain4j 的电商客服 Agent。它不是简单调用大模型，而是把订单、退货、商品、政策问答和人工升级拆成独立 Workflow，再通过 Action Handler 和 Capability Gateway 调用本地或 MCP 远程能力。项目还实现了多轮会话持久化、幂等防重、人工转接 Outbox 与 ADMIN 复核、LLM/Capability deadline、整轮协作式 wall-clock 预算、JWT/RBAC、RAG、Trace/Monitor 和离线评测。目前有 9 个 Skill Package、8 个独立业务 Workflow，默认 499 项测试通过，并完成真实 MySQL 与完整 Docker 故障恢复验收。
 
 ### 12.2 2 分钟版本
 
@@ -707,7 +710,7 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 
 在可靠性方面，我把会话状态拆成 SessionStore 内存和 JDBC 实现，通过版本 CAS 防止丢失更新；对退货这类副作用增加幂等 Store、租约、续租和结果回放，并测试了 Provider 成功但 Session 保存失败后的重试不重复执行。安全上使用 Spring Security 校验 JWT 和角色，同时以 tenant、user、conversation 作为所有权边界，对 Trace 做统一脱敏。
 
-质量方面，项目有 36 条离线评测样本、Monitor 五类 Turn 结果、用户负反馈转 Eval 候选的闭环、510 项默认测试、LLM/Capability 执行 deadline、真实 MySQL IT 和完整 Docker 故障恢复。人工复核管理入口和三态查询 Port 已完成，但下游还没有只读幂等查询协议；按租户 LLM 隔离和多 Agent 实例故障注入也未完成，所以我会明确把它定位为工程化学习项目，而不是宣称已经完全生产级。
+质量方面，项目有 36 条离线评测样本、Monitor 五类 Turn 结果、用户负反馈转 Eval 候选的闭环、499 项默认测试、LLM/Capability 执行 deadline、真实 MySQL IT 和完整 Docker 故障恢复。人工复核管理入口和三态查询 Port 已完成，但下游还没有只读幂等查询协议；按租户 LLM 隔离和多 Agent 实例故障注入也未完成，所以我会明确把它定位为工程化学习项目，而不是宣称已经完全生产级。
 
 ### 12.3 5 分钟讲解顺序
 
@@ -732,7 +735,7 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 
 ### Q3：项目中的 Skill 和通用 Agent Skill 有什么关系？
 
-当前 Agent Skill Package 已经接近通用 Agent Skill，包含 manifest、SKILL.md、Prompt、references 和能力白名单；但可执行业务流程由 Java Workflow 承担。早期 CustomerServiceSkill 是 Legacy Java 决策类，确实和通用 Agent Skill 概念有混淆，现在已经通过命名和职责分离缓解。
+当前 Agent Skill Package 已经接近通用 Agent Skill，包含 manifest、SKILL.md、Prompt、references 和能力白名单；但可执行业务流程由 Java Workflow 承担。早期 CustomerServiceSkill 是容易与 Agent Skill 混淆的 Java 决策类，Phase 9 已删除；现在代码和文档只保留 Agent Skill Package 与 Workflow 两个清楚概念。
 
 ### Q4：为什么不用 LLM 自由决定所有步骤？
 
@@ -808,7 +811,7 @@ Liveness 只判断 JVM 是否活着；Readiness 判断实例当前是否适合�
 
 - 使用本地 memory 模式，减少外部依赖。
 - 准备 CUSTOMER、ADMIN 和 MCP_CLIENT 三种 Demo JWT。
-- 提前运行 `mvn test`，确认 510 项通过。
+- 提前运行 `mvn test`，确认 499 项通过。
 - 提前打开首页、Monitor、Eval 和 Trace 面板。
 - 不在现场首次尝试真实模型、Qdrant 或外部售后平台。
 
@@ -836,7 +839,7 @@ Liveness 只判断 JVM 是否活着；Readiness 判断实例当前是否适合�
    展示 Monitor 五类结果和用户负反馈生成 Eval 候选。
 
 8. 测试
-   展示 510 项默认测试、LLM/Capability deadline、真实 MySQL IT、Docker 故障恢复记录和评测 summary，不要只展示聊天页面。
+   展示 499 项默认测试、LLM/Capability deadline、真实 MySQL IT、Docker 故障恢复记录和评测 summary，不要只展示聊天页面。
 
 ### 14.3 演示时不要做
 
@@ -879,7 +882,7 @@ Liveness 只判断 JVM 是否活着；Readiness 判断实例当前是否适合�
 - 8 个独立业务 Workflow。
 - 9 个 Capability ID。
 - 36 条离线评测样本。
-- 510 项默认测试，另有 LLM/Capability deadline、真实 MySQL IT 和完整 Docker 故障恢复。
+- 499 项默认测试，另有 LLM/Capability deadline、真实 MySQL IT 和完整 Docker 故障恢复。
 - 5 类 TurnOutcome。
 - memory/JDBC 双持久化模式。
 

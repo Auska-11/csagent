@@ -110,10 +110,13 @@ Knowledge Provider，删除 Adapter/Registry/旧 Tool 协议和重复 DTO。9.3 
 
 ### 9.4 文档、Eval 与 Maven Modules 决策
 
-- [ ] 更新 Eval 样本与测试 Fixture，不再构造 Legacy 类型。
-- [ ] 更新 README、架构图、开发路线图和简历面试手册。
-- [ ] 统计跨包依赖、独立发布和构建成本，作出是否拆 Maven Modules 的书面决策。
-- [ ] 若没有独立发布需求，保持单 Module，并用包边界测试约束；不为“看起来模块化”盲目拆分。
+- [x] 更新 Eval 注释与测试 Fixture，不再构造 Legacy 类型。
+- [x] 更新 README、当前架构图、开发路线图和简历面试手册。
+- [x] 统计跨包依赖、独立发布和构建成本，作出暂不拆 Maven Modules 的书面决策。
+- [x] 保持单 Module，并用 `Phase9PackageBoundaryTest` 约束；满足独立部署/复用触发条件后再拆。
+
+详细证据、未来候选 Module 和面试表达见
+[`客服Agent-72-Phase9MavenModules决策与包边界说明.md`](客服Agent-72-Phase9MavenModules决策与包边界说明.md)。
 
 ### 9.5 最终验收
 

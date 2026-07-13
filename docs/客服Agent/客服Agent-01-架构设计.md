@@ -1,7 +1,7 @@
 # Smart CS Agent 当前架构设计
 
-> 更新日期：2026-07-13
-> 代码基线：Phase 8 第二十批 20.6 收口
+> 更新日期：2026-07-14
+> 代码基线：Phase 9.4，Legacy 执行链已清理，Maven Modules 决策已完成
 > 阅读原则：本文描述当前代码已经实现的架构，不把后续规划写成既成事实。
 
 ## 1. 项目定位
@@ -20,7 +20,8 @@ Smart CS Agent 是一个面向电商客服的任务型 Agent。它不是把用�
 
 > 新增一个业务 Workflow 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway 的业务分支。
 
-这不等于系统已经完全生产级。Legacy 回滚路径、单 Maven Module、按租户 LLM 隔离、多实例进程级压测等仍是后续工作。
+这不等于系统已经完全生产级。Phase 9 已删除 Legacy 执行链；单 Maven Module 是当前基于一个发布单元
+作出的明确选择。按租户 LLM 隔离、多实例进程级压测等仍是后续工作。
 
 ## 2. 当前总体架构
 
@@ -50,10 +51,10 @@ flowchart TD
     ExecutionGuard --> Local["Local Capability Provider"]
     ExecutionGuard --> Mcp["MCP Capability Provider"]
     Local --> Domain["Domain Service / Repository"]
+    Local --> Handoff["HandoffTools"]
     Mcp --> Transport["HTTP JSON-RPC"]
     Transport --> McpServer["Remote MCP Server"]
 
-    Handler --> Handoff["HandoffTools"]
     Handoff --> Outbox["PendingHandoffStore<br/>Memory / JDBC"]
     Handoff --> AfterSales["Memory Ticket / After-sales HTTP"]
 
@@ -92,7 +93,9 @@ flowchart TD
 
 ### 4.1 早期 Java Skill
 
-`CustomerServiceSkill` 曾同时负责意图判断、槽位收集和动作编排。这更像一个代码内的业务决策器，不是通常所说的声明式 Agent Skill。它目前只作为 Legacy 回滚兼容路径保留。
+`CustomerServiceSkill` 曾同时负责意图判断、槽位收集和动作编排。这更像一个代码内的业务决策器，
+不是通常所说的声明式 Agent Skill。Phase 9 已删除该类与 Legacy Adapter；稳定 Workflow ID
+`customer_service` 由 `GeneralCustomerServiceWorkflow` 继续承接闲聊和模糊诉求。
 
 ### 4.2 当前 Agent Skill Package
 
@@ -297,15 +300,15 @@ Compose 默认启动 MySQL 8.4.0、Qdrant 和 Agent。Agent 容器默认使用 J
 这些边界需要在简历和面试中主动说明：
 
 1. 外部售后平台没有公开按 Idempotency-Key 的只读查询 API，当前 `reconcile` 默认安全返回 503。
-2. Legacy `CustomerServiceSkill`、`ToolManager`、`ToolRegistry` 和适配器仍保留，Phase 9 才评估删除。
-3. 当前是单 Maven Module，尚未证明拆 Module 能带来独立发布价值。
-4. 没有两个真实 Agent 进程同时恢复的故障注入和高并发压测。
-5. JDBC 仍直接使用 DriverManager，没有 HikariCP；Schema 也没有 Flyway/Liquibase 版本管理。
-6. 退货表缺少 orderId 唯一约束，业务编号生成方式不适合高并发。
-7. LLM 执行器还缺 Micrometer 指标和按租户/模型 bulkhead。
-8. RAG 和 Eval 数据集规模较小，离线通过不能代表真实线上准确率。
-9. MCP 还没有签名用户委托和细粒度 scope。
-10. 项目是工程化学习与作品集项目，不能宣称已经达到完整生产级。
+2. 当前是单 Maven Module。依赖分析发现仍有核心上下文双向引用，且系统只有一个 JAR/镜像发布单元；
+   当前用包边界测试约束，待 MCP Server 或 Agent Core 出现独立发布/复用需求后再拆。
+3. 没有两个真实 Agent 进程同时恢复的故障注入和高并发压测。
+4. JDBC 仍直接使用 DriverManager，没有 HikariCP；Schema 也没有 Flyway/Liquibase 版本管理。
+5. 退货表缺少 orderId 唯一约束，业务编号生成方式不适合高并发。
+6. LLM 执行器还缺 Micrometer 指标和按租户/模型 bulkhead。
+7. RAG 和 Eval 数据集规模较小，离线通过不能代表真实线上准确率。
+8. MCP 还没有签名用户委托和细粒度 scope。
+9. 项目是工程化学习与作品集项目，不能宣称已经达到完整生产级。
 
 ## 13. 初学者推荐阅读顺序
 
@@ -337,11 +340,16 @@ Compose 默认启动 MySQL 8.4.0、Qdrant 和 Agent。Agent 容器默认使用 J
 
 如果面试官问为什么没有立刻拆 Maven 多 Module：
 
-> 先用 package、SPI、Registry 和 ArchUnit 稳定依赖方向，再等 Capability、MCP Server 或 Eval 出现独立发布需求后拆 Module。否则只会增加构建复杂度，并不能自动降低耦合。
+> 我先用 package、SPI、Registry 和源码架构门禁稳定依赖方向。当前只有一个 JAR、一个镜像和一个发布
+> 生命周期，直接拆 Module 还会遇到 agent、workflow、capability 上下文的双向依赖。等 MCP Server
+> 需要独立部署，或 Agent Core 被第二个应用复用时再拆，收益才大于构建成本。
 
 ## 15. 结论
 
-项目已经从早期“大 Skill + ToolManager”的客服 Demo，演进成注册式 Workflow、插件式 Action Handler、统一 Capability 契约和可替换 Adapter 的架构。20.6 的结束含义是第二十批人工转接复核闭环与文档、测试、MySQL、Docker 验收完成，不代表长期路线图的 Phase 9 和所有生产化工作都已结束。
+项目已经从早期“大 Skill + ToolManager”的客服 Demo，演进成注册式 Workflow、插件式 Action Handler、
+统一 Capability 契约和可替换 Adapter 的架构。Phase 9 已物理删除旧 Skill/Tool 双轨执行链，并用 7 个
+独立 Local Provider 覆盖 9 个能力。当前重点转向生产验收和仍未完成的真实生产约束，而不是继续维护
+迁移兼容层。
 
 最核心的工程原则是：
 

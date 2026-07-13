@@ -1,5 +1,10 @@
 # 客服Agent-15-后续模块化开发计划
 
+> 历史文档说明：本文记录早期按“功能模块”推进的计划，其中 ToolManager、ToolRegistry 等实现已经在
+> Phase 9 删除，不能再当作当前架构说明。当前 Maven 物理模块决策见
+> [`客服Agent-72-Phase9MavenModules决策与包边界说明.md`](客服Agent-72-Phase9MavenModules决策与包边界说明.md)，
+> 当前代码架构见 [`客服Agent-01-架构设计.md`](客服Agent-01-架构设计.md)。
+
 ## 1. 为什么要重新拆模块
 
 当前 Smart CS Agent 已经完成了第一阶段核心闭环：

@@ -2,7 +2,7 @@
 
 Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 Spring Boot 和 LangChain4j 构建。
 
-这个项目不是简单的“大模型聊天 Demo”，而是把客服 Agent 拆成可解释、可测试、可扩展的任务执行系统：Agent 先判断用户意图，再根据需要追问信息、调用业务工具、检索知识库、生成客服回复，并把每一步执行过程记录到 Trace。
+这个项目不是简单的“大模型聊天 Demo”，而是把客服 Agent 拆成可解释、可测试、可扩展的任务执行系统：Agent 先判断用户意图，再根据需要追问信息、调用业务能力、检索知识库、生成客服回复，并把每一步执行过程记录到 Trace。
 
 ## 当前能力
 
@@ -18,7 +18,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - 前端调试工作台：支持多用户会话、典型 Demo 脚本、Trace 过滤/复制、Trace 指标摘要，以及工具 input/output schema 可视化。
 - 评测报告看板：前端 Eval 面板可以展示最新评测概览、历史趋势和核心指标变化。
 - LLM 降级：模型调用失败时不会直接中断接口，会基于工具结构化结果生成模板回复，并记录 `llm_failed` Trace。
-- Capability 与 MCP：统一 `CapabilityDefinition`、输入/输出 schema、三态结果、Gateway 和 Local/MCP Provider；`GET /api/mcp/tools`、`POST /api/mcp/tools/call` 与 `POST /mcp` 共用同一 Catalog 和 Server Adapter。
+- Capability 与 MCP：统一 `CapabilityDefinition`、输入/输出 schema、三态结果、Gateway 和 Local/MCP Provider；9 个能力由 7 个独立 Local Provider 覆盖，`GET /api/mcp/tools`、`POST /api/mcp/tools/call` 与 `POST /mcp` 共用同一 Catalog 和 Server Adapter。
 - 独立 MCP Server 第一版：`POST /mcp` 支持 `initialize`、`tools/list` 和 `tools/call`；HTTP Client 每次请求使用 MCP_CLIENT Bearer JWT，JSON-RPC body 不再携带身份凭据。
 - 数据库持久化：支持 `memory` / `jdbc` 双模式，默认内存模式保证本地测试和 CI 稳定；JDBC 模式除业务数据外，还持久化会话状态和 Capability 幂等记录，并为连接、网络读取和 SQL 执行设置明确超时。
 - Capability 执行预算：能力默认超时与上游 deadline 取较早值，Provider 在有界线程池中执行；副作用开始后超时返回并回放 `CAPABILITY_RESULT_UNKNOWN`，不会把“停止等待”误写成“操作肯定失败”。
@@ -58,6 +58,8 @@ flowchart TD
 - 高频明确场景优先用规则，表达模糊时再用 LLM 兜底。
 - 当前输入、跨轮状态、本轮执行过程分别放在 `ChatRequest`、`ConversationState`、`TurnContext`。
 - Local/MCP Provider 共用 Capability 契约，Workflow 不感知能力位于本地还是远程。
+- Phase 9 已物理删除 Legacy Skill/Workflow Adapter、ToolManager、ToolRegistry 和重复 Tool Schema；运行时只有 Workflow/Capability 主链路。
+- 当前有意保留单 Maven Module：一个 JAR、一个镜像、一个发布生命周期；用架构测试约束包边界，达到独立发布触发条件后再拆 Module。
 - HTTP 身份只来自已验证 JWT Principal，不能由请求体、LLM 参数或 MCP `_meta` 覆盖。
 - Session CAS、Capability 幂等和 Handoff Outbox 分别保护会话状态、副作用执行和外部结果未知，三者不能互相替代。
 - Repository 默认使用内存模式，开启 JDBC 模式后可连接 MySQL，保证学习演示和真实持久化两种需求都能覆盖。
@@ -582,7 +584,7 @@ docker compose down
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次 `clean test` 通过 510 个测试用例（0 失败、0 错误、0 跳过）；另有 1 项显式真实 MySQL IT。
+最近一次 `clean test` 通过 499 个测试用例（0 失败、0 错误、0 跳过）；另有 1 项显式真实 MySQL IT。
 评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
@@ -646,6 +648,8 @@ docker compose down
 - [ADMIN 人工复核 API 说明](docs/客服Agent/客服Agent-65-ADMIN人工复核API说明.md)
 - [售后幂等结果查询 Port 与契约审计说明](docs/客服Agent/客服Agent-66-售后幂等结果查询Port与契约审计说明.md)
 - [第二十批最终验收与架构收口说明](docs/客服Agent/客服Agent-67-第二十批最终验收与架构收口说明.md)
+- [Phase 9 独立 Capability Provider 与 ToolRegistry 清理说明](docs/客服Agent/客服Agent-71-Phase9独立CapabilityProvider与ToolRegistry清理说明.md)
+- [Phase 9 Maven Modules 决策与包边界说明](docs/客服Agent/客服Agent-72-Phase9MavenModules决策与包边界说明.md)
 
 ## 简历表达参考
 
