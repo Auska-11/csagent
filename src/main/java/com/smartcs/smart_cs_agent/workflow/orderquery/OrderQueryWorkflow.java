@@ -12,6 +12,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderListResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.OrderSummary;
 import com.smartcs.smart_cs_agent.skill.CustomerServiceSlotExtractor;
+import com.smartcs.smart_cs_agent.skill.CustomerServiceIntentRules;
 import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
 import com.smartcs.smart_cs_agent.workflow.api.RoutingContext;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowDecision;
@@ -60,6 +61,7 @@ public class OrderQueryWorkflow implements AgentWorkflow {
     );
 
     private final CustomerServiceSlotExtractor slotExtractor = new CustomerServiceSlotExtractor();
+    private final CustomerServiceIntentRules intentRules = new CustomerServiceIntentRules();
     private final GlobalInterruptPolicy interruptPolicy;
 
     public OrderQueryWorkflow(GlobalInterruptPolicy interruptPolicy) {
@@ -77,7 +79,9 @@ public class OrderQueryWorkflow implements AgentWorkflow {
     @Override
     public WorkflowMatchResult match(RoutingContext context) {
         String message = normalize(context.getMessage());
-        if (containsAny(message, "退货", "退款", "换货", "退换", "申请退")) {
+        // 订单号本身分数很高，但“我想退这个订单 ORD-004”仍然是退货任务。
+        // 复用共享规则可以防止两个 Workflow 的关键词表再次漂移。
+        if (intentRules.isReturnRelatedMessage(message)) {
             return WorkflowMatchResult.noMatch("退换货任务不属于订单查询");
         }
         if (containsAny(message, "退货政策", "保修", "质保", "发票", "配送政策", "七天无理由")) {

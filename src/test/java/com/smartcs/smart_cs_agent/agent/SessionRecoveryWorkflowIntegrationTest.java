@@ -6,8 +6,6 @@ import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
 import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
-import com.smartcs.smart_cs_agent.skill.CustomerServiceSkill;
-import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.session.memory.InMemorySessionStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,12 +22,6 @@ class SessionRecoveryWorkflowIntegrationTest {
 
     @Autowired
     private AgentRuntime runtime;
-
-    @Autowired
-    private SkillManager skillManager;
-
-    @Autowired
-    private CustomerServiceSkill customerServiceSkill;
 
     @Test
     void shouldResumeReturnWorkflowAfterConversationStoreRecreation() {
@@ -63,7 +55,7 @@ class SessionRecoveryWorkflowIntegrationTest {
     }
 
     private CustomerServiceAgent agentWith(ConversationStore store) {
-        return new CustomerServiceAgent(runtime, skillManager, customerServiceSkill, store);
+        return new CustomerServiceAgent(runtime, store);
     }
 
     private ChatRequest request(String conversationId, String message) {

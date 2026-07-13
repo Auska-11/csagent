@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartcs.smart_cs_agent.agent.AgentRuntime;
 import com.smartcs.smart_cs_agent.agent.CustomerServiceAgent;
+import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
@@ -13,8 +14,8 @@ import com.smartcs.smart_cs_agent.repository.OrderRepository;
 import com.smartcs.smart_cs_agent.repository.ProductRepository;
 import com.smartcs.smart_cs_agent.repository.ReturnRepository;
 import com.smartcs.smart_cs_agent.repository.UserRepository;
-import com.smartcs.smart_cs_agent.skill.CustomerServiceSkill;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
+import com.smartcs.smart_cs_agent.testing.WorkflowTestSupport;
 import com.smartcs.smart_cs_agent.tools.HandoffTools;
 import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
 import com.smartcs.smart_cs_agent.tools.OrderTools;
@@ -23,6 +24,12 @@ import com.smartcs.smart_cs_agent.tools.ReturnTools;
 import com.smartcs.smart_cs_agent.tools.ToolManager;
 import com.smartcs.smart_cs_agent.tools.ToolRegistry;
 import com.smartcs.smart_cs_agent.tools.UserTools;
+import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
+import com.smartcs.smart_cs_agent.workflow.escalation.EscalationWorkflow;
+import com.smartcs.smart_cs_agent.workflow.general.GeneralCustomerServiceWorkflow;
+import com.smartcs.smart_cs_agent.workflow.orderquery.OrderQueryWorkflow;
+import com.smartcs.smart_cs_agent.workflow.returnapply.ReturnApplyWorkflow;
+import com.smartcs.smart_cs_agent.workflow.returnapply.ReturnApplyWorkflowProperties;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
@@ -35,6 +42,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -71,12 +79,18 @@ class AgentResponseEvaluationTest {
     }
 
     private AgentResponseResult runCase(AgentResponseCase evalCase) {
-        CustomerServiceAgent agent = createAgent(evalCase.fakeLlmReply);
+        CustomerServiceAgent agent = createAgent();
         List<TraceEvent> allTraceEvents = new ArrayList<>();
         ChatResponse finalResponse = null;
 
         for (String turn : evalCase.turns) {
-            ChatRequest request = new ChatRequest(evalCase.id, "USER-001", turn);
+            String userId = evalCase.userId == null || evalCase.userId.isBlank() ? "USER-001" : evalCase.userId;
+            ChatRequest request = new ChatRequest(
+                    evalCase.id,
+                    userId,
+                    turn,
+                    AuthenticatedPrincipal.authenticated(userId, Set.of("CUSTOMER"))
+            );
             finalResponse = agent.chatWithTrace(request);
             allTraceEvents.addAll(finalResponse.getTrace());
         }
@@ -112,8 +126,15 @@ class AgentResponseEvaluationTest {
         }
     }
 
-    private CustomerServiceAgent createAgent(String fakeLlmReply) {
-        SkillManager skillManager = new SkillManager(new TestSkillConfig());
+    private CustomerServiceAgent createAgent() {
+        GlobalInterruptPolicy interruptPolicy = new GlobalInterruptPolicy();
+        SkillManager skillManager = WorkflowTestSupport.skillManager(
+                new TestSkillConfig(),
+                new GeneralCustomerServiceWorkflow(),
+                new OrderQueryWorkflow(interruptPolicy),
+                new ReturnApplyWorkflow(interruptPolicy, new ReturnApplyWorkflowProperties()),
+                new EscalationWorkflow(interruptPolicy)
+        );
 
         ProductRepository productRepository = new ProductRepository();
         OrderRepository orderRepository = new OrderRepository();
@@ -131,22 +152,20 @@ class AgentResponseEvaluationTest {
 
         AgentRuntime runtime = new AgentRuntime(
                 skillManager,
-                new FakeChatLanguageModel(fakeLlmReply),
+                new FakeChatLanguageModel("专业 Workflow 不应调用 Fake LLM"),
                 new ToolManager(toolRegistry)
         );
 
         return new CustomerServiceAgent(
                 runtime,
-                skillManager,
-                new CustomerServiceSkill(null),
                 new ConversationStore()
         );
     }
 
     public static class AgentResponseCase {
         public String id;
+        public String userId;
         public List<String> turns;
-        public String fakeLlmReply;
         public List<String> requiredKeywords;
         public List<String> forbiddenKeywords;
         public List<String> expectedTraceEvents;

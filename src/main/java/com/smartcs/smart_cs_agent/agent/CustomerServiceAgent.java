@@ -5,8 +5,6 @@ import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
-import com.smartcs.smart_cs_agent.skill.CustomerServiceSkill;
-import com.smartcs.smart_cs_agent.skill.SkillManager;
 import org.springframework.stereotype.Component;
 
 /**
@@ -14,14 +12,13 @@ import org.springframework.stereotype.Component;
  *
  * 【职责】
  * CustomerServiceAgent 是客服场景的 Agent 入口。
- * 它组装 AgentRuntime 和 Skill，提供简单的 chat 接口给 Controller 调用。
+ * 它组装 AgentRuntime 和会话存储，提供简单的 chat 接口给 Controller 调用。
  *
  * 【执行流程】
  * 1. 接收用户消息
  * 2. 通过 ConversationStore 读取或创建 ConversationState
- * 3. 注册 CustomerServiceSkill
- * 4. 调用 AgentRuntime.runTurn()
- * 5. 返回回复
+ * 3. 调用 AgentRuntime.runTurn()
+ * 4. 返回回复
  *
  * 【与 AgentRuntime 的区别】
  * - AgentRuntime：执行引擎，负责循环执行 Action
@@ -37,9 +34,6 @@ public class CustomerServiceAgent {
     /** 执行引擎：负责循环执行 Action */
     private final AgentRuntime runtime;
 
-    /** Skill 管理器：管理所有注册的 Skill */
-    private final SkillManager skillManager;
-
     /** 会话存储：根据 tenantId + userId + conversationId 保存和读取多轮会话状态 */
     private final ConversationStore conversationStore;
 
@@ -47,28 +41,16 @@ public class CustomerServiceAgent {
      * 构造函数注入
      *
      * 【Spring 依赖注入】
-     * Spring 会自动注入 AgentRuntime 和 SkillManager。
-     * CustomerServiceSkill 也由 Spring 创建并注入。
-     *
-     * 【注册 Skill】
-     * 在构造函数中注册 CustomerServiceSkill，
-     * 这样 SkillManager 就知道有这个 Skill 可用。
+     * Spring 会自动注入 AgentRuntime 和 ConversationStore。Workflow 由 WorkflowRegistry 自动发现，
+     * 业务入口不再手工注册旧 Java Skill，避免新增业务时继续把逻辑堆回 Agent。
      *
      * @param runtime 执行引擎
-     * @param skillManager Skill 管理器
-     * @param customerServiceSkill 客服 Skill（由 Spring 注入）
      * @param conversationStore 会话状态存储
      */
     public CustomerServiceAgent(AgentRuntime runtime,
-                                SkillManager skillManager,
-                                CustomerServiceSkill customerServiceSkill,
                                 ConversationStore conversationStore) {
         this.runtime = runtime;
-        this.skillManager = skillManager;
         this.conversationStore = conversationStore;
-
-        // 注册 CustomerServiceSkill
-        skillManager.registerSkill(customerServiceSkill);
     }
 
     /**

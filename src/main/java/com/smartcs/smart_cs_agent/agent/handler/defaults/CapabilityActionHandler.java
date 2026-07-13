@@ -95,7 +95,8 @@ public class CapabilityActionHandler implements ActionHandler<CapabilityAction> 
         }
 
         long durationMs = HandlerTraceSupport.elapsedMillis(startedAtNanos);
-        // 保留 capability + ToolResult，保证尚未迁移的 CustomerServiceSkill 继续工作。
+        // capability Observation 仍供 ReturnApplyWorkflow 等读取稳定 ToolResult；
+        // capability_result 则提供新版强类型 CapabilityObservation。Phase 9.3 会继续收口重复 Schema。
         context.addObservation("capability", result);
 
         // 新 Workflow 只读取 capability_result。这里把 Provider 差异压平，

@@ -15,8 +15,13 @@ import com.smartcs.smart_cs_agent.config.SkillConfig;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
 import com.smartcs.smart_cs_agent.monitor.MonitorSummary;
 import com.smartcs.smart_cs_agent.monitor.TurnOutcome;
-import com.smartcs.smart_cs_agent.skill.Skill;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
+import com.smartcs.smart_cs_agent.testing.WorkflowTestSupport;
+import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
+import com.smartcs.smart_cs_agent.workflow.api.RoutingContext;
+import com.smartcs.smart_cs_agent.workflow.api.WorkflowDecision;
+import com.smartcs.smart_cs_agent.workflow.api.WorkflowDescriptor;
+import com.smartcs.smart_cs_agent.workflow.api.WorkflowMatchResult;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -33,8 +38,7 @@ class AgentRuntimeResilienceTest {
 
     @Test
     void shouldStopLoopingWorkflowAtConfiguredStepBudgetAndExposeTechnicalOutcome() {
-        SkillManager skillManager = new SkillManager(new TestSkillConfig());
-        skillManager.registerSkill(new LoopingSkill());
+        SkillManager skillManager = loopingSkillManager();
         ActionHandlerRegistry registry = new ActionHandlerRegistry(List.of(new LoopActionHandler()));
         AgentRuntime runtime = new AgentRuntime(skillManager, registry, 3);
         ChatRequest request = new ChatRequest("conv-loop-budget", "USER-001", "循环测试");
@@ -72,7 +76,7 @@ class AgentRuntimeResilienceTest {
 
     @Test
     void shouldRejectDisabledStepBudget() {
-        SkillManager skillManager = new SkillManager(new TestSkillConfig());
+        SkillManager skillManager = loopingSkillManager();
         ActionHandlerRegistry registry = new ActionHandlerRegistry(List.of(new LoopActionHandler()));
 
         IllegalArgumentException error = assertThrows(
@@ -85,8 +89,7 @@ class AgentRuntimeResilienceTest {
 
     @Test
     void shouldStopAfterSlowActionReturnsInsteadOfStartingAnotherStep() {
-        SkillManager skillManager = new SkillManager(new TestSkillConfig());
-        skillManager.registerSkill(new LoopingSkill());
+        SkillManager skillManager = loopingSkillManager();
         AtomicInteger handledCount = new AtomicInteger();
         ActionHandlerRegistry registry = new ActionHandlerRegistry(List.of(
                 new SlowLoopActionHandler(handledCount)
@@ -111,7 +114,7 @@ class AgentRuntimeResilienceTest {
 
     @Test
     void shouldRejectDisabledWallClockBudget() {
-        SkillManager skillManager = new SkillManager(new TestSkillConfig());
+        SkillManager skillManager = loopingSkillManager();
         ActionHandlerRegistry registry = new ActionHandlerRegistry(List.of(new LoopActionHandler()));
 
         IllegalArgumentException error = assertThrows(
@@ -170,21 +173,32 @@ class AgentRuntimeResilienceTest {
         }
     }
 
-    private static final class LoopingSkill implements Skill {
+    private SkillManager loopingSkillManager() {
+        return WorkflowTestSupport.skillManager(new TestSkillConfig(), new LoopingWorkflow());
+    }
+
+    private static final class LoopingWorkflow implements AgentWorkflow {
+
+        private final WorkflowDescriptor descriptor = new WorkflowDescriptor(
+                "looping_test_workflow",
+                "test-v1",
+                "测试 Runtime 循环预算",
+                100
+        );
 
         @Override
-        public AgentAction nextAction(TurnContext context) {
-            return new LoopAction();
+        public WorkflowDescriptor descriptor() {
+            return descriptor;
         }
 
         @Override
-        public String getName() {
-            return "looping_test_workflow";
+        public WorkflowMatchResult match(RoutingContext context) {
+            return new WorkflowMatchResult(1.0, "测试固定命中");
         }
 
         @Override
-        public float canHandle(String message) {
-            return 1.0f;
+        public WorkflowDecision nextAction(TurnContext context) {
+            return WorkflowDecision.next(new LoopAction(), "持续执行以触发 Runtime 预算");
         }
     }
 

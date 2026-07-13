@@ -1,6 +1,5 @@
 package com.smartcs.smart_cs_agent.agent;
 
-import com.smartcs.smart_cs_agent.agent.action.AgentAction;
 import com.smartcs.smart_cs_agent.agent.action.CapabilityAction;
 import com.smartcs.smart_cs_agent.agent.action.FinalAnswerAction;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
@@ -9,13 +8,18 @@ import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityCatalog;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
 import com.smartcs.smart_cs_agent.config.SkillConfig;
-import com.smartcs.smart_cs_agent.skill.Skill;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.skill.api.AgentSkillDefinition;
 import com.smartcs.smart_cs_agent.skill.api.AgentSkillPackage;
 import com.smartcs.smart_cs_agent.skill.api.RiskLevel;
 import com.smartcs.smart_cs_agent.skill.registry.AgentSkillPackageRegistry;
 import com.smartcs.smart_cs_agent.tools.ToolManager;
+import com.smartcs.smart_cs_agent.testing.WorkflowTestSupport;
+import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
+import com.smartcs.smart_cs_agent.workflow.api.RoutingContext;
+import com.smartcs.smart_cs_agent.workflow.api.WorkflowDecision;
+import com.smartcs.smart_cs_agent.workflow.api.WorkflowDescriptor;
+import com.smartcs.smart_cs_agent.workflow.api.WorkflowMatchResult;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import org.junit.jupiter.api.Test;
 
@@ -42,8 +46,11 @@ class SkillCapabilityAllowlistTest {
         AgentSkillPackage skillPackage = packageAllowingOnlyOrderLookup();
         AgentSkillPackageRegistry registry = new AgentSkillPackageRegistry(List.of(skillPackage), catalog);
 
-        SkillManager skillManager = new SkillManager(new TestSkillConfig(), registry);
-        skillManager.registerSkill(new UnauthorizedWorkflowSkill());
+        SkillManager skillManager = WorkflowTestSupport.skillManager(
+                new TestSkillConfig(),
+                registry,
+                new UnauthorizedCapabilityWorkflow()
+        );
 
         ToolManager toolManager = mock(ToolManager.class);
         AgentRuntime runtime = new AgentRuntime(skillManager, mock(ChatLanguageModel.class), toolManager);
@@ -81,24 +88,37 @@ class SkillCapabilityAllowlistTest {
     /**
      * 第一步故意请求未授权 product_search；第二步看到失败 Observation 后结束。
      */
-    private static final class UnauthorizedWorkflowSkill implements Skill {
+    private static final class UnauthorizedCapabilityWorkflow implements AgentWorkflow {
+
+        private final WorkflowDescriptor descriptor = new WorkflowDescriptor(
+                "allowlist_workflow",
+                "test-v1",
+                "测试 Skill Package 能力白名单",
+                100
+        );
 
         @Override
-        public AgentAction nextAction(TurnContext context) {
+        public WorkflowDescriptor descriptor() {
+            return descriptor;
+        }
+
+        @Override
+        public WorkflowMatchResult match(RoutingContext context) {
+            return new WorkflowMatchResult(1.0, "测试固定命中");
+        }
+
+        @Override
+        public WorkflowDecision nextAction(TurnContext context) {
             if (context.getLatestObservationByType("capability") == null) {
-                return new CapabilityAction("product_search", Map.of("keyword", "耳机"));
+                return WorkflowDecision.next(
+                        new CapabilityAction("product_search", Map.of("keyword", "耳机")),
+                        "故意请求 manifest 未授权能力"
+                );
             }
-            return new FinalAnswerAction("未授权能力已被安全拒绝");
-        }
-
-        @Override
-        public String getName() {
-            return "allowlist_workflow";
-        }
-
-        @Override
-        public float canHandle(String message) {
-            return 1.0f;
+            return WorkflowDecision.next(
+                    new FinalAnswerAction("未授权能力已被安全拒绝"),
+                    "已观察到安全拒绝结果"
+            );
         }
     }
 

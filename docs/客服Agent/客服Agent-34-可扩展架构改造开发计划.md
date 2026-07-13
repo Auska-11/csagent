@@ -1654,7 +1654,7 @@ Phase 8 已在 20.6 完成最终架构验收。Phase 9 不再扩充业务面，�
 - [x] 9.1 增加“允许清单只能收缩”的架构门禁。
 - [x] 9.1 冻结八类独立 Workflow 与 `customer_service` 通用兜底的路由行为。
 - [x] 9.1 通过 517 个默认测试与 Spring Boot JAR 构建。
-- [ ] 9.2 用真正的通用客服 Workflow 替代 Legacy Skill/Adapter。
+- [x] 9.2 用真正的通用客服 Workflow 替代 Legacy Skill/Adapter，收紧为零 Capability，并通过 508 项干净构建默认测试。
 - [ ] 9.3 让 Handler/API 直接依赖 Capability 契约，并删除旧 Tool 兼容入口。
 - [ ] 9.4 更新 Eval、README、架构与面试材料，完成 Maven Modules 决策。
 - [ ] 9.5 完成默认测试、真实 MySQL、JAR、Docker/Compose 最终验收。

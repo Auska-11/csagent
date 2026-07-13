@@ -1,6 +1,7 @@
 package com.smartcs.smart_cs_agent.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.TraceEvent;
@@ -10,8 +11,8 @@ import com.smartcs.smart_cs_agent.repository.OrderRepository;
 import com.smartcs.smart_cs_agent.repository.ProductRepository;
 import com.smartcs.smart_cs_agent.repository.ReturnRepository;
 import com.smartcs.smart_cs_agent.repository.UserRepository;
-import com.smartcs.smart_cs_agent.skill.CustomerServiceSkill;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
+import com.smartcs.smart_cs_agent.testing.WorkflowTestSupport;
 import com.smartcs.smart_cs_agent.tools.HandoffTools;
 import com.smartcs.smart_cs_agent.tools.KnowledgeDocument;
 import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
@@ -21,6 +22,11 @@ import com.smartcs.smart_cs_agent.tools.ReturnTools;
 import com.smartcs.smart_cs_agent.tools.ToolManager;
 import com.smartcs.smart_cs_agent.tools.ToolRegistry;
 import com.smartcs.smart_cs_agent.tools.UserTools;
+import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
+import com.smartcs.smart_cs_agent.workflow.escalation.EscalationWorkflow;
+import com.smartcs.smart_cs_agent.workflow.general.GeneralCustomerServiceWorkflow;
+import com.smartcs.smart_cs_agent.workflow.orderquery.OrderQueryWorkflow;
+import com.smartcs.smart_cs_agent.workflow.policyqa.PolicyQaWorkflow;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
@@ -28,6 +34,7 @@ import dev.langchain4j.model.output.Response;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -42,16 +49,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AgentRuntimeTraceTest {
 
     @Test
-    void shouldRecordTraceForToolAndLlmFlow() {
-        AgentRuntime runtime = createRuntime("这是根据工具结果生成的测试回复");
+    void shouldRecordTraceForCapabilityFlowWithoutLegacyLlmHop() {
+        AgentRuntime runtime = createRuntime("专业 Workflow 不应调用这个 Fake LLM");
 
-        ChatRequest request = new ChatRequest("conv-trace", "USER-001", "帮我查一下订单 ORD-001");
+        ChatRequest request = request("conv-trace", "帮我查一下订单 ORD-001");
         ConversationState state = new ConversationState(request.getMessage(), request.getUserId());
         TurnContext context = new TurnContext(request, state);
 
         String reply = runtime.runTurn(context);
 
-        assertEquals("这是根据工具结果生成的测试回复", reply);
+        assertTrue(reply.contains("ORD-001"));
+        assertTrue(reply.contains("蓝牙耳机 Pro Max"));
         assertTrue(context.isDone());
         assertEquals(reply, context.getFinalAnswer());
 
@@ -66,19 +74,18 @@ class AgentRuntimeTraceTest {
         assertTrue(eventTypes.contains("action_planned"));
         assertTrue(eventTypes.contains("tool_called"));
         assertTrue(eventTypes.contains("tool_observed"));
-        assertTrue(eventTypes.contains("llm_called"));
-        assertTrue(eventTypes.contains("llm_observed"));
+        assertFalse(eventTypes.contains("llm_called"));
+        assertFalse(eventTypes.contains("llm_observed"));
         assertTrue(eventTypes.contains("final_answer"));
 
         assertHasDuration(findTraceEvent(context, "tool_observed"));
-        assertHasDuration(findTraceEvent(context, "llm_observed"));
     }
 
     @Test
     void shouldRecordTraceForHandoffFlow() {
         AgentRuntime runtime = createRuntime("这个测试不会调用 LLM");
 
-        ChatRequest request = new ChatRequest("conv-handoff", "USER-001", "我要转人工投诉");
+        ChatRequest request = request("conv-handoff", "我要转人工投诉");
         ConversationState state = new ConversationState(request.getMessage(), request.getUserId());
         TurnContext context = new TurnContext(request, state);
 
@@ -100,16 +107,16 @@ class AgentRuntimeTraceTest {
     }
 
     @Test
-    void shouldFallbackWhenLlmFailsAfterToolCall() {
+    void shouldFallbackWhenLlmFailsForGeneralWorkflow() {
         AgentRuntime runtime = createRuntime(new FailingChatLanguageModel());
 
-        ChatRequest request = new ChatRequest("conv-llm-fallback", "USER-001", "帮我查一下订单 ORD-001");
+        ChatRequest request = request("conv-llm-fallback", "你好");
         ConversationState state = new ConversationState(request.getMessage(), request.getUserId());
         TurnContext context = new TurnContext(request, state);
 
         String reply = runtime.runTurn(context);
 
-        assertTrue(reply.contains("我已为您查询到订单信息"));
+        assertTrue(reply.contains("大模型服务暂时不可用"));
         assertTrue(context.isDone());
 
         List<String> eventTypes = context.getTraceEvents()
@@ -117,7 +124,7 @@ class AgentRuntimeTraceTest {
                 .map(TraceEvent::getEventType)
                 .toList();
 
-        assertTrue(eventTypes.contains("tool_observed"));
+        assertFalse(eventTypes.contains("tool_observed"));
         assertTrue(eventTypes.contains("llm_failed"));
         assertTrue(eventTypes.contains("llm_observed"));
         assertTrue(eventTypes.contains("final_answer"));
@@ -131,7 +138,7 @@ class AgentRuntimeTraceTest {
     void shouldRecordKnowledgeMissWhenKnowledgeSearchHasNoResult() {
         AgentRuntime runtime = createRuntime("知识库没有找到明确政策，请转人工确认。");
 
-        ChatRequest request = new ChatRequest("conv-knowledge-miss", "USER-001", "纸质发票可以补开吗");
+        ChatRequest request = request("conv-knowledge-miss", "纸质发票可以补开吗");
         ConversationState state = new ConversationState(request.getMessage(), request.getUserId());
         TurnContext context = new TurnContext(request, state);
 
@@ -154,7 +161,7 @@ class AgentRuntimeTraceTest {
         CapturingChatLanguageModel chatModel = new CapturingChatLanguageModel(rawReply);
         AgentRuntime runtime = createRuntime(chatModel);
 
-        ChatRequest request = new ChatRequest("conv-trace-privacy", "USER-001", rawMessage);
+        ChatRequest request = request("conv-trace-privacy", rawMessage);
         ConversationState state = new ConversationState(request.getMessage(), request.getUserId());
         TurnContext context = new TurnContext(request, state);
 
@@ -179,8 +186,14 @@ class AgentRuntimeTraceTest {
     }
 
     private AgentRuntime createRuntime(ChatLanguageModel chatModel) {
-        SkillManager skillManager = new SkillManager(new TestSkillConfig());
-        skillManager.registerSkill(new CustomerServiceSkill(null));
+        GlobalInterruptPolicy interruptPolicy = new GlobalInterruptPolicy();
+        SkillManager skillManager = WorkflowTestSupport.skillManager(
+                new TestSkillConfig(),
+                new GeneralCustomerServiceWorkflow(),
+                new OrderQueryWorkflow(interruptPolicy),
+                new PolicyQaWorkflow(interruptPolicy),
+                new EscalationWorkflow(interruptPolicy)
+        );
 
         ProductRepository productRepository = new ProductRepository();
         OrderRepository orderRepository = new OrderRepository();
@@ -201,6 +214,15 @@ class AgentRuntimeTraceTest {
                 skillManager,
                 chatModel,
                 toolManager
+        );
+    }
+
+    private ChatRequest request(String conversationId, String message) {
+        return new ChatRequest(
+                conversationId,
+                "USER-001",
+                message,
+                AuthenticatedPrincipal.authenticated("USER-001", Set.of("CUSTOMER"))
         );
     }
 

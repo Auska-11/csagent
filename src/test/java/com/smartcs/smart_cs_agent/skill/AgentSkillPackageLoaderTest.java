@@ -49,10 +49,9 @@ class AgentSkillPackageLoaderTest {
         assertEquals("customer-service", skillPackage.getDefinition().getId());
         assertEquals("1.0.0", skillPackage.getDefinition().getVersion());
         assertEquals("customer_service", skillPackage.getDefinition().getWorkflowId());
-        assertTrue(skillPackage.getDefinition().allowsCapability("order.lookup"));
-        assertTrue(skillPackage.getDefinition().allowsCapability("handoff.request"));
-        assertEquals(4, skillPackage.getReferenceContents().size());
-        assertTrue(skillPackage.getSystemPrompt().contains("客服 Skill 主策略"));
+        assertTrue(skillPackage.getDefinition().getAllowedCapabilities().isEmpty());
+        assertEquals(2, skillPackage.getReferenceContents().size());
+        assertTrue(skillPackage.getSystemPrompt().contains("通用客服兜底策略"));
 
         AgentSkillPackage escalation = packages.stream()
                 .filter(candidate -> "escalation".equals(candidate.getDefinition().getId()))
@@ -66,29 +65,19 @@ class AgentSkillPackageLoaderTest {
     void shouldLoadOnlyReferencesMatchingCurrentLlmPurposeOrText() {
         AgentSkillPackage skillPackage = loadCustomerServicePackage();
 
-        // 意图识别只需要 intent.md，不应该把 persona、模板和政策全文全部注入。
-        ResolvedSkillPrompt intentPrompt = skillPackage.resolvePrompt(
-                "intent_recognition",
-                "帮我识别这句话的意图：查一下订单 ORD-001"
-        );
-        assertEquals(List.of("references/intent.md"), intentPrompt.getLoadedReferences());
-        assertTrue(intentPrompt.getContent().contains("意图分类定义"));
-        assertFalse(intentPrompt.getContent().contains("角色与表达风格"));
-
-        // 回复退货问题时，purpose 命中 persona/templates，文本关键词额外命中 policy。
-        ResolvedSkillPrompt returnPrompt = skillPackage.resolvePrompt(
+        // 通用回复只加载角色与澄清模板，不再把业务意图表或政策资料注入兜底 LLM。
+        ResolvedSkillPrompt generalPrompt = skillPackage.resolvePrompt(
                 "response_generation",
-                "用户反馈质量问题并希望退货，请组织回复"
+                "用户只说我有个问题，请生成一个澄清问题"
         );
         assertEquals(
                 List.of(
                         "references/persona.md",
-                        "references/policy.md",
                         "references/templates.md"
                 ),
-                returnPrompt.getLoadedReferences()
+                generalPrompt.getLoadedReferences()
         );
-        assertFalse(returnPrompt.getLoadedReferences().contains("references/intent.md"));
+        assertTrue(generalPrompt.getContent().contains("角色与表达风格"));
     }
 
     @Test

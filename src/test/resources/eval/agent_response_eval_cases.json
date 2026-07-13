@@ -1,24 +1,24 @@
 [
   {
     "id": "agent_order_lookup_reply",
+    "userId": "USER-001",
     "turns": ["帮我查一下订单 ORD-001"],
-    "fakeLlmReply": "已为您查询到订单 ORD-001：商品是蓝牙耳机 Pro Max，目前状态为已发货，物流单号 SF1234567890。",
     "requiredKeywords": ["ORD-001", "蓝牙耳机", "已发货", "SF1234567890"],
     "forbiddenKeywords": ["order_lookup", "Tool"],
-    "expectedTraceEvents": ["tool_observed", "llm_observed", "final_answer"]
+    "expectedTraceEvents": ["workflow_routed", "tool_observed", "final_answer"]
   },
   {
     "id": "agent_return_apply_multi_turn_reply",
-    "turns": ["我要退货", "ORD-004", "质量问题"],
-    "fakeLlmReply": "已为订单 ORD-004 提交退货申请，原因是质量问题。申请已进入审核流程，请您留意后续处理进度。",
-    "requiredKeywords": ["ORD-004", "退货申请", "质量问题", "审核"],
+    "userId": "USER-002",
+    "turns": ["我要退货", "ORD-003", "质量问题", "确认提交"],
+    "requiredKeywords": ["ORD-003", "退货申请", "退货单号", "提交成功"],
     "forbiddenKeywords": ["无条件退款", "保证退款"],
-    "expectedTraceEvents": ["ask_user", "tool_observed", "llm_observed", "final_answer"]
+    "expectedTraceEvents": ["ask_user", "confirmation_requested", "tool_observed", "final_answer"]
   },
   {
     "id": "agent_handoff_reply",
+    "userId": "USER-001",
     "turns": ["我要转人工投诉"],
-    "fakeLlmReply": "",
     "requiredKeywords": ["转接人工客服", "工单号", "HD-"],
     "forbiddenKeywords": ["一定赔偿", "保证赔偿"],
     "expectedTraceEvents": ["handoff_requested", "handoff_created", "final_answer"]

@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  * 槽位抽取器测试。
  *
  * 这些测试专门验证“从用户文本里提取字段”的规则，
- * 这样 CustomerServiceSkillTest 就可以更专注于 Action 编排。
+ * 这样各专业 Workflow 的测试就可以更专注于状态迁移和 Action 编排。
  */
 class CustomerServiceSlotExtractorTest {
 

@@ -10,38 +10,37 @@ import com.smartcs.smart_cs_agent.skill.registry.AgentSkillPackageRegistry;
 import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRouteResult;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRouter;
-import com.smartcs.smart_cs_agent.workflow.legacy.LegacySkillWorkflowAdapter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.util.*;
+import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
- * Skill 管理器
+ * Skill Package 与 Workflow 路由协调器。
  *
  * 【职责】
- * 1. 管理所有注册的 Skill
- * 2. 获取当前活跃的 Skill
- * 3. 加载 System Prompt
- * 4. 后续支持多 Skill 路由
+ * 1. 根据 Workflow ID 找到声明式 Agent Skill Package。
+ * 2. 为 LLM Handler 解析 System Prompt 和按需 reference。
+ * 3. 检查 manifest 中的 Capability allowlist。
+ * 4. 把 Runtime 的路由请求委托给唯一 WorkflowRouter。
  *
- * 【当前设计】
- * 目前只有一个 CustomerServiceSkill，直接返回。
- * 后续做多 Agent 时，可以注册多个 Skill，根据消息选择。
+ * <p>这里的 Skill 指 manifest + SKILL.md 组成的声明包，不再管理旧 Java Skill 实例。
+ * 具体业务决策统一由 AgentWorkflow 实现。</p>
  */
 @Component
 public class SkillManager {
 
-    private final Map<String, Skill> skills = new HashMap<>();
     private final SkillConfig skillConfig;
     private final AgentSkillPackageRegistry skillPackageRegistry;
     private final WorkflowRouter workflowRouter;
-    private String activeSkillName;
 
     /**
-     * 兼容旧单元测试和不启动 Spring 的纯 Java 用法。
+     * 不启动 Spring 的 Prompt/粗粒度路由单元测试可以只提供 SkillConfig。
      *
-     * <p>registry 为 null 表示使用旧的统一 System Prompt。生产环境由下面带 {@link Autowired}
+     * <p>registry 为 null 表示使用测试 System Prompt。生产环境由下面带 {@link Autowired}
      * 的构造函数注入真正的 AgentSkillPackageRegistry。</p>
      */
     public SkillManager(SkillConfig skillConfig) {
@@ -49,14 +48,14 @@ public class SkillManager {
     }
 
     /**
-     * 兼容已经接入 Skill Package、但没有启动完整 WorkflowRouter 的测试。
+     * 已接入 Skill Package、但只测试 Prompt/allowlist 的纯 Java 构造方式。
      */
     public SkillManager(SkillConfig skillConfig, AgentSkillPackageRegistry skillPackageRegistry) {
         this(skillConfig, skillPackageRegistry, null);
     }
 
     /**
-     * Spring 生产构造函数：同时获得旧 Prompt 回滚入口、Skill Package 注册表和正式 Router。
+     * Spring 生产构造函数：同时获得测试 Prompt fallback、Skill Package 注册表和正式 Router。
      */
     @Autowired
     public SkillManager(SkillConfig skillConfig,
@@ -65,54 +64,6 @@ public class SkillManager {
         this.skillConfig = skillConfig;
         this.skillPackageRegistry = skillPackageRegistry;
         this.workflowRouter = workflowRouter;
-    }
-
-    /**
-     * 注册 Skill
-     *
-     * @param skill Skill 实例
-     */
-    public void registerSkill(Skill skill) {
-        skills.put(skill.getName(), skill);
-        // 第一个注册的 Skill 默认为活跃 Skill
-        if (activeSkillName == null) {
-            activeSkillName = skill.getName();
-        }
-    }
-
-    /**
-     * 获取当前活跃的 Skill
-     *
-     * @return 当前 Skill
-     */
-    public Skill getActiveSkill() {
-        if (activeSkillName == null || !skills.containsKey(activeSkillName)) {
-            throw new IllegalStateException("No active skill registered");
-        }
-        return skills.get(activeSkillName);
-    }
-
-    /**
-     * 设置活跃的 Skill
-     *
-     * @param skillName Skill 名称
-     */
-    public void setActiveSkill(String skillName) {
-        if (!skills.containsKey(skillName)) {
-            throw new IllegalArgumentException("Skill not found: " + skillName);
-        }
-        this.activeSkillName = skillName;
-    }
-
-    /**
-     * 获取 System Prompt
-     *
-     * 从 SkillConfig 加载，内容来自 prompts/system-prompt.md 文件
-     *
-     * @return System Prompt 内容
-     */
-    public String getSystemPrompt() {
-        return skillConfig.getSystemPrompt();
     }
 
     /**
@@ -131,14 +82,14 @@ public class SkillManager {
     /**
      * 组装某次 LLM 调用实际使用的 System Prompt。
      *
-     * <p>新版路径会按需选择 reference；如果配置为 legacy 或测试没有 Registry，
-     * 则返回原来的 prompts/system-prompt.md，保证回滚和已有单元测试不受影响。</p>
+     * <p>生产路径会按需选择 reference；纯 Java Handler 测试没有 Registry 时，
+     * 返回测试提供的 SkillConfig Prompt，避免测试启动完整 Spring 容器。</p>
      */
     public ResolvedSkillPrompt resolveSystemPrompt(AgentSkillPackage skillPackage,
                                                    String purpose,
                                                    String searchableText) {
         if (skillPackage == null) {
-            return new ResolvedSkillPrompt("legacy", "legacy", skillConfig.getSystemPrompt(), List.of());
+            return new ResolvedSkillPrompt("unbound-test", "test", skillConfig.getSystemPrompt(), List.of());
         }
         return skillPackage.resolvePrompt(purpose, searchableText);
     }
@@ -146,8 +97,8 @@ public class SkillManager {
     /**
      * Skill Package 能力白名单检查。
      *
-     * <p>null 代表旧模式，为兼容旧链路暂时放行。只要成功选择了新版 Package，
-     * 未在 manifest.allowed_capabilities 中声明的调用就会被拒绝。</p>
+     * <p>null 只允许出现在不加载 manifest 的纯 Java 单元测试。当前生产 Workflow 均有 Package 绑定；
+     * 成功选择 Package 后，未声明的调用一定被拒绝。</p>
      */
     public boolean isCapabilityAllowed(AgentSkillPackage skillPackage, String capabilityId) {
         return skillPackage == null
@@ -160,41 +111,10 @@ public class SkillManager {
     }
 
     /**
-     * 获取所有注册的 Skill 名称
+     * Workflow 选择便捷入口。
      *
-     * @return Skill 名称列表
-     */
-    public List<String> getSkillNames() {
-        return new ArrayList<>(skills.keySet());
-    }
-
-    /**
-     * 根据消息选择最合适的 Skill（后续多 Skill 路由用）
-     *
-     * @param message 用户消息
-     * @return 最合适的 Skill
-     */
-    public Skill selectSkill(String message) {
-        Skill bestSkill = null;
-        float bestScore = 0.0f;
-
-        for (Skill skill : skills.values()) {
-            float score = skill.canHandle(message);
-            if (score > bestScore) {
-                bestScore = score;
-                bestSkill = skill;
-            }
-        }
-
-        return bestSkill != null ? bestSkill : getActiveSkill();
-    }
-
-    /**
-     * 过渡期的 Workflow 选择入口。
-     *
-     * <p>这是保留给旧调用方的便捷方法。生产环境内部已经委托正式 WorkflowRouter，
-     * Router 会读取 ConversationState 恢复未完成任务；没有 Spring Router 的纯 Java 旧测试
-     * 才会回退到 LegacySkillWorkflowAdapter。</p>
+     * <p>所有运行时路由都必须委托正式 WorkflowRouter。Phase 9 删除了无 Router 时临时创建
+     * Legacy Adapter 的分支，因此纯 Java 测试也必须显式装配真实 Router。</p>
      */
     public AgentWorkflow selectWorkflow(ChatRequest request, ConversationState state) {
         return routeWorkflow(request, state).getSelectedWorkflow();
@@ -203,37 +123,24 @@ public class SkillManager {
     /**
      * 返回包含候选分数和“首次选择/恢复”信息的完整 Workflow 路由结果。
      *
-     * <p>生产环境委托 WorkflowRouter；旧单元测试没有 Router 时，仍用 Legacy Adapter，
-     * 但也会写入 activeWorkflow 状态，从而让 Runtime 的生命周期代码保持一致。</p>
+     * <p>不存在静默回退：如果调用方要执行 Runtime，就必须提供 Router。这样测试与生产使用同一条
+     * Workflow 选择链，避免兼容分支长期只在测试里存活。</p>
      */
     public WorkflowRouteResult routeWorkflow(ChatRequest request, ConversationState state) {
         Objects.requireNonNull(request, "request cannot be null");
         Objects.requireNonNull(state, "state cannot be null");
-        if (workflowRouter != null) {
-            return workflowRouter.route(request, state);
+        if (workflowRouter == null) {
+            throw new IllegalStateException(
+                    "WorkflowRouter is required for runtime routing; configure real AgentWorkflow instances"
+            );
         }
-
-        AgentWorkflow legacyWorkflow = new LegacySkillWorkflowAdapter(selectSkill(request.getMessage()));
-        boolean resumed = state.hasActiveNonTerminalWorkflow()
-                && legacyWorkflow.descriptor().getId().equals(state.getActiveWorkflowId());
-        state.startOrResumeWorkflow(
-                legacyWorkflow.descriptor().getId(),
-                legacyWorkflow.descriptor().getVersion()
-        );
-        return new WorkflowRouteResult(
-                legacyWorkflow,
-                resumed,
-                1.0,
-                resumed ? "测试/回滚模式恢复 Legacy Workflow" : "测试/回滚模式选择 Legacy Workflow",
-                List.of()
-        );
+        return workflowRouter.route(request, state);
     }
 
     /**
      * Multi-Agent 路由第一版。
      *
-     * 当前系统仍然复用 CustomerServiceSkill 执行具体动作，
-     * 但会先把用户消息路由到一个“专家域”：
+     * 当前真正的执行选择由 WorkflowRouter 完成；这里保留一个粗粒度“专家域”分类用于 Trace：
      * - pre_sales_agent：售前咨询，商品、价格、库存、推荐
      * - after_sales_agent：售后处理，订单、物流、退换货、政策
      * - complaint_agent：投诉/人工/赔偿/维权

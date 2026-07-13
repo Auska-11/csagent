@@ -36,6 +36,7 @@ class Phase9WorkflowRoutingBaselineTest {
         expectedRoutes.put("查询订单 ORD-001", "order_query");
         expectedRoutes.put("蓝牙耳机多少钱，有货吗", "product_advisory");
         expectedRoutes.put("我要退货，订单号 ORD-004", "return_apply");
+        expectedRoutes.put("我想退这个订单 ORD-004，不想要了", "return_apply");
         expectedRoutes.put("查询退货进度 RET-001", "return_query");
         expectedRoutes.put("超过七天还能退吗", "policy_qa");
         expectedRoutes.put("查看我的个人信息", "user_profile");

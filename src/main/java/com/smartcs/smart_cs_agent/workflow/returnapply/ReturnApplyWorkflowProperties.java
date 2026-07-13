@@ -3,7 +3,7 @@ package com.smartcs.smart_cs_agent.workflow.returnapply;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
-/** 退货 V2 Workflow 功能开关，关闭后首次路由会继续使用 Legacy Workflow。 */
+/** 退货申请 Workflow 功能开关；关闭后不回退旧 Skill，而是由通用客服提示用户。 */
 @Component
 @ConfigurationProperties(prefix = "smartcs.workflow.return-apply-v2")
 public class ReturnApplyWorkflowProperties {

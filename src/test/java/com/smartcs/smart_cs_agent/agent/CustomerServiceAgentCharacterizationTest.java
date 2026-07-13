@@ -6,14 +6,15 @@ import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
 import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
+import com.smartcs.smart_cs_agent.agent.context.WorkflowStatus;
 import com.smartcs.smart_cs_agent.config.SkillConfig;
 import com.smartcs.smart_cs_agent.model.ReturnRecord;
 import com.smartcs.smart_cs_agent.repository.OrderRepository;
 import com.smartcs.smart_cs_agent.repository.ProductRepository;
 import com.smartcs.smart_cs_agent.repository.ReturnRepository;
 import com.smartcs.smart_cs_agent.repository.UserRepository;
-import com.smartcs.smart_cs_agent.skill.CustomerServiceSkill;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
+import com.smartcs.smart_cs_agent.testing.WorkflowTestSupport;
 import com.smartcs.smart_cs_agent.tools.HandoffTools;
 import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
 import com.smartcs.smart_cs_agent.tools.OrderTools;
@@ -22,6 +23,10 @@ import com.smartcs.smart_cs_agent.tools.ReturnTools;
 import com.smartcs.smart_cs_agent.tools.ToolManager;
 import com.smartcs.smart_cs_agent.tools.ToolRegistry;
 import com.smartcs.smart_cs_agent.tools.UserTools;
+import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
+import com.smartcs.smart_cs_agent.workflow.general.GeneralCustomerServiceWorkflow;
+import com.smartcs.smart_cs_agent.workflow.returnapply.ReturnApplyWorkflow;
+import com.smartcs.smart_cs_agent.workflow.returnapply.ReturnApplyWorkflowProperties;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
@@ -41,11 +46,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 架构改造前的客服主链路特征测试（Characterization Test）。
  *
  * <p>“特征测试”不是为了证明当前实现已经完美，而是先把目前对外可见的正确行为固定下来。
- * 后续我们会把 {@code CustomerServiceSkill} 拆成多个 Workflow；只要这个测试仍然通过，就说明
- * 拆分类和调整依赖没有破坏用户已经能使用的三轮退货流程。</p>
+ * Phase 9 已把旧 CustomerServiceSkill 拆成多个 Workflow；本测试继续证明拆分类和调整依赖没有破坏
+ * 用户可见的退货流程与真实 Repository 副作用。</p>
  *
  * <p>调用链：CustomerServiceAgent -> ConversationStore -> AgentRuntime ->
- * CustomerServiceSkill -> ToolManager -> ToolRegistry -> ReturnTools。</p>
+ * ReturnApplyWorkflow -> ToolManager -> ToolRegistry -> ReturnTools。</p>
  *
  * <p>测试使用 Fake LLM 和内存 Repository，不访问网络或真实数据库，因此可以稳定地加入默认
  * {@code mvn test}。</p>
@@ -53,7 +58,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CustomerServiceAgentCharacterizationTest {
 
     @Test
-    void shouldKeepReturnApplicationStateAcrossThreeAgentTurns() {
+    void shouldKeepReturnApplicationStateAcrossFourAgentTurns() {
         TestFixture fixture = createFixture();
         String conversationId = "characterization-return-flow";
         String userId = "USER-002";
@@ -69,8 +74,8 @@ class CustomerServiceAgentCharacterizationTest {
 
         ConversationState stateAfterFirstTurn = fixture.conversationStore().get(conversationKey);
         assertNotNull(stateAfterFirstTurn);
-        assertEquals("return_apply", stateAfterFirstTurn.getActiveIntent());
-        assertEquals("order_id", stateAfterFirstTurn.getPendingSlot());
+        assertEquals("return_apply", stateAfterFirstTurn.getActiveWorkflowId());
+        assertEquals("WAITING_ORDER_ID", stateAfterFirstTurn.getWorkflowState("return_apply", "step"));
 
         // 第二轮用户只回复订单号。系统必须依靠同一会话中的任务状态理解这是在补退货槽位。
         ChatResponse second = fixture.agent().chatWithTrace(
@@ -78,21 +83,28 @@ class CustomerServiceAgentCharacterizationTest {
         );
         assertTrue(second.getReply().contains("退货原因"));
         assertTrue(hasTrace(second, "ask_user"));
-        assertFalse(hasTrace(second, "tool_called"));
+        assertTrue(hasTrace(second, "tool_called"));
 
         ConversationState stateAfterSecondTurn = fixture.conversationStore().get(conversationKey);
-        assertEquals("ORD-003", stateAfterSecondTurn.getTaskState("order_id"));
-        assertEquals("return_reason", stateAfterSecondTurn.getPendingSlot());
+        assertEquals("ORD-003", stateAfterSecondTurn.getWorkflowState("return_apply", "orderId"));
+        assertEquals("WAITING_REASON", stateAfterSecondTurn.getWorkflowState("return_apply", "step"));
 
-        // 第三轮再次只有槽位值。旧架构应调用 return_apply，然后通过 Fake LLM 生成最终回复。
+        // 第三轮收集原因后必须先等待明确确认，不能直接执行有副作用的 return.apply。
         ChatResponse third = fixture.agent().chatWithTrace(
                 authenticatedRequest(conversationId, userId, "质量问题")
         );
-        assertEquals("退货申请已提交，请留意后续审核进度。", third.getReply());
-        assertTrue(hasTrace(third, "tool_called"));
-        assertTrue(hasTrace(third, "tool_observed"));
-        assertTrue(hasTrace(third, "llm_called"));
-        assertTrue(hasTrace(third, "final_answer"));
+        assertTrue(third.getReply().contains("确认提交"));
+        assertFalse(hasTrace(third, "tool_called"));
+
+        // 第四轮明确确认后才允许调用 return.apply，并返回确定性的领域结果。
+        ChatResponse fourth = fixture.agent().chatWithTrace(
+                authenticatedRequest(conversationId, userId, "确认提交")
+        );
+        assertTrue(fourth.getReply().contains("提交成功"));
+        assertTrue(hasTrace(fourth, "tool_called"));
+        assertTrue(hasTrace(fourth, "tool_observed"));
+        assertFalse(hasTrace(fourth, "llm_called"));
+        assertTrue(hasTrace(fourth, "final_answer"));
 
         // 不只检查回复，还检查副作用确实发生，防止未来出现“嘴上说提交、实际没写入”的假闭环。
         ReturnRecord savedRecord = fixture.returnRepository().findByOrderId("ORD-003");
@@ -102,8 +114,7 @@ class CustomerServiceAgentCharacterizationTest {
         // 任务完成后，订单号、原因和 pending_slot 应被清理，避免污染用户的下一项任务。
         ConversationState completedState = fixture.conversationStore().get(conversationKey);
         assertNull(completedState.getPendingSlot());
-        assertNull(completedState.getTaskState("order_id"));
-        assertNull(completedState.getTaskState("return_reason"));
+        assertEquals(WorkflowStatus.COMPLETED, completedState.getWorkflowStatus());
     }
 
     private boolean hasTrace(ChatResponse response, String eventType) {
@@ -141,7 +152,12 @@ class CustomerServiceAgentCharacterizationTest {
                 new HandoffTools()
         );
 
-        SkillManager skillManager = new SkillManager(new TestSkillConfig());
+        GlobalInterruptPolicy interruptPolicy = new GlobalInterruptPolicy();
+        SkillManager skillManager = WorkflowTestSupport.skillManager(
+                new TestSkillConfig(),
+                new GeneralCustomerServiceWorkflow(),
+                new ReturnApplyWorkflow(interruptPolicy, new ReturnApplyWorkflowProperties())
+        );
         AgentRuntime runtime = new AgentRuntime(
                 skillManager,
                 new FixedReplyChatLanguageModel("退货申请已提交，请留意后续审核进度。"),
@@ -150,8 +166,6 @@ class CustomerServiceAgentCharacterizationTest {
         ConversationStore conversationStore = new ConversationStore();
         CustomerServiceAgent agent = new CustomerServiceAgent(
                 runtime,
-                skillManager,
-                new CustomerServiceSkill(null),
                 conversationStore
         );
         return new TestFixture(agent, conversationStore, returnRepository);

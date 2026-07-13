@@ -10,8 +10,13 @@ import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandler;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandlingContext;
 import com.smartcs.smart_cs_agent.agent.handler.core.ActionHandlerRegistry;
 import com.smartcs.smart_cs_agent.config.SkillConfig;
-import com.smartcs.smart_cs_agent.skill.Skill;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
+import com.smartcs.smart_cs_agent.testing.WorkflowTestSupport;
+import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
+import com.smartcs.smart_cs_agent.workflow.api.RoutingContext;
+import com.smartcs.smart_cs_agent.workflow.api.WorkflowDecision;
+import com.smartcs.smart_cs_agent.workflow.api.WorkflowDescriptor;
+import com.smartcs.smart_cs_agent.workflow.api.WorkflowMatchResult;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -28,8 +33,10 @@ class ActionHandlerRegistryTest {
 
     @Test
     void shouldExecuteCustomActionThroughUnchangedRuntimeLoop() {
-        SkillManager skillManager = new SkillManager(new TestSkillConfig());
-        skillManager.registerSkill(new CustomActionSkill());
+        SkillManager skillManager = WorkflowTestSupport.skillManager(
+                new TestSkillConfig(),
+                new CustomActionWorkflow()
+        );
         ActionHandlerRegistry registry = new ActionHandlerRegistry(List.of(new CustomActionHandler()));
         AgentRuntime runtime = new AgentRuntime(skillManager, registry);
 
@@ -72,8 +79,10 @@ class ActionHandlerRegistryTest {
 
     @Test
     void shouldConvertUnexpectedPluginExceptionIntoSafeObservationAndReply() {
-        SkillManager skillManager = new SkillManager(new TestSkillConfig());
-        skillManager.registerSkill(new CustomActionSkill());
+        SkillManager skillManager = WorkflowTestSupport.skillManager(
+                new TestSkillConfig(),
+                new CustomActionWorkflow()
+        );
         ActionHandlerRegistry registry = new ActionHandlerRegistry(List.of(new ThrowingCustomActionHandler()));
         AgentRuntime runtime = new AgentRuntime(skillManager, registry);
         ChatRequest request = new ChatRequest("conv-failing-plugin", "USER-001", "执行失败插件");
@@ -142,21 +151,28 @@ class ActionHandlerRegistryTest {
         }
     }
 
-    private static final class CustomActionSkill implements Skill {
+    private static final class CustomActionWorkflow implements AgentWorkflow {
+
+        private final WorkflowDescriptor descriptor = new WorkflowDescriptor(
+                "custom_action_workflow",
+                "test-v1",
+                "测试自定义 Action 插件",
+                100
+        );
 
         @Override
-        public AgentAction nextAction(TurnContext context) {
-            return new CustomAction("demo");
+        public WorkflowDescriptor descriptor() {
+            return descriptor;
         }
 
         @Override
-        public String getName() {
-            return "custom_action_workflow";
+        public WorkflowMatchResult match(RoutingContext context) {
+            return new WorkflowMatchResult(1.0, "测试固定命中");
         }
 
         @Override
-        public float canHandle(String message) {
-            return 1.0f;
+        public WorkflowDecision nextAction(TurnContext context) {
+            return WorkflowDecision.next(new CustomAction("demo"), "验证自定义 Action Handler");
         }
     }
 

@@ -2,14 +2,13 @@ package com.smartcs.smart_cs_agent.eval;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smartcs.smart_cs_agent.agent.action.AgentAction;
-import com.smartcs.smart_cs_agent.agent.action.CapabilityAction;
-import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
-import com.smartcs.smart_cs_agent.agent.context.TurnContext;
-import com.smartcs.smart_cs_agent.skill.CustomerServiceSkill;
+import com.smartcs.smart_cs_agent.workflow.core.WorkflowRouteResult;
+import com.smartcs.smart_cs_agent.workflow.core.WorkflowRouter;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -21,22 +20,19 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 客服 Agent 离线评测测试。
+ * 客服 Agent 首次 Workflow 路由离线评测。
  *
- * 【为什么要有这个测试？】
- * 单元测试通常验证某个很小的函数；
- * 评测测试更像一组“业务回归用例”，用来回答：
- * - 用户这样说时，意图有没有识别对？
- * - 有没有调用期望工具？
- * - 该转人工时有没有转？
- * - 多轮任务最后有没有走到正确工具？
+ * <p>Phase 9 之前，这组数据直接调用单体 CustomerServiceSkill，所以只能证明旧类内部的关键词分支。
+ * 现在测试使用 Spring 实际注册的全部 Workflow 和正式 WorkflowRouter，评测结果与生产选择链一致。</p>
  *
- * 第一版评测只覆盖 Skill 决策层，不调用真实 LLM。
- * 这样可以先把 Agent 的“路由、工具、转人工”稳定性做扎实。
+ * <p>多轮状态恢复由各 Workflow 集成测试覆盖；本评测只取 turns 第一条消息验证“首次应该交给谁”，
+ * 避免在一个指标里混入 Capability、身份和副作用执行结果。</p>
  */
+@SpringBootTest
 class CustomerServiceEvaluationTest {
 
-    private final CustomerServiceSkill skill = new CustomerServiceSkill(null);
+    @Autowired
+    private WorkflowRouter workflowRouter;
 
     @Test
     void shouldPassCustomerServiceRoutingEvaluation() throws IOException {
@@ -46,46 +42,30 @@ class CustomerServiceEvaluationTest {
 
         for (EvalCase evalCase : cases) {
             EvalResult result = runCase(evalCase);
-            report.record(evalCase, result);
-
+            report.record(result);
             if (!result.passed()) {
                 failures.add(result.failureMessage());
             }
         }
 
-        // 这段输出在本地跑测试时很有用，可以快速看到当前 Agent 决策质量。
         System.out.println(report.toText());
         report.writeJson();
-
         assertTrue(failures.isEmpty(), String.join("\n", failures));
     }
 
     private EvalResult runCase(EvalCase evalCase) {
-        ConversationState state = new ConversationState(evalCase.turns.get(0), "USER-001");
-        AgentAction action = null;
-
-        for (int i = 0; i < evalCase.turns.size(); i++) {
-            String message = evalCase.turns.get(i);
-            if (i > 0) {
-                state.startNewTurn(message);
-            }
-            action = skill.nextAction(turn(evalCase.id, state));
-        }
-
-        String actualAction = action == null ? null : action.getClass().getSimpleName();
-        String actualCapability = null;
-        boolean actualHandoff = action instanceof HandoffAction;
-
-        if (action instanceof CapabilityAction capabilityAction) {
-            actualCapability = capabilityAction.getCapability();
-        }
-
+        String message = evalCase.turns.get(0);
+        String conversationId = "routing-eval-" + evalCase.id;
+        ChatRequest request = new ChatRequest(conversationId, "USER-EVAL", message);
+        WorkflowRouteResult route = workflowRouter.route(
+                request,
+                new ConversationState(message, "USER-EVAL")
+        );
         return new EvalResult(
                 evalCase,
-                state.getActiveIntent(),
-                actualAction,
-                actualCapability,
-                actualHandoff
+                route.getSelectedWorkflow().descriptor().getId(),
+                route.getSelectedScore(),
+                route.getReason()
         );
     }
 
@@ -100,146 +80,68 @@ class CustomerServiceEvaluationTest {
         }
     }
 
-    private TurnContext turn(String conversationId, ConversationState state) {
-        ChatRequest request = new ChatRequest(conversationId, state.getUserId(), state.getMessage());
-        return new TurnContext(request, state);
-    }
-
-    /**
-     * JSON 评测用例。
-     *
-     * 字段保持 public，是为了让 Jackson 在测试里可以直接反序列化。
-     */
+    /** JSON 字段保持 public，方便 Jackson 在测试中直接反序列化。 */
     public static class EvalCase {
         public String id;
         public List<String> turns;
-        public String expectedIntent;
-        public String expectedAction;
-        public String expectedCapability;
-        public boolean expectedHandoff;
+        public String expectedWorkflow;
     }
 
     private record EvalResult(EvalCase evalCase,
-                              String actualIntent,
-                              String actualAction,
-                              String actualCapability,
-                              boolean actualHandoff) {
-
-        private boolean actionPassed() {
-            return equalsNullable(evalCase.expectedAction, actualAction);
-        }
-
-        private boolean intentPassed() {
-            return equalsNullable(evalCase.expectedIntent, actualIntent);
-        }
-
-        private boolean capabilityPassed() {
-            return equalsNullable(evalCase.expectedCapability, actualCapability);
-        }
-
-        private boolean handoffPassed() {
-            return evalCase.expectedHandoff == actualHandoff;
-        }
+                              String actualWorkflow,
+                              double selectedScore,
+                              String reason) {
 
         private boolean passed() {
-            return actionPassed() && intentPassed() && capabilityPassed() && handoffPassed();
+            return evalCase.expectedWorkflow.equals(actualWorkflow);
         }
 
         private String failureMessage() {
-            return "评测失败：" + evalCase.id + "\n" +
-                    "  expectedIntent=" + evalCase.expectedIntent + ", actualIntent=" + actualIntent + "\n" +
-                    "  expectedAction=" + evalCase.expectedAction + ", actualAction=" + actualAction + "\n" +
-                    "  expectedCapability=" + evalCase.expectedCapability + ", actualCapability=" + actualCapability + "\n" +
-                    "  expectedHandoff=" + evalCase.expectedHandoff + ", actualHandoff=" + actualHandoff;
-        }
-
-        private static boolean equalsNullable(String expected, String actual) {
-            if (expected == null || expected.isBlank()) {
-                return actual == null || actual.isBlank();
-            }
-            return expected.equals(actual);
+            return "路由评测失败：" + evalCase.id + "\n"
+                    + "  expectedWorkflow=" + evalCase.expectedWorkflow
+                    + ", actualWorkflow=" + actualWorkflow + "\n"
+                    + "  score=" + selectedScore + ", reason=" + reason;
         }
     }
 
-    /**
-     * 评测报告。
-     *
-     * 当前先统计四个核心指标：
-     * - intentAccuracy：意图命中率
-     * - actionAccuracy：Action 类型命中率
-     * - capabilityAccuracy：工具命中率
-     * - handoffAccuracy：转人工判断命中率
-     */
+    /** 只统计一个含义明确的核心指标，候选分和原因保留在逐用例 JSON 中用于排查。 */
     private static class EvalReport {
         private int total;
-        private int intentPassed;
-        private int actionPassed;
-        private int capabilityTotal;
-        private int capabilityPassed;
-        private int handoffPassed;
+        private int passed;
         private final List<Map<String, Object>> caseRows = new ArrayList<>();
 
-        private void record(EvalCase evalCase, EvalResult result) {
+        private void record(EvalResult result) {
             total++;
-            if (result.intentPassed()) {
-                intentPassed++;
-            }
-            if (result.actionPassed()) {
-                actionPassed++;
-            }
-            if (evalCase.expectedCapability != null && !evalCase.expectedCapability.isBlank()) {
-                capabilityTotal++;
-                if (result.capabilityPassed()) {
-                    capabilityPassed++;
-                }
-            }
-            if (result.handoffPassed()) {
-                handoffPassed++;
+            if (result.passed()) {
+                passed++;
             }
 
             Map<String, Object> row = new LinkedHashMap<>();
-            row.put("id", evalCase.id);
+            row.put("id", result.evalCase().id);
             row.put("passed", result.passed());
-            row.put("expectedIntent", evalCase.expectedIntent);
-            row.put("actualIntent", result.actualIntent());
-            row.put("expectedAction", evalCase.expectedAction);
-            row.put("actualAction", result.actualAction());
-            row.put("expectedCapability", evalCase.expectedCapability);
-            row.put("actualCapability", result.actualCapability());
-            row.put("expectedHandoff", evalCase.expectedHandoff);
-            row.put("actualHandoff", result.actualHandoff());
+            row.put("expectedWorkflow", result.evalCase().expectedWorkflow);
+            row.put("actualWorkflow", result.actualWorkflow());
+            row.put("selectedScore", result.selectedScore());
+            row.put("reason", result.reason());
             caseRows.add(row);
         }
 
         private String toText() {
-            return "\n客服 Agent 路由评测报告\n" +
-                    "总用例数：" + total + "\n" +
-                    "意图命中率：" + percent(intentPassed, total) + "\n" +
-                    "Action 命中率：" + percent(actionPassed, total) + "\n" +
-                    "工具命中率：" + percent(capabilityPassed, capabilityTotal) + "\n" +
-                    "转人工命中率：" + percent(handoffPassed, total) + "\n";
+            return "\n客服 Agent Workflow 路由评测报告\n"
+                    + "总用例数：" + total + "\n"
+                    + "Workflow 命中率：" + percent(passed, total) + "\n";
         }
 
         private void writeJson() throws IOException {
             Map<String, Object> summary = new LinkedHashMap<>();
             summary.put("total", total);
-            summary.put("intentPassed", intentPassed);
-            summary.put("intentAccuracy", EvalReportWriter.rate(intentPassed, total));
-            summary.put("actionPassed", actionPassed);
-            summary.put("actionAccuracy", EvalReportWriter.rate(actionPassed, total));
-            summary.put("capabilityTotal", capabilityTotal);
-            summary.put("capabilityPassed", capabilityPassed);
-            summary.put("capabilityAccuracy", EvalReportWriter.rate(capabilityPassed, capabilityTotal));
-            summary.put("handoffPassed", handoffPassed);
-            summary.put("handoffAccuracy", EvalReportWriter.rate(handoffPassed, total));
+            summary.put("workflowPassed", passed);
+            summary.put("workflowAccuracy", EvalReportWriter.rate(passed, total));
             EvalReportWriter.write("customer-service-routing", summary, caseRows);
         }
 
-        private String percent(int passed, int total) {
-            if (total == 0) {
-                return "N/A";
-            }
-            return "%.1f%% (%d/%d)".formatted(passed * 100.0 / total, passed, total);
+        private String percent(int value, int count) {
+            return count == 0 ? "N/A" : "%.1f%% (%d/%d)".formatted(value * 100.0 / count, value, count);
         }
     }
 }

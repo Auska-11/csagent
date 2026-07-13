@@ -60,9 +60,8 @@ public final class AgentSkillDefinition {
         this.riskLevel = riskLevel == null ? RiskLevel.READ_ONLY : riskLevel;
         this.confirmationPolicy = confirmationPolicy == null ? "" : confirmationPolicy.trim();
 
-        if (this.allowedCapabilities.isEmpty()) {
-            throw new IllegalArgumentException("allowed_capabilities cannot be empty for skill " + this.id);
-        }
+        // 纯 Prompt Skill（例如闲聊和澄清兜底）不需要任何 Capability。
+        // 空集合代表最小权限，而不是配置错误；真正要调用能力的 Workflow 仍会被 Handler allowlist 拒绝。
         if (this.riskLevel.mayCauseSideEffects() && this.confirmationPolicy.isBlank()) {
             throw new IllegalArgumentException(
                     "Side-effect skill must declare confirmation_policy: " + this.id

@@ -84,12 +84,14 @@ Skill Package 绑定到未注册 Workflow 而启动失败。
 
 ### 9.2 替换 Legacy Skill/Workflow Adapter
 
-- [ ] 新增 `GeneralCustomerServiceWorkflow`，ID 保持 `customer_service`。
-- [ ] 只承接闲聊、模糊意图和通用 LLM fallback，不重复实现八类业务流程。
-- [ ] 从 `CustomerServiceAgent` 删除旧 Skill 注册。
-- [ ] 从 `SkillManager` 删除 Legacy Adapter 回退。
-- [ ] 删除 `WorkflowBeanConfiguration`、`LegacySkillWorkflowAdapter` 和旧 Skill 生产依赖。
-- [ ] 迁移旧 Skill 单元测试与 Eval，保留对外行为证据。
+- [x] 新增 `GeneralCustomerServiceWorkflow`，ID 保持 `customer_service`。
+- [x] 只承接闲聊、模糊意图和通用 LLM fallback，不重复实现八类业务流程。
+- [x] 从 `CustomerServiceAgent` 删除旧 Skill 注册。
+- [x] 从 `SkillManager` 删除 Legacy Adapter 回退。
+- [x] 删除 `WorkflowBeanConfiguration`、`LegacySkillWorkflowAdapter`、`CustomerServiceSkill` 和旧 `Skill` 接口。
+- [x] 迁移旧 Skill 单元测试与 Eval，16 条真实 Workflow 路由 Eval 达到 100%。
+- [x] 将通用 Skill Package 收紧为零 Capability，并删除重复意图/政策 reference。
+- [x] 修复“一次性退货诉求被订单号路由抢走”的专业 Workflow 边界缺陷。
 
 ### 9.3 删除 ToolManager/ToolRegistry 兼容入口
 
@@ -147,3 +149,9 @@ sh mvnw -q -DskipTests package
 2026-07-14 的执行结果为：专项测试通过；默认测试共 517 项，`failures=0`、`errors=0`、
 `skipped=0`；JAR 构建通过。真实 MySQL 和 Docker/Compose 属于 Phase 9 最终验收，不在只增加测试与
 文档的 9.1 重复执行。
+
+## 8. 9.2 验收记录
+
+Phase 9.2 删除 Legacy Skill/Adapter 生产链并迁移测试、Eval 后，干净构建的默认测试共 508 项，失败、错误和跳过
+均为 0；Spring Boot JAR 构建通过。详细调用链、最小权限说明、退货路由缺陷和迁移清单见
+[`客服Agent-69-Phase9通用客服Workflow与LegacySkill清理说明.md`](客服Agent-69-Phase9通用客服Workflow与LegacySkill清理说明.md)。

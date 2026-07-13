@@ -2,124 +2,81 @@
   {
     "id": "order_lookup_with_order_id",
     "turns": ["帮我查一下订单 ORD-001"],
-    "expectedIntent": "order_query",
-    "expectedAction": "CapabilityAction",
-    "expectedCapability": "order_lookup",
-    "expectedHandoff": false
+    "expectedWorkflow": "order_query"
   },
   {
     "id": "order_lookup_missing_order_id",
     "turns": ["帮我查一下订单"],
-    "expectedIntent": "order_query",
-    "expectedAction": "AskUserAction",
-    "expectedHandoff": false
+    "expectedWorkflow": "order_query"
   },
   {
     "id": "user_orders",
     "turns": ["查看我的订单"],
-    "expectedIntent": "order_query",
-    "expectedAction": "CapabilityAction",
-    "expectedCapability": "user_orders",
-    "expectedHandoff": false
+    "expectedWorkflow": "order_query"
   },
   {
     "id": "product_search",
     "turns": ["蓝牙耳机多少钱"],
-    "expectedIntent": "product_query",
-    "expectedAction": "CapabilityAction",
-    "expectedCapability": "product_search",
-    "expectedHandoff": false
+    "expectedWorkflow": "product_advisory"
   },
   {
     "id": "return_query_with_return_id",
     "turns": ["查一下退货进度 RET-001"],
-    "expectedIntent": "return_query",
-    "expectedAction": "CapabilityAction",
-    "expectedCapability": "return_query",
-    "expectedHandoff": false
+    "expectedWorkflow": "return_query"
   },
   {
     "id": "return_query_missing_return_id",
     "turns": ["查一下退货进度"],
-    "expectedIntent": "return_query",
-    "expectedAction": "AskUserAction",
-    "expectedHandoff": false
+    "expectedWorkflow": "return_query"
   },
   {
     "id": "return_apply_multi_turn",
-    "turns": ["我要退货", "ORD-004", "质量问题"],
-    "expectedIntent": "return_apply",
-    "expectedAction": "CapabilityAction",
-    "expectedCapability": "return_apply",
-    "expectedHandoff": false
+    "turns": ["我要退货", "ORD-004", "质量问题", "确认提交"],
+    "expectedWorkflow": "return_apply"
   },
   {
     "id": "return_apply_one_turn",
     "turns": ["我想退这个订单 ORD-004，不想要了"],
-    "expectedIntent": "return_apply",
-    "expectedAction": "CapabilityAction",
-    "expectedCapability": "return_apply",
-    "expectedHandoff": false
+    "expectedWorkflow": "return_apply"
   },
   {
     "id": "knowledge_return_policy",
     "turns": ["超过七天还能退吗"],
-    "expectedIntent": "knowledge_query",
-    "expectedAction": "CapabilityAction",
-    "expectedCapability": "knowledge_search",
-    "expectedHandoff": false
+    "expectedWorkflow": "policy_qa"
   },
   {
     "id": "knowledge_invoice_policy",
     "turns": ["发票什么时候能开"],
-    "expectedIntent": "knowledge_query",
-    "expectedAction": "CapabilityAction",
-    "expectedCapability": "knowledge_search",
-    "expectedHandoff": false
+    "expectedWorkflow": "policy_qa"
   },
   {
     "id": "knowledge_warranty_policy",
     "turns": ["保修期多久"],
-    "expectedIntent": "knowledge_query",
-    "expectedAction": "CapabilityAction",
-    "expectedCapability": "knowledge_search",
-    "expectedHandoff": false
+    "expectedWorkflow": "warranty_query"
   },
   {
     "id": "knowledge_delivery_policy",
     "turns": ["偏远地区可以配送吗"],
-    "expectedIntent": "knowledge_query",
-    "expectedAction": "CapabilityAction",
-    "expectedCapability": "knowledge_search",
-    "expectedHandoff": false
+    "expectedWorkflow": "policy_qa"
   },
   {
     "id": "handoff_user_request",
     "turns": ["我要转人工"],
-    "expectedIntent": "handoff",
-    "expectedAction": "HandoffAction",
-    "expectedHandoff": true
+    "expectedWorkflow": "escalation"
   },
   {
     "id": "handoff_complaint",
     "turns": ["你们服务太差了，我要投诉"],
-    "expectedIntent": "handoff",
-    "expectedAction": "HandoffAction",
-    "expectedHandoff": true
+    "expectedWorkflow": "escalation"
   },
   {
     "id": "user_lookup",
     "turns": ["查看我的信息"],
-    "expectedIntent": "user_info",
-    "expectedAction": "CapabilityAction",
-    "expectedCapability": "user_lookup",
-    "expectedHandoff": false
+    "expectedWorkflow": "user_profile"
   },
   {
     "id": "chitchat",
     "turns": ["你好"],
-    "expectedIntent": "chitchat",
-    "expectedAction": "LLMAction",
-    "expectedHandoff": false
+    "expectedWorkflow": "customer_service"
   }
 ]

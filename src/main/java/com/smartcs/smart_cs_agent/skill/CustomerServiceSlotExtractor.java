@@ -10,9 +10,8 @@ package com.smartcs.smart_cs_agent.skill;
  * - 查询退货进度需要 return_id
  * - 申请退货需要 order_id + return_reason
  *
- * 以前这些提取逻辑都写在 CustomerServiceSkill 里，
- * 会让 Skill 同时负责“判断下一步”和“从文本里抠字段”。
- * 现在把它拆出来，让 CustomerServiceSkill 更专注于编排 Action。
+ * 订单、退货和商品 Workflow 都会解析编号或关键词。把纯字符串提取集中在这里，
+ * 可以让 Workflow 更专注于状态迁移和 Action 决策，同时避免重复正则。
  */
 public class CustomerServiceSlotExtractor {
 

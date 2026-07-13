@@ -13,8 +13,6 @@ import com.smartcs.smart_cs_agent.repository.ReturnRepository;
 import com.smartcs.smart_cs_agent.session.api.SessionRecord;
 import com.smartcs.smart_cs_agent.session.api.SessionStore;
 import com.smartcs.smart_cs_agent.session.memory.InMemorySessionStore;
-import com.smartcs.smart_cs_agent.skill.CustomerServiceSkill;
-import com.smartcs.smart_cs_agent.skill.SkillManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -44,12 +42,6 @@ class SessionSaveFailureRecoveryIntegrationTest {
 
     @Autowired
     private AgentRuntime runtime;
-
-    @Autowired
-    private SkillManager skillManager;
-
-    @Autowired
-    private CustomerServiceSkill customerServiceSkill;
 
     @Autowired
     private ReturnRepository returnRepository;
@@ -101,7 +93,7 @@ class SessionSaveFailureRecoveryIntegrationTest {
     }
 
     private CustomerServiceAgent agentWith(ConversationStore conversationStore) {
-        return new CustomerServiceAgent(runtime, skillManager, customerServiceSkill, conversationStore);
+        return new CustomerServiceAgent(runtime, conversationStore);
     }
 
     private ChatRequest request(String conversationId, String message) {

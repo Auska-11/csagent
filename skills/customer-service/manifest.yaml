@@ -5,34 +5,22 @@
 id: customer-service
 name: customer-service       # 兼容旧文档和早期脚本，Loader 以 id 为准
 version: 1.0.0
-description: 智能客服 Skill，处理订单、产品、退换货等业务
+description: 通用客服兜底 Skill，只处理闲聊、感谢和模糊诉求澄清
 workflow: customer_service
 priority: 100
 
-# Router 后续可以使用这些示例做粗召回；真正的多轮流程仍由 workflow 决定。
+# 专业业务触发词已经归各自 Skill Package；这里只保留通用输入示例。
 triggers:
-  - 查询订单和物流
-  - 查询商品价格或库存
-  - 申请或查询退换货
-  - 咨询售后政策
-  - 请求人工客服
+  - 打招呼和感谢
+  - 闲聊
+  - 无法确定具体业务的模糊问题
 
-# Workflow 只能调用这里明确授权的 Capability。
-# 即使某个 Provider 注册了更多能力，也不会自动授予本 Skill。
-allowed_capabilities:
-  - order.lookup
-  - order.list-by-user
-  - product.search
-  - product.lookup
-  - return.apply
-  - return.lookup
-  - user.lookup
-  - knowledge.search
-  - handoff.request
+# 通用兜底只生成回复或追问，不允许调用任何业务能力。
+# 空列表是有意的最小权限声明，不是漏配。
+allowed_capabilities: []
 
-# mixed 表示既有只读查询，也有退货申请、创建人工工单等有副作用的操作。
-risk_level: mixed
-confirmation_policy: legacy-workflow
+risk_level: read_only
+confirmation_policy: none
 prompt: SKILL.md
 
 # Reference 使用规则由 Loader 解析成强类型对象。
@@ -42,61 +30,11 @@ references:
   - path: references/persona.md
     purposes:
       - response_generation
-  - path: references/intent.md
-    purposes:
-      - intent_recognition
-  - path: references/policy.md
-    triggers:
-      - 退货
-      - 退款
-      - 换货
-      - 保修
-      - 发票
-      - 配送
-      - 人工
-      - 投诉
   - path: references/templates.md
     purposes:
       - response_generation
 
-# 下面保留原来的业务能力分组，主要给人阅读；运行时授权以上面的
-# allowed_capabilities 为唯一依据，避免把 Java 方法名当成稳定协议。
-capabilities:
-  - name: order_query
-    description: 查询订单状态和物流信息
-    tools:
-      - OrderTools.queryOrderStatus
-      - OrderTools.queryUserOrders
-
-  - name: product_query
-    description: 查询产品信息和搜索产品
-    tools:
-      - ProductTools.queryProductInfo
-      - ProductTools.searchProducts
-
-  - name: return_service
-    description: 退换货申请和查询
-    tools:
-      - ReturnTools.applyReturn
-      - ReturnTools.queryReturnStatus
-
-  - name: user_info
-    description: 查询用户信息
-    tools:
-      - UserTools.queryUserInfo
-
 # 意图分类
 intents:
-  - ORDER_QUERY      # 查询订单
-  - PRODUCT_QUERY    # 查询产品
-  - RETURN_APPLY     # 申请退换货
-  - RETURN_QUERY     # 查询退换货
-  - USER_INFO        # 查询用户信息
   - CHITCHAT         # 闲聊
   - OTHER            # 其他
-
-# 配置
-config:
-  max_retries: 3           # 工具调用最大重试次数
-  timeout_ms: 30000        # 工具调用超时时间
-  confidence_threshold: 0.7  # 意图识别置信度阈值

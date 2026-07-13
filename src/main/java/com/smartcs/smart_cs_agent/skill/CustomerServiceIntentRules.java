@@ -4,13 +4,12 @@ package com.smartcs.smart_cs_agent.skill;
  * 客服意图规则集合。
  *
  * 【为什么单独拆出来？】
- * CustomerServiceSkill 应该主要回答“下一步 Action 是什么”。
- * 但像“是否退货相关”“是否政策问题”“是否需要转人工”这类关键词规则，
- * 本质上是意图规则，不是 Action 编排。
+ * 多个专业 Workflow 都需要“是否退货相关”“是否政策问题”“是否需要转人工”等基础关键词判断。
+ * 把无状态规则集中在这里，可以避免每个 Workflow 复制字符串列表。
  *
  * 单独拆出来以后：
  * - 规则更集中，后续补关键词更方便。
- * - Skill 主流程更短，更容易读。
+ * - Workflow 主流程更短，更容易读。
  * - 单元测试可以直接测规则本身。
  */
 public class CustomerServiceIntentRules {

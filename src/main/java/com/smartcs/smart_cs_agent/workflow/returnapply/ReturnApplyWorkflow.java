@@ -87,12 +87,13 @@ public class ReturnApplyWorkflow implements AgentWorkflow {
 
         if (containsAny(message,
                 "我要退货", "我想退货", "申请退货", "帮我退货",
-                "我要退款", "申请退款", "我要换货", "申请换货")) {
+                "我要退款", "申请退款", "我要换货", "申请换货",
+                "我想退", "想退这个订单", "要退这个订单", "退这个订单", "不想要")) {
             return new WorkflowMatchResult(0.98, "命中明确退货/退款/换货申请表达");
         }
 
         if (message.contains("退货") || message.contains("退款") || message.contains("换货")) {
-            // 低于 Legacy Workflow 的 0.8，模糊政策问题仍由通用客服/知识库处理。
+            // 模糊政策问题仍优先交给得分更高的 PolicyQaWorkflow。
             return new WorkflowMatchResult(0.65, "提到退换货，但没有明确申请动作");
         }
         return WorkflowMatchResult.noMatch("未命中退货申请表达");

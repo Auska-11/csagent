@@ -15,8 +15,7 @@ import com.smartcs.smart_cs_agent.agent.context.TurnContext;
  * <p>不负责：不直接访问 Repository、不直接发 HTTP、不直接调用 MCP，也不维护全局 Router。</p>
  *
  * <p>调用链：AgentRuntime -> WorkflowRouter -> AgentWorkflow -> WorkflowDecision ->
- * ActionHandler。当前既支持 LegacySkillWorkflowAdapter 作为渐进迁移桥梁，也支持
- * ReturnApplyWorkflow、WarrantyQueryWorkflow 这类独立实现。</p>
+ * ActionHandler。Phase 9 起所有实现都直接遵守本协议，不再通过旧 Java Skill Adapter 执行。</p>
  */
 public interface AgentWorkflow {
 

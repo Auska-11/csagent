@@ -28,10 +28,7 @@ class Phase9LegacyDependencyBoundaryTest {
     void legacySkillWorkflowAdapterShouldNotGainNewProductionCallers() throws IOException {
         assertOnlyExpectedFilesImport(
                 "com.smartcs.smart_cs_agent.workflow.legacy.LegacySkillWorkflowAdapter",
-                Set.of(
-                        "com/smartcs/smart_cs_agent/skill/SkillManager.java",
-                        "com/smartcs/smart_cs_agent/workflow/config/WorkflowBeanConfiguration.java"
-                )
+                Set.of()
         );
     }
 
@@ -39,10 +36,7 @@ class Phase9LegacyDependencyBoundaryTest {
     void customerServiceSkillShouldNotGainNewProductionCallers() throws IOException {
         assertOnlyExpectedFilesImport(
                 "com.smartcs.smart_cs_agent.skill.CustomerServiceSkill",
-                Set.of(
-                        "com/smartcs/smart_cs_agent/agent/CustomerServiceAgent.java",
-                        "com/smartcs/smart_cs_agent/workflow/config/WorkflowBeanConfiguration.java"
-                )
+                Set.of()
         );
     }
 
