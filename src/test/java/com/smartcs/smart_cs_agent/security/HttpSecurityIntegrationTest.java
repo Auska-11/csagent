@@ -90,6 +90,30 @@ class HttpSecurityIntegrationTest {
     }
 
     @Test
+    void pendingHandoffAdminApiShouldEnforceJwtRoleMatrix() throws Exception {
+        String customerToken = token("USER-002");
+        String adminToken = token("USER-001");
+        String mcpToken = tokenService.issueMcpClientToken("mcp-review-client").token();
+
+        mockMvc.perform(get("/api/admin/pending-handoffs"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_REQUIRED"));
+        mockMvc.perform(get("/api/admin/pending-handoffs").with(bearer(customerToken)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("ACCESS_DENIED"));
+        mockMvc.perform(get("/api/admin/pending-handoffs").with(bearer(mcpToken)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("ACCESS_DENIED"));
+
+        // 这里走完整 JWT decoder、Principal converter、SecurityFilterChain、Service 和 Memory Store，
+        // 能发现“Controller 单测放行了，但生产 anyRequest().denyAll() 仍拦住新 URL”这类装配错误。
+        mockMvc.perform(get("/api/admin/pending-handoffs").with(bearer(adminToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items").isArray())
+                .andExpect(jsonPath("$.hasMore").isBoolean());
+    }
+
+    @Test
     void wrongAudienceJwtShouldBeRejectedBeforeController() throws Exception {
         String wrongAudienceToken = encodeToken(
                 "USER-001",

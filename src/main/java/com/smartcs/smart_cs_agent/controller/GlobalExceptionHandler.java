@@ -1,5 +1,11 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.handoff.admin.PendingHandoffAdminCursorException;
+import com.smartcs.smart_cs_agent.handoff.admin.PendingHandoffAdminRequestException;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffConflictException;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffVersionConflictException;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewNotFoundException;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffStateConflictException;
 import com.smartcs.smart_cs_agent.security.AuthenticationException;
 import com.smartcs.smart_cs_agent.security.AuthorizationException;
 import com.smartcs.smart_cs_agent.session.api.SessionVersionConflictException;
@@ -10,6 +16,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
@@ -60,6 +67,18 @@ public class GlobalExceptionHandler {
                 .body(new ApiErrorResponse("NOT_FOUND", safeMessage(exception.getMessage(), "Resource not found")));
     }
 
+    /** 当前 JWT 租户内不存在记录和跨租户访问使用完全相同的 404，避免 outboxId 探测。 */
+    @ExceptionHandler(PendingHandoffReviewNotFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handlePendingHandoffNotFound(
+            PendingHandoffReviewNotFoundException exception) {
+        return ResponseEntity
+                .status(HttpStatus.NOT_FOUND)
+                .body(new ApiErrorResponse(
+                        "PENDING_HANDOFF_NOT_FOUND",
+                        "Pending handoff review record was not found"
+                ));
+    }
+
     /** 未映射的 URL 或静态资源返回 404，不能被兜底处理器误报成服务器 500。 */
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<ApiErrorResponse> handleNoResource(NoResourceFoundException exception) {
@@ -80,6 +99,42 @@ public class GlobalExceptionHandler {
                 ));
     }
 
+    /** 管理员页面持有的旧版本不能覆盖并发更新，调用方应刷新记录后重新决定。 */
+    @ExceptionHandler(PendingHandoffVersionConflictException.class)
+    public ResponseEntity<ApiErrorResponse> handlePendingHandoffVersionConflict(
+            PendingHandoffVersionConflictException exception) {
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(new ApiErrorResponse(
+                        "PENDING_HANDOFF_VERSION_CONFLICT",
+                        "Pending handoff changed concurrently, please refresh and retry"
+                ));
+    }
+
+    /** 当前状态不允许人工操作时返回稳定 409，不把记录标识或底层存储细节带入响应。 */
+    @ExceptionHandler(PendingHandoffStateConflictException.class)
+    public ResponseEntity<ApiErrorResponse> handlePendingHandoffStateConflict(
+            PendingHandoffStateConflictException exception) {
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(new ApiErrorResponse(
+                        "PENDING_HANDOFF_STATE_CONFLICT",
+                        "Pending handoff state does not allow this manual action"
+                ));
+    }
+
+    /** 极少数确认结果与已有权威结果不一致时，按业务冲突返回，不能伪装成数据库 500。 */
+    @ExceptionHandler(PendingHandoffConflictException.class)
+    public ResponseEntity<ApiErrorResponse> handlePendingHandoffResultConflict(
+            PendingHandoffConflictException exception) {
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(new ApiErrorResponse(
+                        "PENDING_HANDOFF_RESULT_CONFLICT",
+                        "Pending handoff confirmed result conflicts with existing evidence"
+                ));
+    }
+
     /**
      * JSON 请求体无法解析时触发。
      *
@@ -91,6 +146,42 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(new ApiErrorResponse("INVALID_REQUEST_BODY", "Request body is not readable"));
+    }
+
+    /** limit、status 等查询参数类型无法转换时属于客户端错误，不能落入通用 500。 */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiErrorResponse> handleArgumentTypeMismatch(
+            MethodArgumentTypeMismatchException exception) {
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(new ApiErrorResponse(
+                        "INVALID_REQUEST_PARAMETER",
+                        "Request parameter is invalid"
+                ));
+    }
+
+    /** 游标解析细节不回显；客户端应丢弃该游标并从第一页重新读取。 */
+    @ExceptionHandler(PendingHandoffAdminCursorException.class)
+    public ResponseEntity<ApiErrorResponse> handlePendingHandoffCursor(
+            PendingHandoffAdminCursorException exception) {
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(new ApiErrorResponse(
+                        "INVALID_PENDING_HANDOFF_CURSOR",
+                        "Pending handoff cursor is invalid"
+                ));
+    }
+
+    /** 已识别的 status、limit、路径或确认结果错误使用稳定的管理接口错误码。 */
+    @ExceptionHandler(PendingHandoffAdminRequestException.class)
+    public ResponseEntity<ApiErrorResponse> handlePendingHandoffRequest(
+            PendingHandoffAdminRequestException exception) {
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(new ApiErrorResponse(
+                        "INVALID_PENDING_HANDOFF_REQUEST",
+                        "Pending handoff review request is invalid"
+                ));
     }
 
     /**

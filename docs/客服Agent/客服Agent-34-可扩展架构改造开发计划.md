@@ -4,11 +4,11 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 第二十批已完成 20.1 至 20.3，下一步进入 20.4 ADMIN API |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 第二十批已完成 20.1 至 20.4，下一步进入 20.5 售后结果查询 Port |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 465 个默认测试及 1 个显式真实 MySQL IT 通过；20.3 全量测试、打包、真实事务回滚和审计分页均已验收 |
+| 当前验证规模 | 497 个默认测试通过；20.4 全量测试与打包已验收，20.3 的显式真实 MySQL 事务与审计验收仍有效 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -24,9 +24,9 @@
 `CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的应用日志与 MCP 普通审计安全已经
 收口，售后/Embedding/Qdrant 也已有独立 HTTP 超时；人工转接已具备调用前 PREPARED、结果未知持久化、
 成功回放、租约和后台有限补建；真实 MySQL 与完整容器故障注入、Capability 执行中 deadline、
-LLM 总尝试次数上限和协作式 wall-clock 总预算也已完成。第二十批已完成租户安全地基，并实现租户内人工
-复核查询及 retry/confirm/close CAS Store；但追加式处置审计、ADMIN HTTP 入口、售后结果查询、按租户
-LLM 隔离，以及 Phase 9 的 Legacy 删除仍是后续演进项，
+LLM 总尝试次数上限和协作式 wall-clock 总预算也已完成。第二十批已完成租户安全地基、租户内人工
+复核查询及 retry/confirm/close CAS Store、追加式处置审计和 ROLE_ADMIN HTTP API；但售后结果查询、
+按租户 LLM 隔离，以及 Phase 9 的 Legacy 删除仍是后续演进项，
 不能把它们误写成已完成。
 
 ## 2. 为什么需要这次改造（改造前问题）
@@ -50,7 +50,7 @@ LLM 隔离，以及 Phase 9 的 Legacy 删除仍是后续演进项，
 5. 每轮只按最新消息选 Skill，不足以支持可靠的多轮 Workflow 粘性状态。
 6. `AgentRuntime` 使用 Action 类型分支执行动作，新增 Action 仍需修改 Runtime。
 7. Tool 契约、Tool 执行、MCP 协议适配之间仍有耦合，未来本地和远程实现容易出现重复定义。
-8. 人工复核 ADMIN HTTP 入口、LLM 执行器指标与按租户隔离、多实例进程故障注入和部分生产数据一致性边界仍未完全收口。
+8. 人工复核 ADMIN HTTP 入口已经完成；售后按幂等键结果查询、LLM 执行器指标与按租户隔离、多实例进程故障注入和部分生产数据一致性边界仍未完全收口。
 
 因此，本次改造的目标不是增加更多目录，而是建立稳定的扩展协议和单向依赖关系。
 
@@ -1140,7 +1140,7 @@ Demo 旁路和 LangChain4j 0.35“max-retries 实为总尝试次数”的依赖�
 增至 418 项，0 失败、0 错误、0 跳过。详细说明见
 `客服Agent-61-LLM重试上限与整轮时间预算说明.md`。
 
-### Phase 8 第二十批进度（2026-07-13，20.1 至 20.3 已完成）
+### Phase 8 第二十批进度（2026-07-13，20.1 至 20.4 已完成）
 
 人工转接复核入口不能建立在“记录没有租户归属”的数据模型上。因此第二十批先完成租户安全地基：
 `ExecutionContext.tenantId` 已贯通 `LocalHandoffCapabilityProvider`、`HandoffTools`、
@@ -1194,7 +1194,23 @@ JDBC Adapter 新增 17 列 `cs_pending_handoff_review_audit` 追加式表，并�
 确认 result、主表和 audit 全部回滚；并验证同毫秒事件按 auditId 倒序稳定翻页。MySQL 临时容器已停止并
 删除，数据卷保留。本批没有重复构建 Agent 镜像，完整镜像与 Compose 总验收按计划留在 20.6。
 
-后续依次推进 20.4 ROLE_ADMIN HTTP API 与脱敏 DTO、20.5 可替换的售后结果查询 Port，最后由 20.6
+20.4 新增 `PendingHandoffAdminController` 与应用服务，提供 ADMIN 列表、详情、审计时间线以及
+retry/confirm/close 六个 HTTP 入口。所有 URL 只允许 ROLE_ADMIN；Service 还会防御性复核角色，并且
+tenantId 与 actorId 只取自已验证 JWT Principal。请求 DTO 不接收身份、权限或证据来源：retry/close
+固定为 `NONE`，人工 confirm 固定为 `ADMIN_PROVIDED`，不能由客户端伪造成售后平台自动查询证据。
+
+列表和详情不直接序列化领域 Record，而是经过字段白名单投影。列表不返回自由文本；详情只返回脱敏摘要
+预览、结构化分类和最小工单结果，永不返回 tenantId、userId、conversationId、customerId、
+idempotencyKey 或完整 request。列表 keyset 游标绑定 status，审计游标绑定 outboxId；错版本、错用途、
+跨筛选复用和损坏载荷统一返回安全 400。404 隐藏跨租户差异，version/state/result 冲突使用稳定 409。
+
+真实 Memory Store + MockMvc 集成测试已经创建三条 `NEEDS_MANUAL_REVIEW` 记录，用完整 JWT 链路分别
+执行三种决定并重新查询审计；伪造 tenant/actor/evidence 未生效，敏感字段未进入响应。20.4 最终通过
+497 个默认测试（0 失败、0 错误、0 跳过）和跳过测试 JAR 打包。它没有改动 JDBC SQL 或事务，因而不
+重复冒充新的真实 MySQL 验收；20.3 已完成的真实事务证据仍有效。专项说明见
+`客服Agent-65-ADMIN人工复核API说明.md`。
+
+后续推进 20.5 可替换的售后结果查询 Port，最后由 20.6
 完成 README/架构文档、全量测试、打包和容器总验收。
 
 ### 验收标准
@@ -1407,12 +1423,13 @@ smartcs:
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（20.3 当前为 465 个默认测试，另有 1 个显式真实 MySQL IT）。
+- [x] 旧测试全部保留并通过（20.4 当前为 497 个默认测试；20.3 另有 1 个显式真实 MySQL IT 证据）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。
 - [x] Docker 镜像构建、完整 Compose 启动、readiness 掉线恢复和 Agent 重启持久化通过。
-- [ ] 专项文档和开发计划已同步到 20.3；README 与核心架构图仍由 20.6 按最终代码和验收结果总收口。
+- [x] 专项文档和开发计划已同步到 20.4。
+- [ ] README 与核心架构图仍由 20.6 按最终代码和验收结果总收口。
 
 ## 16. 第一批实施记录（已完成）
 

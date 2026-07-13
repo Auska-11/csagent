@@ -1,7 +1,14 @@
 package com.smartcs.smart_cs_agent.controller;
 
-import com.smartcs.smart_cs_agent.security.AuthenticationException;
 import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
+import com.smartcs.smart_cs_agent.handoff.admin.PendingHandoffAdminCursorException;
+import com.smartcs.smart_cs_agent.handoff.admin.PendingHandoffAdminRequestException;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffConflictException;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStatus;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffVersionConflictException;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewNotFoundException;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffStateConflictException;
+import com.smartcs.smart_cs_agent.security.AuthenticationException;
 import com.smartcs.smart_cs_agent.session.api.SessionVersionConflictException;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.MethodParameter;
@@ -13,6 +20,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.lang.reflect.Method;
@@ -72,6 +80,19 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void shouldHideMissingAndCrossTenantPendingHandoffAsSameNotFound() {
+        ResponseEntity<ApiErrorResponse> response = handler.handlePendingHandoffNotFound(
+                new PendingHandoffReviewNotFoundException()
+        );
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+        ApiErrorResponse body = response.getBody();
+        assertNotNull(body);
+        assertEquals("PENDING_HANDOFF_NOT_FOUND", body.getErrorCode());
+        assertEquals("Pending handoff review record was not found", body.getMessage());
+    }
+
+    @Test
     void shouldHandleUnmappedPathAsNotFoundInsteadOfInternalError() {
         ResponseEntity<ApiErrorResponse> response = handler.handleNoResource(
                 new NoResourceFoundException(HttpMethod.GET, "/actuator/env")
@@ -102,6 +123,43 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void shouldHandlePendingHandoffVersionConflict() {
+        ResponseEntity<ApiErrorResponse> response = handler.handlePendingHandoffVersionConflict(
+                new PendingHandoffVersionConflictException()
+        );
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        ApiErrorResponse body = response.getBody();
+        assertNotNull(body);
+        assertEquals("PENDING_HANDOFF_VERSION_CONFLICT", body.getErrorCode());
+        assertEquals("Pending handoff changed concurrently, please refresh and retry", body.getMessage());
+    }
+
+    @Test
+    void shouldHandlePendingHandoffStateConflictWithoutExposingRecordIdentity() {
+        ResponseEntity<ApiErrorResponse> response = handler.handlePendingHandoffStateConflict(
+                new PendingHandoffStateConflictException(PendingHandoffStatus.CONFIRMED)
+        );
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        ApiErrorResponse body = response.getBody();
+        assertNotNull(body);
+        assertEquals("PENDING_HANDOFF_STATE_CONFLICT", body.getErrorCode());
+        assertEquals("Pending handoff state does not allow this manual action", body.getMessage());
+    }
+
+    @Test
+    void shouldHandlePendingHandoffResultConflict() {
+        ResponseEntity<ApiErrorResponse> response = handler.handlePendingHandoffResultConflict(
+                new PendingHandoffConflictException()
+        );
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals("PENDING_HANDOFF_RESULT_CONFLICT", response.getBody().getErrorCode());
+    }
+
+    @Test
     void shouldHandleValidationException() throws Exception {
         Method method = SampleController.class.getDeclaredMethod("send", ChatApiRequest.class);
         MethodParameter methodParameter = new MethodParameter(method, 0);
@@ -117,6 +175,47 @@ class GlobalExceptionHandlerTest {
         assertNotNull(body);
         assertEquals("VALIDATION_ERROR", body.getErrorCode());
         assertEquals("Message cannot be empty", body.getMessage());
+    }
+
+    @Test
+    void shouldHandleRequestParameterTypeMismatchAsBadRequest() throws Exception {
+        Method method = SampleController.class.getDeclaredMethod("list", int.class);
+        MethodParameter methodParameter = new MethodParameter(method, 0);
+        MethodArgumentTypeMismatchException exception = new MethodArgumentTypeMismatchException(
+                "not-a-number",
+                Integer.class,
+                "limit",
+                methodParameter,
+                new NumberFormatException("must not reach the response")
+        );
+
+        ResponseEntity<ApiErrorResponse> response = handler.handleArgumentTypeMismatch(exception);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        ApiErrorResponse body = response.getBody();
+        assertNotNull(body);
+        assertEquals("INVALID_REQUEST_PARAMETER", body.getErrorCode());
+        assertEquals("Request parameter is invalid", body.getMessage());
+    }
+
+    @Test
+    void shouldReturnSpecificSafeErrorsForInvalidPendingHandoffCursorAndRequest() {
+        ResponseEntity<ApiErrorResponse> cursor = handler.handlePendingHandoffCursor(
+                new PendingHandoffAdminCursorException()
+        );
+        ResponseEntity<ApiErrorResponse> request = handler.handlePendingHandoffRequest(
+                new PendingHandoffAdminRequestException()
+        );
+
+        assertEquals(HttpStatus.BAD_REQUEST, cursor.getStatusCode());
+        assertNotNull(cursor.getBody());
+        assertEquals("INVALID_PENDING_HANDOFF_CURSOR", cursor.getBody().getErrorCode());
+        assertEquals("Pending handoff cursor is invalid", cursor.getBody().getMessage());
+
+        assertEquals(HttpStatus.BAD_REQUEST, request.getStatusCode());
+        assertNotNull(request.getBody());
+        assertEquals("INVALID_PENDING_HANDOFF_REQUEST", request.getBody().getErrorCode());
+        assertEquals("Pending handoff review request is invalid", request.getBody().getMessage());
     }
 
     @Test
@@ -148,6 +247,9 @@ class GlobalExceptionHandlerTest {
     private static class SampleController {
 
         void send(ChatApiRequest request) {
+        }
+
+        void list(int limit) {
         }
     }
 }

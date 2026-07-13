@@ -110,6 +110,10 @@ public class HttpSecurityConfiguration {
                         .hasAnyRole(SecurityRoles.CUSTOMER, SecurityRoles.ADMIN)
                         .requestMatchers("/api/chat/**")
                         .hasAnyRole(SecurityRoles.CUSTOMER, SecurityRoles.ADMIN)
+                        .requestMatchers(
+                                "/api/admin/pending-handoffs",
+                                "/api/admin/pending-handoffs/**"
+                        ).hasRole(SecurityRoles.ADMIN)
                         .requestMatchers("/api/monitor/**", "/api/eval/**", "/api/tools/**", "/api/demo/**")
                         .hasRole(SecurityRoles.ADMIN)
                         .requestMatchers("/api/mcp/**", "/mcp")
