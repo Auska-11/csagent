@@ -6,6 +6,9 @@ import com.smartcs.smart_cs_agent.handoff.admin.PendingHandoffAdminRequestExcept
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffConflictException;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStatus;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffVersionConflictException;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupNotFoundException;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupUnavailableException;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupUnavailableReason;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewNotFoundException;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffStateConflictException;
 import com.smartcs.smart_cs_agent.security.AuthenticationException;
@@ -26,6 +29,7 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 import java.lang.reflect.Method;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -157,6 +161,32 @@ class GlobalExceptionHandlerTest {
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
         assertNotNull(response.getBody());
         assertEquals("PENDING_HANDOFF_RESULT_CONFLICT", response.getBody().getErrorCode());
+    }
+
+    @Test
+    void shouldDistinguishAuthoritativeRemoteNotFoundFromQueryUnavailable() {
+        ResponseEntity<ApiErrorResponse> notFound = handler.handleAfterSalesTicketNotFound(
+                new AfterSalesTicketLookupNotFoundException()
+        );
+        ResponseEntity<ApiErrorResponse> unavailable = handler.handleAfterSalesTicketLookupUnavailable(
+                new AfterSalesTicketLookupUnavailableException(
+                        AfterSalesTicketLookupUnavailableReason.QUERY_NOT_SUPPORTED
+                )
+        );
+
+        assertEquals(HttpStatus.NOT_FOUND, notFound.getStatusCode());
+        assertNotNull(notFound.getBody());
+        assertEquals(
+                "PENDING_HANDOFF_REMOTE_TICKET_NOT_FOUND",
+                notFound.getBody().getErrorCode()
+        );
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, unavailable.getStatusCode());
+        assertNotNull(unavailable.getBody());
+        assertEquals(
+                "PENDING_HANDOFF_RESULT_QUERY_UNAVAILABLE",
+                unavailable.getBody().getErrorCode()
+        );
+        assertFalse(unavailable.getBody().getMessage().contains("QUERY_NOT_SUPPORTED"));
     }
 
     @Test

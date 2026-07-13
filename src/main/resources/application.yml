@@ -100,13 +100,15 @@ smartcs:
       read-timeout-ms: ${SMARTCS_QDRANT_READ_TIMEOUT_MS:10000}
   handoff:
     # memory：默认生成本地模拟人工工单，适合单独启动 Agent 项目和跑测试。
-    # after-sales-http：调用桌面 demo/after-sales-sla-platform 的售后工单接口创建真实工单。
+    # after-sales-http：调用独立 after-sales-sla-platform 项目的接口创建真实工单。
     mode: ${SMARTCS_HANDOFF_MODE:memory}
     after-sales:
       base-url: ${SMARTCS_AFTER_SALES_BASE_URL:http://localhost:8081}
       # X-Tenant-Id 来自当前已认证请求的 ExecutionContext，不允许用一份全局配置覆盖所有租户。
       agent-user-id: ${SMARTCS_AFTER_SALES_AGENT_USER_ID:agent-service}
       agent-user-role: ${SMARTCS_AFTER_SALES_AGENT_USER_ROLE:AGENT}
+      # 独立售后项目当前没有按 Idempotency-Key 查询路由；必须明确返回 unavailable，不能猜成不存在。
+      result-query-mode: ${SMARTCS_AFTER_SALES_RESULT_QUERY_MODE:unavailable}
       connect-timeout-ms: ${SMARTCS_AFTER_SALES_CONNECT_TIMEOUT_MS:3000}
       read-timeout-ms: ${SMARTCS_AFTER_SALES_READ_TIMEOUT_MS:10000}
     recovery:

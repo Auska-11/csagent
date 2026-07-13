@@ -12,6 +12,7 @@ class OutboundHttpPropertiesTest {
         HandoffProperties handoff = new HandoffProperties();
         RagProperties rag = new RagProperties();
 
+        assertEquals("unavailable", handoff.getAfterSales().getResultQueryMode());
         assertEquals(3000, handoff.getAfterSales().getConnectTimeoutMs());
         assertEquals(10000, handoff.getAfterSales().getReadTimeoutMs());
         assertEquals(3000, rag.getEmbedding().getConnectTimeoutMs());
@@ -25,6 +26,12 @@ class OutboundHttpPropertiesTest {
         HandoffProperties handoff = new HandoffProperties();
         RagProperties rag = new RagProperties();
 
+        handoff.getAfterSales().setResultQueryMode(" HTTP ");
+        assertEquals("http", handoff.getAfterSales().getResultQueryMode());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> handoff.getAfterSales().setResultQueryMode(" ")
+        );
         assertThrows(
                 IllegalArgumentException.class,
                 () -> handoff.getAfterSales().setConnectTimeoutMs(0)

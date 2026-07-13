@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import java.util.List;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -62,6 +63,7 @@ class PendingHandoffAdminIntegrationTest {
         PendingHandoffRecord retrySource = moveToManualReview("retry-" + testRun);
         PendingHandoffRecord confirmSource = moveToManualReview("confirm-" + testRun);
         PendingHandoffRecord closeSource = moveToManualReview("close-" + testRun);
+        PendingHandoffRecord reconcileSource = moveToManualReview("reconcile-" + testRun);
         RequestPostProcessor adminBearer = bearer(adminToken());
 
         // 先通过真实列表和详情读取 Store 中的数据。列表刻意没有自由文本，详情只保留脱敏预览。
@@ -69,7 +71,7 @@ class PendingHandoffAdminIntegrationTest {
                         .param("status", PendingHandoffStatus.NEEDS_MANUAL_REVIEW.name())
                         .with(adminBearer))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.items.length()").value(3))
+                .andExpect(jsonPath("$.items.length()").value(4))
                 .andExpect(jsonPath("$.items[0].summaryPreview").doesNotExist())
                 .andReturn();
         assertNoRecordSecrets(list);
@@ -83,6 +85,35 @@ class PendingHandoffAdminIntegrationTest {
                 .andExpect(jsonPath("$.summaryPreview").value(org.hamcrest.Matchers.containsString("[REDACTED]")))
                 .andReturn();
         assertNoRecordSecrets(detail);
+
+        // 当前独立售后平台没有只读幂等查询路由。默认 Adapter 必须明确返回 503，而不是把未知伪装成
+        // 远端不存在；失败后主记录版本、状态和审计历史都保持不变。
+        MvcResult unavailable = mockMvc.perform(post(
+                        "/api/admin/pending-handoffs/{outboxId}/reconcile",
+                        reconcileSource.outboxId())
+                        .with(bearer(adminToken()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(decisionBody(
+                                reconcileSource.version(),
+                                "SERVER_LOOKUP_REQUESTED"
+                        )))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.errorCode")
+                        .value("PENDING_HANDOFF_RESULT_QUERY_UNAVAILABLE"))
+                .andReturn();
+        assertNoRecordSecrets(unavailable);
+        PendingHandoffRecord unchanged = pendingHandoffStore.findByKey(
+                reconcileSource.key()
+        ).orElseThrow();
+        assertEquals(PendingHandoffStatus.NEEDS_MANUAL_REVIEW, unchanged.status());
+        assertEquals(reconcileSource.version(), unchanged.version());
+        mockMvc.perform(get(
+                        "/api/admin/pending-handoffs/{outboxId}/audit-events",
+                        reconcileSource.outboxId())
+                        .with(bearer(adminToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.events.length()").value(0))
+                .andExpect(jsonPath("$.hasMore").value(false));
 
         // 请求体中的 tenantId、actorId 和 evidenceSource 不是 DTO 字段。即使客户端伪造这些值，
         // Service 构造领域命令时也只能使用 JWT Principal 中已经验证过的租户和管理员身份。

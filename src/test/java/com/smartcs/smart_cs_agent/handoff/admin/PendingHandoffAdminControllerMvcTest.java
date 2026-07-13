@@ -3,6 +3,9 @@ package com.smartcs.smart_cs_agent.handoff.admin;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStatus;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffVersionConflictException;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupNotFoundException;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupUnavailableException;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupUnavailableReason;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffEvidenceSource;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualAction;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewNotFoundException;
@@ -146,6 +149,56 @@ class PendingHandoffAdminControllerMvcTest {
     }
 
     @Test
+    void shouldUseServerSideReconcileContractAndIgnoreClientSuppliedTicketEvidence() throws Exception {
+        when(adminService.reconcile(any(), eq("outbox-query"), any()))
+                .thenReturn(reconciliationResponse());
+
+        MvcResult result = mockMvc.perform(post(
+                        "/api/admin/pending-handoffs/outbox-query/reconcile")
+                        .with(admin("tenant-trusted", "admin-trusted"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "expectedVersion":3,
+                                  "reasonCode":"SERVER_LOOKUP_VERIFIED",
+                                  "decisionNote":"safe note",
+                                  "tenantId":"tenant-forged",
+                                  "actorId":"actor-forged",
+                                  "evidenceSource":"ADMIN_PROVIDED",
+                                  "result":{
+                                    "ticketId":"AS-FORGED",
+                                    "status":"CONFIRMED",
+                                    "createdAt":"2026-07-13T00:00:00Z"
+                                  }
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.record.status").value("CONFIRMED"))
+                .andExpect(jsonPath("$.record.confirmedTicket.ticketId").value("AS-QUERY-1"))
+                .andExpect(jsonPath("$.auditEvent.action").value("CONFIRM"))
+                .andExpect(jsonPath("$.auditEvent.evidenceSource")
+                        .value("AFTER_SALES_IDEMPOTENCY_QUERY"))
+                .andReturn();
+
+        ArgumentCaptor<AuthenticatedPrincipal> principal =
+                ArgumentCaptor.forClass(AuthenticatedPrincipal.class);
+        ArgumentCaptor<PendingHandoffAdminDecisionRequest> request =
+                ArgumentCaptor.forClass(PendingHandoffAdminDecisionRequest.class);
+        verify(adminService).reconcile(
+                principal.capture(),
+                eq("outbox-query"),
+                request.capture()
+        );
+        assertEquals("tenant-trusted", principal.getValue().getTenantId());
+        assertEquals("admin-trusted", principal.getValue().getUserId());
+        assertEquals("SERVER_LOOKUP_VERIFIED", request.getValue().reasonCode());
+        String json = result.getResponse().getContentAsString();
+        assertFalse(json.contains("tenant-forged"));
+        assertFalse(json.contains("actor-forged"));
+        assertFalse(json.contains("AS-FORGED"));
+    }
+
+    @Test
     void shouldRejectInvalidParametersBodiesAndCursorWithStableErrors() throws Exception {
         mockMvc.perform(get("/api/admin/pending-handoffs")
                         .param("limit", "not-a-number")
@@ -216,6 +269,31 @@ class PendingHandoffAdminControllerMvcTest {
         assertFalse(unexpected.getResponse().getContentAsString().contains("password"));
     }
 
+    @Test
+    void shouldKeepRemoteNotFoundAndUnavailableAsDifferentHttpOutcomes() throws Exception {
+        when(adminService.reconcile(any(), eq("remote-missing"), any()))
+                .thenThrow(new AfterSalesTicketLookupNotFoundException());
+        when(adminService.reconcile(any(), eq("query-unavailable"), any()))
+                .thenThrow(new AfterSalesTicketLookupUnavailableException(
+                        AfterSalesTicketLookupUnavailableReason.QUERY_NOT_SUPPORTED
+                ));
+
+        mockMvc.perform(post("/api/admin/pending-handoffs/remote-missing/reconcile")
+                        .with(admin("tenant-a", "admin-a"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validDecisionBody()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode")
+                        .value("PENDING_HANDOFF_REMOTE_TICKET_NOT_FOUND"));
+        mockMvc.perform(post("/api/admin/pending-handoffs/query-unavailable/reconcile")
+                        .with(admin("tenant-a", "admin-a"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validDecisionBody()))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.errorCode")
+                        .value("PENDING_HANDOFF_RESULT_QUERY_UNAVAILABLE"));
+    }
+
     private PendingHandoffAdminDecisionResponse decisionResponse() {
         PendingHandoffAdminDetailResponse detail = new PendingHandoffAdminDetailResponse(
                 "outbox-1",
@@ -248,6 +326,45 @@ class PendingHandoffAdminControllerMvcTest {
                 "SocketTimeoutException",
                 2,
                 1_000L,
+                1_000
+        );
+        return new PendingHandoffAdminDecisionResponse(detail, audit);
+    }
+
+    private PendingHandoffAdminDecisionResponse reconciliationResponse() {
+        PendingHandoffAdminDetailResponse detail = new PendingHandoffAdminDetailResponse(
+                "outbox-query",
+                PendingHandoffStatus.CONFIRMED,
+                "COMPLAINT",
+                "NONE",
+                "safe preview",
+                "general",
+                "complaint",
+                "HIGH",
+                new PendingHandoffAdminTicketResponse(
+                        "AS-QUERY-1", "PENDING", "2026-07-13T00:00:00Z"
+                ),
+                2,
+                null,
+                4,
+                100,
+                1_000
+        );
+        PendingHandoffAdminAuditEventResponse audit = new PendingHandoffAdminAuditEventResponse(
+                "audit-query-1",
+                PendingHandoffManualAction.CONFIRM,
+                "admin-trusted",
+                PendingHandoffReviewAuthority.ADMIN,
+                "SERVER_LOOKUP_VERIFIED",
+                "safe note",
+                PendingHandoffEvidenceSource.AFTER_SALES_IDEMPOTENCY_QUERY,
+                PendingHandoffStatus.NEEDS_MANUAL_REVIEW,
+                PendingHandoffStatus.CONFIRMED,
+                3,
+                4,
+                "SocketTimeoutException",
+                2,
+                null,
                 1_000
         );
         return new PendingHandoffAdminDecisionResponse(detail, audit);

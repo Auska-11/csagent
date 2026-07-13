@@ -68,6 +68,15 @@ public class PendingHandoffAdminController {
         return adminService.confirm(principal, outboxId, request);
     }
 
+    /** 使用服务端查询 Port 核对原始幂等键；请求体不能提供或覆盖远端工单结果。 */
+    @PostMapping("/{outboxId}/reconcile")
+    public PendingHandoffAdminDecisionResponse reconcile(
+            @PathVariable String outboxId,
+            @Valid @RequestBody PendingHandoffAdminDecisionRequest request,
+            @AuthenticationPrincipal AuthenticatedPrincipal principal) {
+        return adminService.reconcile(principal, outboxId, request);
+    }
+
     @PostMapping("/{outboxId}/close")
     public PendingHandoffAdminDecisionResponse close(
             @PathVariable String outboxId,

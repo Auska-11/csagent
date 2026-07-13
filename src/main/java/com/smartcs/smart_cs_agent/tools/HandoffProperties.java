@@ -3,6 +3,8 @@ package com.smartcs.smart_cs_agent.tools;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.util.Locale;
+
 /**
  * 人工转接配置。
  *
@@ -54,6 +56,14 @@ public class HandoffProperties {
         /** demo 后端允许 AGENT 角色创建工单 */
         private String agentUserRole = "AGENT";
 
+        /**
+         * 按幂等键查询结果的 Adapter 模式。
+         *
+         * <p>当前售后平台没有公开查询接口，所以只能使用 unavailable。保留独立配置是为了未来新增
+         * HTTP Adapter 时只切换装配，不修改 Admin 业务流程。</p>
+         */
+        private String resultQueryMode = "unavailable";
+
         /** 建立 TCP 连接最多等待多久；不能设为 0，否则可能无限等待。 */
         private int connectTimeoutMs = 3000;
 
@@ -82,6 +92,19 @@ public class HandoffProperties {
 
         public void setAgentUserRole(String agentUserRole) {
             this.agentUserRole = agentUserRole;
+        }
+
+        public String getResultQueryMode() {
+            return resultQueryMode;
+        }
+
+        public void setResultQueryMode(String resultQueryMode) {
+            if (resultQueryMode == null || resultQueryMode.isBlank()) {
+                throw new IllegalArgumentException(
+                        "smartcs.handoff.after-sales.result-query-mode cannot be blank"
+                );
+            }
+            this.resultQueryMode = resultQueryMode.trim().toLowerCase(Locale.ROOT);
         }
 
         public int getConnectTimeoutMs() {

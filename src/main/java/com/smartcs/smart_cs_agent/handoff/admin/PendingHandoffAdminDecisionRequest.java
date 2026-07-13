@@ -6,7 +6,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
-/** retry 和 close 共用的 HTTP 请求体；身份、租户和证据来源绝不能由客户端填写。 */
+/** retry、close 和 reconcile 共用的 HTTP 请求体；身份、租户、证据来源和查询结果不能由客户端填写。 */
 public record PendingHandoffAdminDecisionRequest(
         @NotNull(message = "Expected version cannot be empty")
         @PositiveOrZero(message = "Expected version cannot be negative")

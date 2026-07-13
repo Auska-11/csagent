@@ -4,6 +4,8 @@ import com.smartcs.smart_cs_agent.handoff.admin.PendingHandoffAdminCursorExcepti
 import com.smartcs.smart_cs_agent.handoff.admin.PendingHandoffAdminRequestException;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffConflictException;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffVersionConflictException;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupNotFoundException;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupUnavailableException;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewNotFoundException;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffStateConflictException;
 import com.smartcs.smart_cs_agent.security.AuthenticationException;
@@ -132,6 +134,34 @@ public class GlobalExceptionHandler {
                 .body(new ApiErrorResponse(
                         "PENDING_HANDOFF_RESULT_CONFLICT",
                         "Pending handoff confirmed result conflicts with existing evidence"
+                ));
+    }
+
+    /** 权威查询成功但远端没有工单；与本地 Outbox 不存在使用不同错误码。 */
+    @ExceptionHandler(AfterSalesTicketLookupNotFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleAfterSalesTicketNotFound(
+            AfterSalesTicketLookupNotFoundException exception) {
+        return ResponseEntity
+                .status(HttpStatus.NOT_FOUND)
+                .body(new ApiErrorResponse(
+                        "PENDING_HANDOFF_REMOTE_TICKET_NOT_FOUND",
+                        "No after-sales ticket exists for the pending handoff idempotency key"
+                ));
+    }
+
+    /**
+     * 平台没有查询协议或本次无法得到可信答案时返回 503。
+     *
+     * <p>不能返回 404；503 明确告诉调用方“系统不知道”，避免管理员据此错误关闭或重新创建工单。</p>
+     */
+    @ExceptionHandler(AfterSalesTicketLookupUnavailableException.class)
+    public ResponseEntity<ApiErrorResponse> handleAfterSalesTicketLookupUnavailable(
+            AfterSalesTicketLookupUnavailableException exception) {
+        return ResponseEntity
+                .status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(new ApiErrorResponse(
+                        "PENDING_HANDOFF_RESULT_QUERY_UNAVAILABLE",
+                        "After-sales ticket result query is unavailable"
                 ));
     }
 

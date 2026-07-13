@@ -4,6 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffRecord;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStatus;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffVersionConflictException;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupNotFoundException;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupResult;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupUnavailableException;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupUnavailableReason;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketResultLookup;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffEvidenceSource;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualAction;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualDecisionContext;
@@ -18,6 +24,7 @@ import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewCursor;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewNotFoundException;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewPage;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewStore;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffStateConflictException;
 import com.smartcs.smart_cs_agent.security.AuthenticationException;
 import com.smartcs.smart_cs_agent.security.AuthorizationException;
 import com.smartcs.smart_cs_agent.security.SecurityRoles;
@@ -53,6 +60,7 @@ class PendingHandoffAdminServiceTest {
     private PendingHandoffReviewStore reviewStore;
     private PendingHandoffManualDecisionStore decisionStore;
     private PendingHandoffReviewAuditStore auditStore;
+    private AfterSalesTicketResultLookup ticketResultLookup;
     private PendingHandoffAdminCursorCodec cursorCodec;
     private PendingHandoffAdminService service;
 
@@ -61,11 +69,13 @@ class PendingHandoffAdminServiceTest {
         reviewStore = mock(PendingHandoffReviewStore.class);
         decisionStore = mock(PendingHandoffManualDecisionStore.class);
         auditStore = mock(PendingHandoffReviewAuditStore.class);
+        ticketResultLookup = mock(AfterSalesTicketResultLookup.class);
         cursorCodec = new PendingHandoffAdminCursorCodec(new ObjectMapper());
         service = new PendingHandoffAdminService(
                 reviewStore,
                 decisionStore,
                 auditStore,
+                ticketResultLookup,
                 cursorCodec,
                 new PendingHandoffAdminResponseMapper()
         );
@@ -82,7 +92,7 @@ class PendingHandoffAdminServiceTest {
         assertThrows(AuthorizationException.class,
                 () -> service.findReviewPage(customer, null, null, null));
 
-        verifyNoInteractions(reviewStore, decisionStore, auditStore);
+        verifyNoInteractions(reviewStore, decisionStore, auditStore, ticketResultLookup);
     }
 
     @Test
@@ -208,6 +218,152 @@ class PendingHandoffAdminServiceTest {
         assertEquals(PendingHandoffEvidenceSource.ADMIN_PROVIDED, confirm.getValue().evidenceSource());
         assertEquals(PendingHandoffEvidenceSource.NONE, close.getValue().evidenceSource());
         assertEquals("2026-07-13T00:00:00Z", confirmedResult.getValue().createdAt());
+    }
+
+    @Test
+    void shouldConfirmAuthoritativeLookupWithServerControlledEvidence() {
+        AuthenticatedPrincipal principal = admin("tenant-trusted", "admin-trusted");
+        PendingHandoffRecord source = record(
+                "tenant-trusted", "outbox-reconcile", PendingHandoffStatus.NEEDS_MANUAL_REVIEW, 3
+        );
+        AfterSalesTicketCreateResult queried = new AfterSalesTicketCreateResult(
+                "AS-QUERY-1", "PENDING", "2026-07-13T08:00:00+08:00"
+        );
+        PendingHandoffManualDecisionResult confirmed = decision(
+                source,
+                PendingHandoffManualAction.CONFIRM,
+                PendingHandoffStatus.CONFIRMED,
+                PendingHandoffEvidenceSource.AFTER_SALES_IDEMPOTENCY_QUERY,
+                new AfterSalesTicketCreateResult(
+                        "AS-QUERY-1", "PENDING", "2026-07-13T00:00:00Z"
+                )
+        );
+        when(reviewStore.findByTenantAndOutboxId("tenant-trusted", "outbox-reconcile"))
+                .thenReturn(Optional.of(source));
+        when(ticketResultLookup.findByIdempotencyKey(source.key()))
+                .thenReturn(AfterSalesTicketLookupResult.found(queried));
+        when(decisionStore.confirm(any(), any())).thenReturn(confirmed);
+
+        PendingHandoffAdminDecisionResponse response = service.reconcile(
+                principal,
+                source.outboxId(),
+                new PendingHandoffAdminDecisionRequest(
+                        source.version(),
+                        "SERVER_LOOKUP_VERIFIED",
+                        "查询备注 13800138000"
+                )
+        );
+
+        ArgumentCaptor<PendingHandoffManualDecisionContext> context =
+                ArgumentCaptor.forClass(PendingHandoffManualDecisionContext.class);
+        ArgumentCaptor<AfterSalesTicketCreateResult> result =
+                ArgumentCaptor.forClass(AfterSalesTicketCreateResult.class);
+        verify(ticketResultLookup).findByIdempotencyKey(source.key());
+        verify(decisionStore).confirm(context.capture(), result.capture());
+        assertEquals("tenant-trusted", context.getValue().tenantId());
+        assertEquals("admin-trusted", context.getValue().actorId());
+        assertEquals(
+                PendingHandoffEvidenceSource.AFTER_SALES_IDEMPOTENCY_QUERY,
+                context.getValue().evidenceSource()
+        );
+        assertFalse(context.getValue().decisionNote().contains("13800138000"));
+        assertEquals("2026-07-13T00:00:00Z", result.getValue().createdAt());
+        assertEquals(PendingHandoffStatus.CONFIRMED, response.record().status());
+        assertEquals(
+                PendingHandoffEvidenceSource.AFTER_SALES_IDEMPOTENCY_QUERY,
+                response.auditEvent().evidenceSource()
+        );
+    }
+
+    @Test
+    void shouldKeepNotFoundAndUnavailableDistinctWithoutWritingDecision() {
+        PendingHandoffRecord source = record(
+                "tenant-a", "outbox-query-empty", PendingHandoffStatus.NEEDS_MANUAL_REVIEW, 3
+        );
+        AuthenticatedPrincipal admin = admin("tenant-a", "admin-a");
+        PendingHandoffAdminDecisionRequest request = new PendingHandoffAdminDecisionRequest(
+                3L, "SERVER_LOOKUP_REQUESTED", "note"
+        );
+        when(reviewStore.findByTenantAndOutboxId("tenant-a", "outbox-query-empty"))
+                .thenReturn(Optional.of(source));
+        when(ticketResultLookup.findByIdempotencyKey(source.key()))
+                .thenReturn(AfterSalesTicketLookupResult.notFound())
+                .thenReturn(AfterSalesTicketLookupResult.unavailable(
+                        AfterSalesTicketLookupUnavailableReason.QUERY_NOT_SUPPORTED
+                ));
+
+        assertThrows(
+                AfterSalesTicketLookupNotFoundException.class,
+                () -> service.reconcile(admin, source.outboxId(), request)
+        );
+        AfterSalesTicketLookupUnavailableException unavailable = assertThrows(
+                AfterSalesTicketLookupUnavailableException.class,
+                () -> service.reconcile(admin, source.outboxId(), request)
+        );
+
+        assertEquals(
+                AfterSalesTicketLookupUnavailableReason.QUERY_NOT_SUPPORTED,
+                unavailable.getReason()
+        );
+        verifyNoInteractions(decisionStore);
+    }
+
+    @Test
+    void shouldRejectStaleOrIllegalStateBeforeCallingRemoteLookup() {
+        PendingHandoffRecord manual = record(
+                "tenant-a", "outbox-stale-query", PendingHandoffStatus.NEEDS_MANUAL_REVIEW, 3
+        );
+        PendingHandoffRecord confirmed = record(
+                "tenant-a", "outbox-confirmed-query", PendingHandoffStatus.CONFIRMED, 4
+        );
+        AuthenticatedPrincipal admin = admin("tenant-a", "admin-a");
+        when(reviewStore.findByTenantAndOutboxId("tenant-a", manual.outboxId()))
+                .thenReturn(Optional.of(manual));
+        when(reviewStore.findByTenantAndOutboxId("tenant-a", confirmed.outboxId()))
+                .thenReturn(Optional.of(confirmed));
+
+        assertThrows(PendingHandoffVersionConflictException.class, () -> service.reconcile(
+                admin,
+                manual.outboxId(),
+                new PendingHandoffAdminDecisionRequest(2L, "STALE_LOOKUP", null)
+        ));
+        assertThrows(PendingHandoffStateConflictException.class, () -> service.reconcile(
+                admin,
+                confirmed.outboxId(),
+                new PendingHandoffAdminDecisionRequest(4L, "ILLEGAL_STATE_LOOKUP", null)
+        ));
+
+        verifyNoInteractions(ticketResultLookup, decisionStore);
+    }
+
+    @Test
+    void shouldTreatMalformedLookupTicketAsUnavailableInsteadOfAdminBadRequest() {
+        PendingHandoffRecord source = record(
+                "tenant-a", "outbox-invalid-query", PendingHandoffStatus.NEEDS_MANUAL_REVIEW, 3
+        );
+        when(reviewStore.findByTenantAndOutboxId("tenant-a", source.outboxId()))
+                .thenReturn(Optional.of(source));
+        when(ticketResultLookup.findByIdempotencyKey(source.key()))
+                .thenReturn(AfterSalesTicketLookupResult.found(
+                        new AfterSalesTicketCreateResult("AS-1", "PENDING", "not-an-instant")
+                ));
+
+        AfterSalesTicketLookupUnavailableException exception = assertThrows(
+                AfterSalesTicketLookupUnavailableException.class,
+                () -> service.reconcile(
+                        admin("tenant-a", "admin-a"),
+                        source.outboxId(),
+                        new PendingHandoffAdminDecisionRequest(
+                                3L, "INVALID_REMOTE_RESPONSE", null
+                        )
+                )
+        );
+
+        assertEquals(
+                AfterSalesTicketLookupUnavailableReason.INVALID_RESPONSE,
+                exception.getReason()
+        );
+        verifyNoInteractions(decisionStore);
     }
 
     @Test

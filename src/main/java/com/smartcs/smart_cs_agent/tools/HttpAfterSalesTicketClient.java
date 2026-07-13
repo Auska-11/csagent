@@ -7,7 +7,6 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -15,7 +14,7 @@ import java.util.Map;
  * 通过 HTTP 调用售后工单平台的客户端。
  *
  * 【对应后端项目】
- * C:\Users\feasycom\Desktop\demo\after-sales-sla-platform
+ * 独立仓库 after-sales-sla-platform（本机目录可能不同，不在这里写死操作系统路径）
  *
  * 【调用接口】
  * POST /api/tickets
@@ -94,13 +93,21 @@ public class HttpAfterSalesTicketClient implements AfterSalesTicketClient {
     }
 
     private AfterSalesTicketCreateResult toCreateResult(TicketPayload data) {
-        String ticketId = data.id() == null ? "AS-UNKNOWN" : "AS-" + data.id();
-        String status = data.status() == null || data.status().isBlank()
-                ? "PENDING"
-                : data.status();
-        String createdAt = data.createdAt() == null
-                ? LocalDateTime.now().toString()
-                : data.createdAt().toString();
+        /*
+         * success=true 只是响应外壳，不能替代结果字段校验。缺少 ID、状态或创建时间时，如果这里生成
+         * AS-UNKNOWN / PENDING / 本机时间，Outbox 会把伪造数据永久当成权威成功证据。抛出安全异常后，
+         * HandoffTools 会沿既有 RESULT_UNKNOWN 流程保存请求，等待有限恢复或人工复核。
+         */
+        if (data.id() == null
+                || data.id() <= 0
+                || data.status() == null
+                || data.status().isBlank()
+                || data.createdAt() == null) {
+            throw new IllegalStateException("售后工单平台返回的工单结果不完整");
+        }
+        String ticketId = "AS-" + data.id();
+        String status = data.status().trim();
+        String createdAt = data.createdAt().toString();
 
         return new AfterSalesTicketCreateResult(ticketId, status, createdAt);
     }

@@ -94,6 +94,46 @@ class HttpAfterSalesTicketClientTest {
         server.verify();
     }
 
+    @Test
+    void shouldRejectIncompleteSuccessInsteadOfFabricatingTicketEvidence() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        HttpAfterSalesTicketClient client = new HttpAfterSalesTicketClient(
+                createProperties(),
+                builder
+        );
+        server.expect(requestTo("http://ticket-platform/api/tickets"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("""
+                        {
+                          "success": true,
+                          "data": {
+                            "id": 123,
+                            "status": "PENDING"
+                          }
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> client.createTicket(
+                        "tenant-from-context",
+                        new AfterSalesTicketCreateRequest(
+                                "Agent 转人工：用户投诉",
+                                "用户ID：USER-001",
+                                "USER-001",
+                                "general",
+                                "complaint",
+                                "URGENT",
+                                "agent:conv-001:handoff:INCOMPLETE"
+                        )
+                )
+        );
+
+        assertEquals("售后工单平台返回的工单结果不完整", exception.getMessage());
+        server.verify();
+    }
+
     private HandoffProperties createProperties() {
         HandoffProperties properties = new HandoffProperties();
         properties.getAfterSales().setBaseUrl("http://ticket-platform");

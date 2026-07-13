@@ -3,6 +3,12 @@ package com.smartcs.smart_cs_agent.handoff.admin;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffRecord;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStatus;
+import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffVersionConflictException;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupNotFoundException;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupResult;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupUnavailableException;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketLookupUnavailableReason;
+import com.smartcs.smart_cs_agent.handoff.reconciliation.AfterSalesTicketResultLookup;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffEvidenceSource;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualDecisionContext;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffManualDecisionResult;
@@ -15,6 +21,7 @@ import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewCursor;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewNotFoundException;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewPage;
 import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewStore;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffStateConflictException;
 import com.smartcs.smart_cs_agent.security.AuthenticationException;
 import com.smartcs.smart_cs_agent.security.AuthorizationException;
 import com.smartcs.smart_cs_agent.security.SecurityRoles;
@@ -32,7 +39,7 @@ import java.util.regex.Pattern;
  * PendingHandoff 管理用例的应用服务。
  *
  * <p>Controller 只负责 HTTP 参数绑定；这个服务负责可信 Principal、租户隔离、游标绑定、领域命令构造和
- * 安全 DTO 投影。它只依赖三个窄 Port，不知道当前底层是 Memory 还是 JDBC。</p>
+ * 安全 DTO 投影。它只依赖复核读写、审计和售后查询四个窄 Port，不知道底层是 Memory、JDBC 还是 HTTP。</p>
  */
 @Service
 public class PendingHandoffAdminService {
@@ -46,17 +53,23 @@ public class PendingHandoffAdminService {
     private final PendingHandoffReviewStore reviewStore;
     private final PendingHandoffManualDecisionStore decisionStore;
     private final PendingHandoffReviewAuditStore auditStore;
+    private final AfterSalesTicketResultLookup ticketResultLookup;
     private final PendingHandoffAdminCursorCodec cursorCodec;
     private final PendingHandoffAdminResponseMapper responseMapper;
 
     public PendingHandoffAdminService(PendingHandoffReviewStore reviewStore,
                                       PendingHandoffManualDecisionStore decisionStore,
                                       PendingHandoffReviewAuditStore auditStore,
+                                      AfterSalesTicketResultLookup ticketResultLookup,
                                       PendingHandoffAdminCursorCodec cursorCodec,
                                       PendingHandoffAdminResponseMapper responseMapper) {
         this.reviewStore = Objects.requireNonNull(reviewStore, "reviewStore cannot be null");
         this.decisionStore = Objects.requireNonNull(decisionStore, "decisionStore cannot be null");
         this.auditStore = Objects.requireNonNull(auditStore, "auditStore cannot be null");
+        this.ticketResultLookup = Objects.requireNonNull(
+                ticketResultLookup,
+                "ticketResultLookup cannot be null"
+        );
         this.cursorCodec = Objects.requireNonNull(cursorCodec, "cursorCodec cannot be null");
         this.responseMapper = Objects.requireNonNull(responseMapper, "responseMapper cannot be null");
     }
@@ -156,8 +169,8 @@ public class PendingHandoffAdminService {
     /**
      * 根据管理员已在受信任后台核对到的工单结果确认成功。
      *
-     * <p>时间会规范成 ISO-8601 UTC 文本，证据来源固定为 ADMIN_PROVIDED。20.5 的服务端幂等查询
-     * 将使用另一种证据来源，不能让客户端通过当前请求体自行伪造。</p>
+     * <p>时间会规范成 ISO-8601 UTC 文本，证据来源固定为 ADMIN_PROVIDED。服务端 reconcile 查询
+     * 使用另一种证据来源，不能让客户端通过当前请求体自行伪造。</p>
      */
     public PendingHandoffAdminDecisionResponse confirm(AuthenticatedPrincipal principal,
                                                         String outboxId,
@@ -185,6 +198,50 @@ public class PendingHandoffAdminService {
                 PendingHandoffEvidenceSource.ADMIN_PROVIDED
         ), result);
         return responseMapper.toDecision(decision);
+    }
+
+    /**
+     * 使用服务端售后查询 Port 核对原始幂等键，并在查到权威结果时确认记录。
+     *
+     * <p>查询前先检查页面版本和当前状态，避免拿明显过期的数据调用外部系统。查询后 Store 仍会执行一次
+     * 原子 version CAS，因为远端调用期间另一位管理员仍可能完成处置。</p>
+     *
+     * <p>只有 FOUND 会写状态与审计；NOT_FOUND 和 UNAVAILABLE 是两种不同的无写入结论。</p>
+     */
+    public PendingHandoffAdminDecisionResponse reconcile(
+            AuthenticatedPrincipal principal,
+            String outboxId,
+            PendingHandoffAdminDecisionRequest request) {
+        requireAdmin(principal);
+        requireDecisionRequest(request);
+        PendingHandoffRecord current = requireRecord(principal, outboxId);
+        requireReconcilable(current, request.expectedVersion());
+
+        AfterSalesTicketLookupResult lookup = ticketResultLookup.findByIdempotencyKey(current.key());
+        if (lookup == null) {
+            throw new AfterSalesTicketLookupUnavailableException(
+                    AfterSalesTicketLookupUnavailableReason.INVALID_RESPONSE
+            );
+        }
+
+        return switch (lookup.outcome()) {
+            case FOUND -> {
+                AfterSalesTicketCreateResult verified = normalizeLookupResult(lookup.ticket());
+                PendingHandoffManualDecisionResult decision = decisionStore.confirm(context(
+                        principal,
+                        current.outboxId(),
+                        request.expectedVersion(),
+                        request.reasonCode(),
+                        request.decisionNote(),
+                        PendingHandoffEvidenceSource.AFTER_SALES_IDEMPOTENCY_QUERY
+                ), verified);
+                yield responseMapper.toDecision(decision);
+            }
+            case NOT_FOUND -> throw new AfterSalesTicketLookupNotFoundException();
+            case UNAVAILABLE -> throw new AfterSalesTicketLookupUnavailableException(
+                    lookup.unavailableReason()
+            );
+        };
     }
 
     /**
@@ -237,6 +294,39 @@ public class PendingHandoffAdminService {
             );
         } catch (IllegalArgumentException invalidDomainInput) {
             throw new PendingHandoffAdminRequestException();
+        }
+    }
+
+    private void requireReconcilable(PendingHandoffRecord current, long expectedVersion) {
+        // version 必须优先于 status 判断，与 Memory/JDBC Store 的冲突优先级保持一致。
+        if (current.version() != expectedVersion) {
+            throw new PendingHandoffVersionConflictException();
+        }
+        if (current.status() != PendingHandoffStatus.NEEDS_MANUAL_REVIEW) {
+            throw new PendingHandoffStateConflictException(current.status());
+        }
+    }
+
+    private AfterSalesTicketCreateResult normalizeLookupResult(AfterSalesTicketCreateResult result) {
+        if (result == null) {
+            throw new AfterSalesTicketLookupUnavailableException(
+                    AfterSalesTicketLookupUnavailableReason.INVALID_RESPONSE
+            );
+        }
+        try {
+            requireBoundedPattern(result.ticketId(), 128, TICKET_ID);
+            requireBoundedPattern(result.status(), 64, TICKET_STATUS);
+            requireBoundedText(result.createdAt(), 128);
+            return new AfterSalesTicketCreateResult(
+                    result.ticketId().trim(),
+                    result.status().trim(),
+                    Instant.parse(result.createdAt().trim()).toString()
+            );
+        } catch (PendingHandoffAdminRequestException | DateTimeParseException invalidRemoteResult) {
+            // 远端响应不合法是依赖不可用，不是管理员提交了错误参数，因此不能错误返回客户端 400。
+            throw new AfterSalesTicketLookupUnavailableException(
+                    AfterSalesTicketLookupUnavailableReason.INVALID_RESPONSE
+            );
         }
     }
 

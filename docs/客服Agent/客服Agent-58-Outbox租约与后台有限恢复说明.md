@@ -1,5 +1,10 @@
 # 客服 Agent Outbox 租约与后台有限恢复说明
 
+> 版本说明：本文第 10 节记录的是 20.5 之前的历史边界。现在 ADMIN API、人工状态迁移审计和三态售后
+> 结果查询 Port 已完成；外部售后平台仍没有公开按 Idempotency-Key 查询的接口，因此默认 Adapter 明确
+> 返回 UNAVAILABLE。最新说明见 `客服Agent-65-ADMIN人工复核API说明.md` 和
+> `客服Agent-66-售后幂等结果查询Port与契约审计说明.md`。
+
 ## 1. 本批解决什么问题
 
 第十五批已经能够在同步链路中准备 Outbox、保存成功结果并回放，但 PREPARED、RESULT_UNKNOWN 记录仍需要人工读取数据库才能继续推进。
