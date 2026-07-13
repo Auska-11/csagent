@@ -4,11 +4,11 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Phase 7 生产路由迁移已完成；Phase 8 已完成十九批收口，真实 MySQL、Docker、Capability deadline 与 LLM 协作式整轮预算均已验收 |
+| 状态 | Phase 7 生产路由迁移已完成；Phase 8 第二十批已完成 20.1 与 20.2，下一步进入 20.3 追加式人工处置审计 |
 | 制定日期 | 2026-07-11 |
 | 改造方式 | 渐进迁移、双轨兼容、可回滚，不做一次性重写 |
 | 改造前基线 | Java 17、Spring Boot 3.3、LangChain4j 0.35；115 个测试通过 |
-| 当前验证规模 | 428 个默认测试及 1 个显式真实 MySQL IT 通过；PendingHandoff 租户迁移、Capability/LLM deadline、Agent 镜像与完整 Compose 均已实际验收 |
+| 当前验证规模 | 451 个默认测试及 1 个显式真实 MySQL IT 通过；20.2 clean test、打包、旧卷迁移和真实行锁竞态均已验收 |
 | 核心试点 | 退货申请多轮工作流 |
 | 最终目标 | 新增一个业务 Skill 时，不修改 AgentRuntime、核心 Router 或 CapabilityGateway |
 
@@ -24,8 +24,9 @@
 `CustomerServiceSkill` 仍保留一个稳定期作为回滚路径；Phase 8 的应用日志与 MCP 普通审计安全已经
 收口，售后/Embedding/Qdrant 也已有独立 HTTP 超时；人工转接已具备调用前 PREPARED、结果未知持久化、
 成功回放、租约和后台有限补建；真实 MySQL 与完整容器故障注入、Capability 执行中 deadline、
-LLM 总尝试次数上限和协作式 wall-clock 总预算也已完成。但售后结果查询与人工复核入口、按租户 LLM 隔离，
-以及 Phase 9 的 Legacy 删除仍是后续演进项，
+LLM 总尝试次数上限和协作式 wall-clock 总预算也已完成。第二十批已完成租户安全地基，并实现租户内人工
+复核查询及 retry/confirm/close CAS Store；但追加式处置审计、ADMIN HTTP 入口、售后结果查询、按租户
+LLM 隔离，以及 Phase 9 的 Legacy 删除仍是后续演进项，
 不能把它们误写成已完成。
 
 ## 2. 为什么需要这次改造（改造前问题）
@@ -49,7 +50,7 @@ LLM 总尝试次数上限和协作式 wall-clock 总预算也已完成。但售�
 5. 每轮只按最新消息选 Skill，不足以支持可靠的多轮 Workflow 粘性状态。
 6. `AgentRuntime` 使用 Action 类型分支执行动作，新增 Action 仍需修改 Runtime。
 7. Tool 契约、Tool 执行、MCP 协议适配之间仍有耦合，未来本地和远程实现容易出现重复定义。
-8. 人工复核入口、LLM 执行器指标与按租户隔离、多实例进程故障注入和部分生产数据一致性边界仍未完全收口。
+8. 人工复核 ADMIN HTTP 入口、LLM 执行器指标与按租户隔离、多实例进程故障注入和部分生产数据一致性边界仍未完全收口。
 
 因此，本次改造的目标不是增加更多目录，而是建立稳定的扩展协议和单向依赖关系。
 
@@ -1139,7 +1140,7 @@ Demo 旁路和 LangChain4j 0.35“max-retries 实为总尝试次数”的依赖�
 增至 418 项，0 失败、0 错误、0 跳过。详细说明见
 `客服Agent-61-LLM重试上限与整轮时间预算说明.md`。
 
-### Phase 8 第二十批进度（2026-07-13，20.1 已完成）
+### Phase 8 第二十批进度（2026-07-13，20.1 与 20.2 已完成）
 
 人工转接复核入口不能建立在“记录没有租户归属”的数据模型上。因此第二十批先完成租户安全地基：
 `ExecutionContext.tenantId` 已贯通 `LocalHandoffCapabilityProvider`、`HandoffTools`、
@@ -1156,8 +1157,26 @@ Demo 旁路和 LangChain4j 0.35“max-retries 实为总尝试次数”的依赖�
 也已通过。详细说明见
 `客服Agent-62-PendingHandoff租户隔离与复合键说明.md`。
 
-第二十批仍在继续：下一小批将实现租户内游标查询、详情读取和人工 retry/confirm/close 的 CAS 状态机，
-之后再增加追加式审计、ROLE_ADMIN HTTP API 与可替换的售后结果查询 Port。
+20.2 新增独立 `PendingHandoffReviewStore`，避免把人工管理职责继续塞进 Recovery Worker 使用的 Store。
+当前已经实现租户内 `updatedAt DESC, outboxId DESC` keyset 游标分页、按 `tenantId + outboxId` 查询详情，
+以及只允许从 `NEEDS_MANUAL_REVIEW` 出发的 retry/confirm/close 三分支 CAS 状态机。人工操作只改变调度或
+记录外部证据，不增加代表真实远端调用次数的 `attemptCount`；`MANUALLY_CLOSED` 已收紧为不可恢复终态。
+
+memory 与 JDBC Adapter 使用相同的租户、分页、version 和状态冲突语义。JDBC retry/confirm/close 在同一
+事务内锁行、校验、条件更新并回读；人工 confirm 还会在同一事务写入权威成功结果，CAS 失败时统一回滚。
+复核列表和 Worker `findDue` 都在 SQL `LIMIT` 前排除已有权威结果的非 CONFIRMED 记录，避免主表状态
+滞后占用页面或后台恢复批次名额。专项说明见 `客服Agent-63-人工复核查询与CAS状态机说明.md`。
+
+普通 Worker 的成功确认也增加了关闭终态围栏：先锁主记录并在事务内检查 `MANUALLY_CLOSED`、写入成功
+证据，再在事务提交后投影主表状态。这样既保留“结果已落盘、主表尚未更新”时的崩溃恢复能力，也保证租约
+接管后的迟到 Worker 不能复活人工关闭记录；读取和分页还会对历史异常可能残留的
+MANUALLY_CLOSED + result 组合保持人工关闭优先。
+
+20.2 已通过 451 个默认测试（0 失败、0 错误、0 跳过）、跳过测试打包和 1 个显式真实 MySQL IT。真实
+MySQL 验收覆盖分页、权威结果投影、三种人工操作、双客户端并发确认，以及使用 Latch 固定先后顺序的
+“人工关闭与迟到 Worker 确认”正反竞态；本机旧数据卷也已先执行显式租户迁移并通过三项零残留检查。
+临时容器验收后已停止删除。后续依次推进 20.3 追加式人工处置审计、20.4 ROLE_ADMIN HTTP API 与脱敏
+DTO、20.5 可替换的售后结果查询 Port，最后由 20.6 完成文档、全量测试、打包和容器总验收。
 
 ### 验收标准
 
@@ -1369,12 +1388,12 @@ smartcs:
 
 ### 测试与扩展证明
 
-- [x] 旧测试全部保留并通过（当前默认套件共 428 个测试，另有 1 个真实 MySQL IT）。
+- [x] 旧测试全部保留并通过（20.2 当前为 451 个默认测试，另有 1 个显式真实 MySQL IT）。
 - [x] 新增架构、并发、安全和 Provider 契约测试通过。
 - [x] 添加 `WarrantyQuery` 验证 Skill 时，核心文件不存在任何 warranty/保修注册或分支。
 - [x] Local/MCP Provider 使用同一 Capability ID 与知识输出契约，Workflow 文件无需修改。
 - [x] Docker 镜像构建、完整 Compose 启动、readiness 掉线恢复和 Agent 重启持久化通过。
-- [x] README、核心架构图、开发计划和真实代码已按第十九批同步。
+- [ ] README、核心架构图和开发计划已同步到 20.2 实现状态；20.6 仍需按最终代码与验收结果总收口。
 
 ## 16. 第一批实施记录（已完成）
 

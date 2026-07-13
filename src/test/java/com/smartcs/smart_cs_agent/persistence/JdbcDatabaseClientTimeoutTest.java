@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -120,6 +121,88 @@ class JdbcDatabaseClientTimeoutTest {
         assertEquals("3000", properties.getProperty("connectTimeout"));
         assertEquals("10000", properties.getProperty("socketTimeout"));
         verify(statement).setQueryTimeout(5);
+    }
+
+    @Test
+    void shouldReuseOneConnectionAndCommitTransaction() throws SQLException {
+        String url = "jdbc:recording-timeout:transaction-commit";
+        Connection connection = mock(Connection.class);
+        PreparedStatement first = mock(PreparedStatement.class);
+        PreparedStatement second = mock(PreparedStatement.class);
+        when(connection.prepareStatement(anyString())).thenReturn(first, second);
+        when(first.executeUpdate()).thenReturn(1);
+        when(second.executeUpdate()).thenReturn(1);
+
+        RecordingDriver recordingDriver = new RecordingDriver(url, connection);
+        registeredDriver = recordingDriver;
+        DriverManager.registerDriver(recordingDriver);
+        JdbcDatabaseClient database = new JdbcDatabaseClient(
+                "jdbc", RecordingDriver.class.getName(), url, "db-user", "db-password"
+        );
+
+        int changed = database.inTransaction(operations ->
+                operations.update("UPDATE first_table SET value = 1")
+                        + operations.update("UPDATE second_table SET value = 2")
+        );
+
+        assertEquals(2, changed);
+        assertEquals(1, recordingDriver.connectionProperties.size(),
+                "一个事务只能打开一条 JDBC 连接");
+        InOrder transactionOrder = inOrder(connection);
+        transactionOrder.verify(connection).setAutoCommit(false);
+        transactionOrder.verify(connection).commit();
+        transactionOrder.verify(connection).close();
+        verify(connection, never()).rollback();
+    }
+
+    @Test
+    void shouldRollbackTransactionWhenWorkFails() throws SQLException {
+        String url = "jdbc:recording-timeout:transaction-rollback";
+        Connection connection = mock(Connection.class);
+        RecordingDriver recordingDriver = new RecordingDriver(url, connection);
+        registeredDriver = recordingDriver;
+        DriverManager.registerDriver(recordingDriver);
+        JdbcDatabaseClient database = new JdbcDatabaseClient(
+                "jdbc", RecordingDriver.class.getName(), url, "db-user", "db-password"
+        );
+
+        IllegalStateException failure = assertThrows(
+                IllegalStateException.class,
+                () -> database.inTransaction(operations -> {
+                    throw new IllegalStateException("simulated transaction failure");
+                })
+        );
+
+        assertEquals("simulated transaction failure", failure.getMessage());
+        verify(connection).rollback();
+        verify(connection, never()).commit();
+        verify(connection).close();
+    }
+
+    @Test
+    void shouldAttemptRollbackWhenCommitFails() throws SQLException {
+        String url = "jdbc:recording-timeout:transaction-commit-failure";
+        Connection connection = mock(Connection.class);
+        org.mockito.Mockito.doThrow(new SQLException("commit failed"))
+                .when(connection)
+                .commit();
+        RecordingDriver recordingDriver = new RecordingDriver(url, connection);
+        registeredDriver = recordingDriver;
+        DriverManager.registerDriver(recordingDriver);
+        JdbcDatabaseClient database = new JdbcDatabaseClient(
+                "jdbc", RecordingDriver.class.getName(), url, "db-user", "db-password"
+        );
+
+        IllegalStateException failure = assertThrows(
+                IllegalStateException.class,
+                () -> database.inTransaction(operations -> "prepared result")
+        );
+
+        assertTrue(failure.getMessage().contains("commit"));
+        InOrder order = inOrder(connection);
+        order.verify(connection).commit();
+        order.verify(connection).rollback();
+        order.verify(connection).close();
     }
 
     @Test

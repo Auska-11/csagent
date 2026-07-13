@@ -1,6 +1,12 @@
 package com.smartcs.smart_cs_agent.handoff.outbox;
 
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewCursor;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewNotFoundException;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewPage;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewStore;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffStateConflictException;
 import com.smartcs.smart_cs_agent.persistence.JdbcDatabaseClient;
+import com.smartcs.smart_cs_agent.persistence.JdbcDatabaseOperations;
 import com.smartcs.smart_cs_agent.persistence.JdbcDuplicateKeyException;
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateRequest;
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateResult;
@@ -9,6 +15,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -24,7 +32,7 @@ import java.util.UUID;
  */
 @Component
 @ConditionalOnProperty(name = "smartcs.persistence.mode", havingValue = "jdbc")
-public class JdbcPendingHandoffStore implements PendingHandoffStore {
+public class JdbcPendingHandoffStore implements PendingHandoffStore, PendingHandoffReviewStore {
 
     private static final Set<PendingHandoffStatus> DUE_STATUSES = Set.of(
             PendingHandoffStatus.PREPARED,
@@ -78,7 +86,9 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
                     updated_at BIGINT NOT NULL,
                     PRIMARY KEY (outbox_id),
                     UNIQUE KEY uk_cs_pending_handoff_tenant_idempotency (tenant_id, idempotency_key),
-                    INDEX idx_cs_pending_handoff_due (status, next_attempt_at)
+                    INDEX idx_cs_pending_handoff_due (status, next_attempt_at),
+                    INDEX idx_cs_pending_handoff_tenant_review
+                        (tenant_id, status, updated_at, outbox_id)
                 )
                 """);
         // 成功结果使用独立的追加式表保存，避免 CREATE TABLE IF NOT EXISTS 无法升级上一批已创建的主表。
@@ -198,6 +208,11 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
             // 另一个核对执行者已经取得真实成功结果。成功证据优先于当前线程的网络异常。
             return current;
         }
+        if (current.version() == expectedVersion
+                && current.status() != PendingHandoffStatus.PREPARED
+                && current.status() != PendingHandoffStatus.RESULT_UNKNOWN) {
+            throw new PendingHandoffStateConflictException(current.status());
+        }
         throw new PendingHandoffVersionConflictException();
     }
 
@@ -207,37 +222,66 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
                                         long expectedVersion) {
         Objects.requireNonNull(key, "key cannot be null");
         Objects.requireNonNull(result, "result cannot be null");
-        PendingHandoffRecord existing = findByKey(key)
-                .orElseThrow(() -> new IllegalArgumentException("Pending handoff record does not exist"));
-        if (existing.status() == PendingHandoffStatus.CONFIRMED) {
-            ensureSameResult(existing.confirmedResult(), result);
-            return existing;
+        PendingHandoffRecord locked = databaseClient.inTransaction(operations -> {
+            /*
+             * 先锁主记录，再检查 MANUALLY_CLOSED 并保存结果证据。人工 close 也会锁同一行，
+             * 因此两者只能有一个先完成：
+             * 1. close 先完成，迟到 Worker 看到 CLOSED 后不能插入结果；
+             * 2. confirm 先提交结果，close 回读时会看到有效 CONFIRMED 并拒绝关闭。
+             *
+             * 这里只把“终态围栏 + 结果证据”放进事务，主表状态投影仍在事务提交后执行。
+             * 这样进程即使在两步之间退出，追加式结果表仍能在重启后证明远端已经成功。
+             */
+            PendingHandoffRecord current = findByKeyForUpdate(operations, key)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "Pending handoff record does not exist"
+                    ));
+            if (current.status() == PendingHandoffStatus.CONFIRMED) {
+                ensureSameResult(current.confirmedResult(), result);
+                return current;
+            }
+            if (current.status() == PendingHandoffStatus.MANUALLY_CLOSED) {
+                throw new PendingHandoffStateConflictException(current.status());
+            }
+            if (current.version() != expectedVersion) {
+                throw new PendingHandoffVersionConflictException();
+            }
+            saveConfirmedResult(operations, key, result);
+            return current;
+        });
+        if (locked.status() == PendingHandoffStatus.CONFIRMED) {
+            return locked;
         }
-        if (existing.version() != expectedVersion) {
-            throw new PendingHandoffVersionConflictException();
-        }
-
-        saveConfirmedResult(key, result);
 
         // 成功结果表已经成为权威证据，所以这里允许将任意非终态推进为 CONFIRMED。
-        // 如果进程在 INSERT 结果后、UPDATE 主表前退出，loadStored 也会根据结果行恢复成 CONFIRMED。
+        // 如果进程在结果事务提交后、UPDATE 主表前退出，loadStored 也会根据结果行恢复成 CONFIRMED。
+        // MANUALLY_CLOSED 是唯一优先级更高的人工作业终态，SQL 必须显式排除，不能被迟到 Worker 复活。
         long now = System.currentTimeMillis();
-        databaseClient.update("""
+        int changed = databaseClient.update("""
                 UPDATE cs_pending_handoff
                 SET status = ?, failure_type = ?, attempt_count = attempt_count + 1,
                     next_attempt_at = 0, version = version + 1, updated_at = ?
-                WHERE tenant_id = ? AND idempotency_key = ? AND status <> ?
+                WHERE tenant_id = ? AND idempotency_key = ?
+                  AND status NOT IN (?, ?)
                 """,
                 PendingHandoffStatus.CONFIRMED.name(),
                 "NONE",
                 now,
                 key.tenantId(),
                 key.idempotencyKey(),
-                PendingHandoffStatus.CONFIRMED.name());
+                PendingHandoffStatus.CONFIRMED.name(),
+                PendingHandoffStatus.MANUALLY_CLOSED.name());
 
         PendingHandoffRecord confirmed = findByKey(key)
                 .orElseThrow(() -> new IllegalStateException("Confirmed pending handoff could not be loaded"));
+        if (confirmed.status() == PendingHandoffStatus.MANUALLY_CLOSED) {
+            // 对历史异常留下的 MANUALLY_CLOSED + result 脏组合也保持 fail-closed，绝不伪装成成功。
+            throw new PendingHandoffStateConflictException(confirmed.status());
+        }
         ensureSameResult(confirmed.confirmedResult(), result);
+        if (changed == 0 && confirmed.status() != PendingHandoffStatus.CONFIRMED) {
+            throw new PendingHandoffVersionConflictException();
+        }
         return confirmed;
     }
 
@@ -251,6 +295,11 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
                         FROM cs_pending_handoff
                         WHERE status IN (?, ?, ?, ?)
                           AND next_attempt_at <= ?
+                          AND NOT EXISTS (
+                              SELECT 1 FROM cs_pending_handoff_result AS result_row
+                              WHERE result_row.tenant_id = cs_pending_handoff.tenant_id
+                                AND result_row.idempotency_key = cs_pending_handoff.idempotency_key
+                          )
                         ORDER BY next_attempt_at, outbox_id
                         LIMIT ?
                         """,
@@ -360,8 +409,164 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
         return loadStored(key).map(StoredPendingHandoff::record);
     }
 
+    @Override
+    public PendingHandoffReviewPage findReviewPage(String tenantId,
+                                                   PendingHandoffStatus status,
+                                                   PendingHandoffReviewCursor cursor,
+                                                   int limit) {
+        requireText(tenantId, "tenantId");
+        Objects.requireNonNull(status, "status cannot be null");
+        requireReviewLimit(limit);
+        String normalizedTenant = tenantId.trim();
+        return databaseClient.inTransaction(operations -> {
+            // key 查询和逐条结果投影必须共享一个 RR 快照；否则分页集合可能在 N+1 读取间漂移。
+            int fetchLimit = limit + 1;
+            String effectiveStatusPredicate = reviewStatusPredicate(status);
+            String cursorPredicate = cursor == null
+                    ? ""
+                    : "AND (updated_at < ? OR (updated_at = ? AND outbox_id < ?))";
+            String pageSql = """
+                    SELECT tenant_id, idempotency_key
+                    FROM cs_pending_handoff
+                    WHERE tenant_id = ? AND %s
+                    %s
+                    ORDER BY updated_at DESC, outbox_id DESC
+                    LIMIT ?
+                    """.formatted(effectiveStatusPredicate, cursorPredicate);
+            List<PendingHandoffKey> keys = cursor == null
+                    ? operations.queryList(
+                            pageSql,
+                            this::mapKey,
+                            normalizedTenant,
+                            status.name(),
+                            fetchLimit
+                    )
+                    : operations.queryList(
+                            pageSql,
+                            this::mapKey,
+                            normalizedTenant,
+                            status.name(),
+                            cursor.updatedAt(),
+                            cursor.updatedAt(),
+                            cursor.outboxId(),
+                            fetchLimit
+                    );
+
+            List<PendingHandoffRecord> candidates = keys.stream()
+                    .map(key -> loadStored(operations, key).map(StoredPendingHandoff::record))
+                    .flatMap(Optional::stream)
+                    .toList();
+            boolean hasMore = candidates.size() > limit;
+            List<PendingHandoffRecord> pageRecords = hasMore
+                    ? List.copyOf(candidates.subList(0, limit))
+                    : candidates;
+            PendingHandoffReviewCursor nextCursor = hasMore
+                    ? cursorOf(pageRecords.get(pageRecords.size() - 1))
+                    : null;
+            return new PendingHandoffReviewPage(pageRecords, nextCursor, hasMore);
+        });
+    }
+
+    @Override
+    public Optional<PendingHandoffRecord> findByTenantAndOutboxId(String tenantId, String outboxId) {
+        requireText(tenantId, "tenantId");
+        requireText(outboxId, "outboxId");
+        return findByTenantAndOutboxId(
+                databaseClient,
+                tenantId.trim(),
+                outboxId.trim()
+        );
+    }
+
+    @Override
+    public PendingHandoffRecord retryFromManualReview(String tenantId,
+                                                      String outboxId,
+                                                      long expectedVersion,
+                                                      long scheduledAt) {
+        requireTimestamp(scheduledAt, "scheduledAt");
+        return updateManualReviewState(
+                tenantId,
+                outboxId,
+                expectedVersion,
+                PendingHandoffStatus.RETRY_SCHEDULED,
+                "MANUAL_RETRY_REQUESTED",
+                scheduledAt,
+                scheduledAt
+        );
+    }
+
+    @Override
+    public PendingHandoffRecord confirmFromManualReview(String tenantId,
+                                                        String outboxId,
+                                                        AfterSalesTicketCreateResult result,
+                                                        long expectedVersion) {
+        requireText(tenantId, "tenantId");
+        requireText(outboxId, "outboxId");
+        Objects.requireNonNull(result, "result cannot be null");
+        String normalizedTenant = tenantId.trim();
+        String normalizedOutboxId = outboxId.trim();
+
+        return databaseClient.inTransaction(operations -> {
+            // 事务回调中只能使用 operations，不能调用外层 databaseClient，否则会意外打开新连接。
+            PendingHandoffRecord current = findByTenantAndOutboxIdForUpdate(
+                    operations,
+                    normalizedTenant,
+                    normalizedOutboxId
+            ).orElseThrow(PendingHandoffReviewNotFoundException::new);
+            validateManualReviewTransition(current, expectedVersion);
+
+            saveConfirmedResult(operations, current.key(), result);
+            long now = System.currentTimeMillis();
+            int changed = operations.update("""
+                    UPDATE cs_pending_handoff
+                    SET status = ?, failure_type = ?, next_attempt_at = 0,
+                        version = version + 1, updated_at = ?
+                    WHERE tenant_id = ? AND outbox_id = ?
+                      AND version = ? AND status = ?
+                    """,
+                    PendingHandoffStatus.CONFIRMED.name(),
+                    "NONE",
+                    now,
+                    normalizedTenant,
+                    normalizedOutboxId,
+                    expectedVersion,
+                    PendingHandoffStatus.NEEDS_MANUAL_REVIEW.name());
+            if (changed != 1) {
+                // 结果 INSERT 也在同一事务内；抛异常会统一 rollback，不会留下半成功证据。
+                throw new PendingHandoffVersionConflictException();
+            }
+            return loadStored(operations, current.key())
+                    .map(StoredPendingHandoff::record)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Confirmed manual handoff could not be loaded"
+                    ));
+        });
+    }
+
+    @Override
+    public PendingHandoffRecord closeFromManualReview(String tenantId,
+                                                      String outboxId,
+                                                      long expectedVersion,
+                                                      long closedAt) {
+        requireTimestamp(closedAt, "closedAt");
+        return updateManualReviewState(
+                tenantId,
+                outboxId,
+                expectedVersion,
+                PendingHandoffStatus.MANUALLY_CLOSED,
+                "MANUALLY_CLOSED",
+                Long.MAX_VALUE,
+                closedAt
+        );
+    }
+
     private Optional<StoredPendingHandoff> loadStored(PendingHandoffKey key) {
-        Optional<StoredPendingHandoff> base = databaseClient.queryOne("""
+        return loadStored(databaseClient, key);
+    }
+
+    private Optional<StoredPendingHandoff> loadStored(JdbcDatabaseOperations operations,
+                                                       PendingHandoffKey key) {
+        Optional<StoredPendingHandoff> base = operations.queryOne("""
                         SELECT outbox_id, tenant_id, idempotency_key, request_fingerprint_hash,
                                user_id, conversation_id, reason, summary_text,
                                request_title, request_description, customer_id,
@@ -409,12 +614,20 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
             return Optional.empty();
         }
 
-        Optional<AfterSalesTicketCreateResult> confirmedResult = loadConfirmedResult(key);
+        StoredPendingHandoff stored = base.get();
+        PendingHandoffRecord current = stored.record();
+        if (current.status() == PendingHandoffStatus.MANUALLY_CLOSED) {
+            /*
+             * 人工关闭是业务人员明确设置的终态，优先级高于历史异常可能残留的结果行。
+             * 新代码通过行锁阻止这种组合继续产生；这里仍保留读取围栏，以安全兼容历史脏数据。
+             */
+            return base;
+        }
+
+        Optional<AfterSalesTicketCreateResult> confirmedResult = loadConfirmedResult(operations, key);
         if (confirmedResult.isEmpty()) {
             return base;
         }
-        StoredPendingHandoff stored = base.get();
-        PendingHandoffRecord current = stored.record();
         PendingHandoffRecord confirmed = new PendingHandoffRecord(
                 current.outboxId(),
                 current.tenantId(),
@@ -435,9 +648,11 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
         return Optional.of(new StoredPendingHandoff(stored.fingerprint(), confirmed));
     }
 
-    private void saveConfirmedResult(PendingHandoffKey key, AfterSalesTicketCreateResult result) {
+    private void saveConfirmedResult(JdbcDatabaseOperations operations,
+                                     PendingHandoffKey key,
+                                     AfterSalesTicketCreateResult result) {
         try {
-            databaseClient.update("""
+            operations.update("""
                     INSERT INTO cs_pending_handoff_result(
                         tenant_id, idempotency_key, ticket_id, ticket_status, ticket_created_at, recorded_at
                     ) VALUES (?, ?, ?, ?, ?, ?)
@@ -449,14 +664,16 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
                     result.createdAt(),
                     System.currentTimeMillis());
         } catch (JdbcDuplicateKeyException duplicateKey) {
-            AfterSalesTicketCreateResult existing = loadConfirmedResult(key)
+            AfterSalesTicketCreateResult existing = loadConfirmedResult(operations, key)
                     .orElseThrow(() -> duplicateKey);
             ensureSameResult(existing, result);
         }
     }
 
-    private Optional<AfterSalesTicketCreateResult> loadConfirmedResult(PendingHandoffKey key) {
-        return databaseClient.queryOne("""
+    private Optional<AfterSalesTicketCreateResult> loadConfirmedResult(
+            JdbcDatabaseOperations operations,
+            PendingHandoffKey key) {
+        return operations.queryOne("""
                         SELECT ticket_id, ticket_status, ticket_created_at
                         FROM cs_pending_handoff_result
                         WHERE tenant_id = ? AND idempotency_key = ?
@@ -517,11 +734,13 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
         PendingHandoffKey key = claim.record().key();
         StoredClaim storedClaim = loadClaim(key)
                 .orElseThrow(PendingHandoffVersionConflictException::new);
-        if (!storedClaim.ownerToken().equals(claim.ownerToken())) {
+        long now = System.currentTimeMillis();
+        if (!storedClaim.ownerToken().equals(claim.ownerToken())
+                || storedClaim.leaseUntil() != claim.leaseUntil()
+                || storedClaim.leaseUntil() <= now) {
             throw new PendingHandoffVersionConflictException();
         }
         try {
-            long now = System.currentTimeMillis();
             int changed = databaseClient.update("""
                     UPDATE cs_pending_handoff
                     SET status = ?, failure_type = ?, attempt_count = attempt_count + 1,
@@ -530,6 +749,11 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
                       AND idempotency_key = ?
                       AND version = ?
                       AND status = ?
+                      AND EXISTS (
+                          SELECT 1 FROM cs_pending_handoff_claim
+                          WHERE tenant_id = ? AND idempotency_key = ?
+                            AND owner_token = ? AND lease_until = ? AND lease_until > ?
+                      )
                     """,
                     targetStatus.name(),
                     safeFailureType(failureType),
@@ -538,7 +762,12 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
                     key.tenantId(),
                     key.idempotencyKey(),
                     claim.record().version(),
-                    PendingHandoffStatus.PROCESSING.name());
+                    PendingHandoffStatus.PROCESSING.name(),
+                    key.tenantId(),
+                    key.idempotencyKey(),
+                    claim.ownerToken(),
+                    claim.leaseUntil(),
+                    now);
             if (changed != 1) {
                 throw new PendingHandoffVersionConflictException();
             }
@@ -571,6 +800,169 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore {
                 key.tenantId(),
                 key.idempotencyKey(),
                 ownerToken);
+    }
+
+    private Optional<PendingHandoffRecord> findByTenantAndOutboxId(
+            JdbcDatabaseOperations operations,
+            String tenantId,
+            String outboxId) {
+        Optional<PendingHandoffKey> key = operations.queryOne("""
+                        SELECT tenant_id, idempotency_key
+                        FROM cs_pending_handoff
+                        WHERE tenant_id = ? AND outbox_id = ?
+                        """,
+                this::mapKey,
+                tenantId,
+                outboxId);
+        if (key.isEmpty()) {
+            return Optional.empty();
+        }
+        return loadStored(operations, key.get()).map(StoredPendingHandoff::record);
+    }
+
+    private Optional<PendingHandoffRecord> findByTenantAndOutboxIdForUpdate(
+            JdbcDatabaseOperations operations,
+            String tenantId,
+            String outboxId) {
+        Optional<PendingHandoffKey> key = operations.queryOne("""
+                        SELECT tenant_id, idempotency_key
+                        FROM cs_pending_handoff
+                        WHERE tenant_id = ? AND outbox_id = ?
+                        FOR UPDATE
+                        """,
+                this::mapKey,
+                tenantId,
+                outboxId);
+        if (key.isEmpty()) {
+            return Optional.empty();
+        }
+        return loadStored(operations, key.get()).map(StoredPendingHandoff::record);
+    }
+
+    /** 按复合业务键锁定主记录；普通 Worker 确认和人工关闭必须竞争同一把数据库行锁。 */
+    private Optional<PendingHandoffRecord> findByKeyForUpdate(
+            JdbcDatabaseOperations operations,
+            PendingHandoffKey key) {
+        Optional<PendingHandoffKey> lockedKey = operations.queryOne("""
+                        SELECT tenant_id, idempotency_key
+                        FROM cs_pending_handoff
+                        WHERE tenant_id = ? AND idempotency_key = ?
+                        FOR UPDATE
+                        """,
+                this::mapKey,
+                key.tenantId(),
+                key.idempotencyKey());
+        if (lockedKey.isEmpty()) {
+            return Optional.empty();
+        }
+        return loadStored(operations, lockedKey.get()).map(StoredPendingHandoff::record);
+    }
+
+    private PendingHandoffRecord updateManualReviewState(
+            String tenantId,
+            String outboxId,
+            long expectedVersion,
+            PendingHandoffStatus targetStatus,
+            String failureType,
+            long nextAttemptAt,
+            long updatedAt) {
+        requireText(tenantId, "tenantId");
+        requireText(outboxId, "outboxId");
+        String normalizedTenant = tenantId.trim();
+        String normalizedOutboxId = outboxId.trim();
+        return databaseClient.inTransaction(operations -> {
+            PendingHandoffRecord current = findByTenantAndOutboxIdForUpdate(
+                    operations,
+                    normalizedTenant,
+                    normalizedOutboxId
+            ).orElseThrow(PendingHandoffReviewNotFoundException::new);
+            validateManualReviewTransition(current, expectedVersion);
+            int changed = operations.update("""
+                    UPDATE cs_pending_handoff
+                    SET status = ?, failure_type = ?, next_attempt_at = ?,
+                        version = version + 1, updated_at = ?
+                    WHERE tenant_id = ? AND outbox_id = ?
+                      AND version = ? AND status = ?
+                    """,
+                    targetStatus.name(),
+                    failureType,
+                    nextAttemptAt,
+                    updatedAt,
+                    normalizedTenant,
+                    normalizedOutboxId,
+                    expectedVersion,
+                    PendingHandoffStatus.NEEDS_MANUAL_REVIEW.name());
+            if (changed != 1) {
+                throw new PendingHandoffVersionConflictException();
+            }
+            return loadStored(operations, current.key())
+                    .map(StoredPendingHandoff::record)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Updated manual handoff could not be loaded"
+                    ));
+        });
+    }
+
+    private void validateManualReviewTransition(PendingHandoffRecord current,
+                                                long expectedVersion) {
+        if (current.version() != expectedVersion) {
+            throw new PendingHandoffVersionConflictException();
+        }
+        if (current.status() != PendingHandoffStatus.NEEDS_MANUAL_REVIEW) {
+            throw new PendingHandoffStateConflictException(current.status());
+        }
+    }
+
+    private PendingHandoffKey mapKey(ResultSet resultSet) throws SQLException {
+        return new PendingHandoffKey(
+                resultSet.getString("tenant_id"),
+                resultSet.getString("idempotency_key")
+        );
+    }
+
+    private PendingHandoffReviewCursor cursorOf(PendingHandoffRecord record) {
+        return new PendingHandoffReviewCursor(record.updatedAt(), record.outboxId());
+    }
+
+    /**
+     * 结果表通常是 CONFIRMED 的权威证据，但人工关闭是显式的安全围栏。
+     * 这里把规则下推到 LIMIT 之前，避免脏结果行占掉页面名额或把 CLOSED 错列为成功。
+     */
+    private String reviewStatusPredicate(PendingHandoffStatus status) {
+        if (status == PendingHandoffStatus.CONFIRMED) {
+            return """
+                    (status = ? OR (
+                        status <> 'MANUALLY_CLOSED' AND EXISTS (
+                            SELECT 1 FROM cs_pending_handoff_result AS result_row
+                            WHERE result_row.tenant_id = cs_pending_handoff.tenant_id
+                              AND result_row.idempotency_key = cs_pending_handoff.idempotency_key
+                        )
+                    ))
+                    """;
+        }
+        if (status == PendingHandoffStatus.MANUALLY_CLOSED) {
+            // 历史 MANUALLY_CLOSED 行即使错误残留 result，也必须继续出现在人工关闭列表中。
+            return "status = ?";
+        }
+        return """
+                status = ? AND NOT EXISTS (
+                    SELECT 1 FROM cs_pending_handoff_result AS result_row
+                    WHERE result_row.tenant_id = cs_pending_handoff.tenant_id
+                      AND result_row.idempotency_key = cs_pending_handoff.idempotency_key
+                )
+                """;
+    }
+
+    private void requireReviewLimit(int limit) {
+        if (limit < 1 || limit > 100) {
+            throw new IllegalArgumentException("limit must be between 1 and 100");
+        }
+    }
+
+    private void requireTimestamp(long value, String field) {
+        if (value < 0) {
+            throw new IllegalArgumentException(field + " cannot be negative");
+        }
     }
 
     private void ensureSameResult(AfterSalesTicketCreateResult existing,

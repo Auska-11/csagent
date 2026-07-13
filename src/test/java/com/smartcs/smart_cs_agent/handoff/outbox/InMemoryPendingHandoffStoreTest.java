@@ -1,10 +1,17 @@
 package com.smartcs.smart_cs_agent.handoff.outbox;
 
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewNotFoundException;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffReviewPage;
+import com.smartcs.smart_cs_agent.handoff.review.PendingHandoffStateConflictException;
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateRequest;
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateResult;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -77,6 +84,29 @@ class InMemoryPendingHandoffStoreTest {
     }
 
     @Test
+    void shouldPrioritizeStaleVersionOverIllegalStateForMarkResultUnknown() {
+        InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore(1);
+        PendingHandoffRecord manual = moveToManualReview(
+                store,
+                command("tenant-a", "unknown-conflict-priority", "普通状态机冲突优先级"),
+                "owner-unknown-priority"
+        );
+
+        assertThrows(
+                PendingHandoffVersionConflictException.class,
+                () -> store.markResultUnknown(
+                        manual.key(), "STALE_AND_ILLEGAL", manual.version() - 1
+                )
+        );
+        assertThrows(
+                PendingHandoffStateConflictException.class,
+                () -> store.markResultUnknown(
+                        manual.key(), "CURRENT_BUT_ILLEGAL", manual.version()
+                )
+        );
+    }
+
+    @Test
     void shouldPersistAndReplayConfirmedResult() {
         InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore();
         PendingHandoffCommand command = command("idem-success", "已成功");
@@ -132,6 +162,22 @@ class InMemoryPendingHandoffStoreTest {
         assertEquals(1, retry.attemptCount());
         assertTrue(store.findDue(now + 2_999, 10).isEmpty());
         assertEquals(1, store.findDue(now + 3_000, 10).size());
+    }
+
+    @Test
+    void shouldRejectOwnerAfterLeaseHasExpired() throws InterruptedException {
+        InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore(1);
+        PendingHandoffRecord prepared = store.prepare(command("idem-expired", "过期租约")).record();
+        PendingHandoffClaim claim = store.tryClaim(
+                prepared.key(), prepared.version(), "expired-owner", prepared.nextAttemptAt(), 1
+        ).orElseThrow();
+
+        Thread.sleep(20);
+
+        assertThrows(
+                PendingHandoffVersionConflictException.class,
+                () -> store.scheduleRetry(claim, "TooLate", System.currentTimeMillis() + 1_000)
+        );
     }
 
     @Test
@@ -193,6 +239,250 @@ class InMemoryPendingHandoffStoreTest {
         );
     }
 
+    @Test
+    void shouldPageManualReviewsByTenantWithoutDuplicates() {
+        InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore(1);
+        PendingHandoffRecord first = moveToManualReview(store, command("tenant-a", "page-1", "一"), "owner-1");
+        PendingHandoffRecord second = moveToManualReview(store, command("tenant-a", "page-2", "二"), "owner-2");
+        PendingHandoffRecord third = moveToManualReview(store, command("tenant-a", "page-3", "三"), "owner-3");
+        moveToManualReview(store, command("tenant-b", "page-1", "另一个租户"), "owner-b");
+
+        PendingHandoffReviewPage pageOne = store.findReviewPage(
+                "tenant-a", PendingHandoffStatus.NEEDS_MANUAL_REVIEW, null, 2
+        );
+        PendingHandoffReviewPage pageTwo = store.findReviewPage(
+                "tenant-a",
+                PendingHandoffStatus.NEEDS_MANUAL_REVIEW,
+                pageOne.nextCursor(),
+                2
+        );
+
+        assertTrue(pageOne.hasMore());
+        assertEquals(2, pageOne.records().size());
+        assertEquals(false, pageTwo.hasMore());
+        assertEquals(1, pageTwo.records().size());
+        List<String> combinedIds = java.util.stream.Stream.concat(
+                        pageOne.records().stream(),
+                        pageTwo.records().stream()
+                )
+                .map(PendingHandoffRecord::outboxId)
+                .toList();
+        assertEquals(3, combinedIds.stream().distinct().count());
+        assertTrue(combinedIds.containsAll(List.of(first.outboxId(), second.outboxId(), third.outboxId())));
+        assertTrue(pageOne.records().stream().allMatch(record -> record.tenantId().equals("tenant-a")));
+        assertTrue(store.findByTenantAndOutboxId("tenant-b", first.outboxId()).isEmpty());
+    }
+
+    @Test
+    void shouldRejectInvalidReviewPaginationArguments() {
+        InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore();
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> store.findReviewPage("   ", PendingHandoffStatus.NEEDS_MANUAL_REVIEW, null, 10)
+        );
+        assertThrows(
+                NullPointerException.class,
+                () -> store.findReviewPage("tenant-a", null, null, 10)
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> store.findReviewPage("tenant-a", PendingHandoffStatus.NEEDS_MANUAL_REVIEW, null, 0)
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> store.findReviewPage("tenant-a", PendingHandoffStatus.NEEDS_MANUAL_REVIEW, null, 101)
+        );
+    }
+
+    @Test
+    void shouldPageConfirmedRecordsByEffectiveStatus() {
+        InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore(1);
+        PendingHandoffRecord prepared = store.prepare(
+                command("tenant-a", "confirmed-page", "已确认")
+        ).record();
+        AfterSalesTicketCreateResult result = result("AS-CONFIRMED-PAGE");
+        PendingHandoffRecord confirmed = store.confirm(prepared.key(), result, prepared.version());
+        moveToManualReview(
+                store,
+                command("tenant-a", "manual-page-control", "仍待人工复核"),
+                "owner-control"
+        );
+        PendingHandoffRecord otherTenant = store.prepare(
+                command("tenant-b", "confirmed-page", "另一个租户已确认")
+        ).record();
+        store.confirm(otherTenant.key(), result("AS-OTHER-TENANT"), otherTenant.version());
+
+        PendingHandoffReviewPage page = store.findReviewPage(
+                "tenant-a", PendingHandoffStatus.CONFIRMED, null, 10
+        );
+
+        assertFalse(page.hasMore());
+        assertEquals(1, page.records().size());
+        assertEquals(confirmed.outboxId(), page.records().get(0).outboxId());
+        assertEquals(PendingHandoffStatus.CONFIRMED, page.records().get(0).status());
+        assertEquals(result, page.records().get(0).confirmedResult());
+    }
+
+    @Test
+    void shouldApplyManualRetryConfirmAndCloseWithCas() {
+        InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore(1);
+        PendingHandoffRecord retrySource = moveToManualReview(
+                store, command("tenant-a", "manual-retry", "重试"), "owner-retry"
+        );
+        PendingHandoffRecord confirmSource = moveToManualReview(
+                store, command("tenant-a", "manual-confirm", "确认"), "owner-confirm"
+        );
+        PendingHandoffRecord closeSource = moveToManualReview(
+                store, command("tenant-a", "manual-close", "关闭"), "owner-close"
+        );
+
+        long scheduledAt = 2_000L;
+        PendingHandoffRecord retried = store.retryFromManualReview(
+                "tenant-a", retrySource.outboxId(), retrySource.version(), scheduledAt
+        );
+        AfterSalesTicketCreateResult result = new AfterSalesTicketCreateResult(
+                "AS-MANUAL", "PENDING", "2026-07-13T00:00:00Z"
+        );
+        PendingHandoffRecord confirmed = store.confirmFromManualReview(
+                "tenant-a", confirmSource.outboxId(), result, confirmSource.version()
+        );
+        PendingHandoffRecord closed = store.closeFromManualReview(
+                "tenant-a", closeSource.outboxId(), closeSource.version(), 3_000L
+        );
+
+        assertEquals(PendingHandoffStatus.RETRY_SCHEDULED, retried.status());
+        assertEquals(scheduledAt, retried.nextAttemptAt());
+        assertEquals(retrySource.attemptCount(), retried.attemptCount(),
+                "人工排队本身不等于发生了一次远端调用");
+        assertEquals(PendingHandoffStatus.CONFIRMED, confirmed.status());
+        assertEquals(result, confirmed.confirmedResult());
+        assertEquals(confirmSource.attemptCount(), confirmed.attemptCount());
+        assertEquals(PendingHandoffStatus.MANUALLY_CLOSED, closed.status());
+        assertEquals(Long.MAX_VALUE, closed.nextAttemptAt());
+
+        assertThrows(
+                PendingHandoffVersionConflictException.class,
+                () -> store.closeFromManualReview(
+                        "tenant-a", retrySource.outboxId(), retrySource.version(), 4_000L
+                )
+        );
+        assertThrows(
+                PendingHandoffStateConflictException.class,
+                () -> store.closeFromManualReview(
+                        "tenant-a", confirmSource.outboxId(), confirmed.version(), 4_000L
+                )
+        );
+        assertThrows(
+                PendingHandoffReviewNotFoundException.class,
+                () -> store.closeFromManualReview(
+                        "tenant-b", closeSource.outboxId(), closeSource.version(), 4_000L
+                )
+        );
+        assertThrows(
+                PendingHandoffStateConflictException.class,
+                () -> store.confirm(
+                        closed.key(),
+                        new AfterSalesTicketCreateResult(
+                                "AS-TOO-LATE", "PENDING", "2026-07-13T00:00:02Z"
+                        ),
+                        closed.version()
+                )
+        );
+        assertThrows(
+                PendingHandoffStateConflictException.class,
+                () -> store.markResultUnknown(closed.key(), "TooLate", closed.version())
+        );
+    }
+
+    @Test
+    void shouldApplyTheSameConflictRulesToAllManualActions() {
+        InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore(1);
+        PendingHandoffRecord manual = moveToManualReview(
+                store,
+                command("tenant-a", "manual-conflict-matrix", "冲突矩阵"),
+                "owner-matrix"
+        );
+
+        // 三种动作都必须遵守同一个版本 CAS；不能只验证 close 而漏掉 retry/confirm。
+        assertAllManualActionsThrow(
+                PendingHandoffVersionConflictException.class,
+                store,
+                "tenant-a",
+                manual,
+                manual.version() - 1
+        );
+        // “不存在”和“属于其他租户”必须表现一致，避免通过异常差异探测其他租户数据。
+        assertAllManualActionsThrow(
+                PendingHandoffReviewNotFoundException.class,
+                store,
+                "tenant-b",
+                manual,
+                manual.version()
+        );
+        assertEquals(
+                PendingHandoffStatus.NEEDS_MANUAL_REVIEW,
+                store.findByTenantAndOutboxId("tenant-a", manual.outboxId()).orElseThrow().status()
+        );
+        assertNull(store.findByKey(manual.key()).orElseThrow().confirmedResult());
+
+        PendingHandoffRecord prepared = store.prepare(
+                command("tenant-a", "invalid-manual-state", "尚未进入人工复核")
+        ).record();
+        // 即使当前状态也不允许人工动作，stale version 仍必须优先报 CAS 冲突。
+        assertAllManualActionsThrow(
+                PendingHandoffVersionConflictException.class,
+                store,
+                "tenant-a",
+                prepared,
+                prepared.version() - 1
+        );
+        assertAllManualActionsThrow(
+                PendingHandoffStateConflictException.class,
+                store,
+                "tenant-a",
+                prepared,
+                prepared.version()
+        );
+        assertEquals(PendingHandoffStatus.PREPARED, store.findByKey(prepared.key()).orElseThrow().status());
+    }
+
+    private void assertAllManualActionsThrow(
+            Class<? extends Throwable> expectedType,
+            InMemoryPendingHandoffStore store,
+            String tenantId,
+            PendingHandoffRecord source,
+            long expectedVersion) {
+        assertThrows(
+                expectedType,
+                () -> store.retryFromManualReview(
+                        tenantId, source.outboxId(), expectedVersion, 5_000L
+                )
+        );
+        assertThrows(
+                expectedType,
+                () -> store.confirmFromManualReview(
+                        tenantId, source.outboxId(), result("AS-CONFLICT-MATRIX"), expectedVersion
+                )
+        );
+        assertThrows(
+                expectedType,
+                () -> store.closeFromManualReview(
+                        tenantId, source.outboxId(), expectedVersion, 5_000L
+                )
+        );
+    }
+
+    private PendingHandoffRecord moveToManualReview(InMemoryPendingHandoffStore store,
+                                                    PendingHandoffCommand command,
+                                                    String owner) {
+        PendingHandoffRecord prepared = store.prepare(command).record();
+        PendingHandoffClaim claim = store.tryClaim(
+                prepared.key(), prepared.version(), owner, prepared.nextAttemptAt(), 1_000
+        ).orElseThrow();
+        return store.markNeedsManualReview(claim, "TEST_REQUIRES_REVIEW");
+    }
+
     private PendingHandoffCommand command(String idempotencyKey, String summary) {
         return command(TENANT, idempotencyKey, summary);
     }
@@ -213,6 +503,12 @@ class InMemoryPendingHandoffStoreTest {
                         "URGENT",
                         idempotencyKey
                 )
+        );
+    }
+
+    private AfterSalesTicketCreateResult result(String ticketId) {
+        return new AfterSalesTicketCreateResult(
+                ticketId, "PENDING", "2026-07-13T00:00:00Z"
         );
     }
 }

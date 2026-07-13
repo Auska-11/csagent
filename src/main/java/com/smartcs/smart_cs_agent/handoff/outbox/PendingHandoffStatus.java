@@ -24,5 +24,8 @@ public enum PendingHandoffStatus {
     RETRY_SCHEDULED,
 
     /** 自动处理无法继续，需要人工核对。 */
-    NEEDS_MANUAL_REVIEW
+    NEEDS_MANUAL_REVIEW,
+
+    /** 人工确认无需再创建或关联远端工单；Worker 不得重新扫描这个终态。 */
+    MANUALLY_CLOSED
 }

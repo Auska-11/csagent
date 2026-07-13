@@ -707,7 +707,7 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 
 多轮任务状态、三级会话记忆第一版、长期用户偏好记忆第一版、记忆清除与隐私控制、Agent Trace、MCP-style 工具层、MCP Adapter、工具 inputSchema/outputSchema、业务工具 DTO、知识库 RAG、RAG 查询改写、多路召回、简单 rerank、本地轻量向量分、真 embedding + Qdrant 向量数据库 RAG、人工转接、LLM 失败降级、Monitor 在线指标、按工具名成功率统计、Monitor 风险告警、用户反馈闭环、反馈样本进入 Eval 候选池、Eval 候选样本问题类型分类、Eval 候选样本审核、Eval 候选样本本地 JSON 持久化、Eval case 草稿导出、Eval 草稿半自动合并正式评测集、质量闭环演示脚本、可选真实模型 Judge 评测、前端 Agent Inspector、Memory 面板、Demo 演示脚本、Eval 评测报告看板、离线路由评测、知识库召回评测、回复质量规则评测、Agent 链路回复评测、LLM-as-Judge 第一版、Docker 部署第一版、评测报告 JSON 化、评测历史趋势、结构化工具数据、Skill 第一轮拆分、接口 DTO、参数校验和统一错误响应已经完成。
 
-当前新增了两份面试和演示准备文档：
+重点专项文档索引（持续更新）：
 
 - [客服Agent-25-面试亮点总结.md](客服Agent-25-面试亮点总结.md)
 - [客服Agent-26-演示流程.md](客服Agent-26-演示流程.md)
@@ -718,6 +718,36 @@ Agent：非常抱歉给您带来不好的体验。我已为您转接人工客服
 - [客服Agent-31-Multi-Agent路由设计.md](客服Agent-31-Multi-Agent路由设计.md)
 - [客服Agent-32-售后工单平台联调设计.md](客服Agent-32-售后工单平台联调设计.md)
 - [客服Agent-33-Embedding向量数据库RAG设计.md](客服Agent-33-Embedding向量数据库RAG设计.md)
+- [客服Agent-34-可扩展架构改造开发计划.md](客服Agent-34-可扩展架构改造开发计划.md)
+- [客服Agent-35-订单查询Workflow迁移说明.md](客服Agent-35-订单查询Workflow迁移说明.md)
+- [客服Agent-36-退货查询Workflow迁移说明.md](客服Agent-36-退货查询Workflow迁移说明.md)
+- [客服Agent-37-商品咨询Workflow迁移说明.md](客服Agent-37-商品咨询Workflow迁移说明.md)
+- [客服Agent-38-通用政策问答Workflow迁移说明.md](客服Agent-38-通用政策问答Workflow迁移说明.md)
+- [客服Agent-39-用户资料Workflow迁移说明.md](客服Agent-39-用户资料Workflow迁移说明.md)
+- [客服Agent-40-人工升级Workflow迁移说明.md](客服Agent-40-人工升级Workflow迁移说明.md)
+- [客服Agent-41-Phase7架构验收报告.md](客服Agent-41-Phase7架构验收报告.md)
+- [客服Agent-42-会话所有权边界改造说明.md](客服Agent-42-会话所有权边界改造说明.md)
+- [客服Agent-43-SessionStore持久化与恢复说明.md](客服Agent-43-SessionStore持久化与恢复说明.md)
+- [客服Agent-44-Capability幂等持久化与租约说明.md](客服Agent-44-Capability幂等持久化与租约说明.md)
+- [客服Agent-45-Liveness与Readiness健康探针说明.md](客服Agent-45-Liveness与Readiness健康探针说明.md)
+- [客服Agent-46-WorkflowStateMigrator注册链说明.md](客服Agent-46-WorkflowStateMigrator注册链说明.md)
+- [客服Agent-47-长期记忆TTL容量与脱敏说明.md](客服Agent-47-长期记忆TTL容量与脱敏说明.md)
+- [客服Agent-48-JWT统一认证与角色权限说明.md](客服Agent-48-JWT统一认证与角色权限说明.md)
+- [客服Agent-49-Trace统一脱敏与隐私边界说明.md](客服Agent-49-Trace统一脱敏与隐私边界说明.md)
+- [客服Agent-50-Monitor统一Turn结果与异常指标说明.md](客服Agent-50-Monitor统一Turn结果与异常指标说明.md)
+- [客服Agent-51-失败生命周期与可靠性故障注入说明.md](客服Agent-51-失败生命周期与可靠性故障注入说明.md)
+- [客服Agent-52-项目简历与面试完整手册.md](客服Agent-52-项目简历与面试完整手册.md)
+- [客服Agent-53-应用日志与MCP审计安全说明.md](客服Agent-53-应用日志与MCP审计安全说明.md)
+- [客服Agent-54-外部HTTP客户端超时与故障测试说明.md](客服Agent-54-外部HTTP客户端超时与故障测试说明.md)
+- [客服Agent-55-人工转接结果未知与假成功修复说明.md](客服Agent-55-人工转接结果未知与假成功修复说明.md)
+- [客服Agent-56-PendingHandoffStore持久化基础说明.md](客服Agent-56-PendingHandoffStore持久化基础说明.md)
+- [客服Agent-57-Outbox调用前准备与成功结果回放说明.md](客服Agent-57-Outbox调用前准备与成功结果回放说明.md)
+- [客服Agent-58-Outbox租约与后台有限恢复说明.md](客服Agent-58-Outbox租约与后台有限恢复说明.md)
+- [客服Agent-59-真实MySQL与Docker编排验收说明.md](客服Agent-59-真实MySQL与Docker编排验收说明.md)
+- [客服Agent-60-Capability执行中Deadline与结果未知说明.md](客服Agent-60-Capability执行中Deadline与结果未知说明.md)
+- [客服Agent-61-LLM重试上限与整轮时间预算说明.md](客服Agent-61-LLM重试上限与整轮时间预算说明.md)
+- [客服Agent-62-PendingHandoff租户隔离与复合键说明.md](客服Agent-62-PendingHandoff租户隔离与复合键说明.md)
+- [客服Agent-63-人工复核查询与CAS状态机说明.md](客服Agent-63-人工复核查询与CAS状态机说明.md)
 
 如果后续继续做二期功能，建议从下面候选项中选择，不建议同时铺开：
 

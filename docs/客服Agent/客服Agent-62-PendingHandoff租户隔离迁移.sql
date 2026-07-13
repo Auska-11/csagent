@@ -125,6 +125,18 @@ BEGIN
             DROP INDEX uk_cs_pending_handoff_idempotency;
     END IF;
 
+    -- 人工复核列表使用 tenant + status + (updated_at, outbox_id) 做 keyset 分页。
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'cs_pending_handoff'
+          AND index_name = 'idx_cs_pending_handoff_tenant_review'
+    ) THEN
+        ALTER TABLE cs_pending_handoff
+            ADD INDEX idx_cs_pending_handoff_tenant_review
+                (tenant_id, status, updated_at, outbox_id);
+    END IF;
+
     -- 结果表和租约表也必须使用复合主键，否则跨租户仍会回放结果或互相抢租约。
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.statistics

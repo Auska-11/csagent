@@ -30,7 +30,7 @@ import java.util.Properties;
  * 默认 memory 模式不会碰数据库，所以单元测试和 CI 仍然稳定。
  */
 @Component
-public class JdbcDatabaseClient {
+public class JdbcDatabaseClient implements JdbcDatabaseOperations {
 
     private static final int DEFAULT_CONNECT_TIMEOUT_MS = 3_000;
     private static final int DEFAULT_SOCKET_TIMEOUT_MS = 10_000;
@@ -121,9 +121,71 @@ public class JdbcDatabaseClient {
         return "jdbc".equals(mode);
     }
 
+    @Override
     public int update(String sql, Object... args) {
-        try (Connection connection = openConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
+        try (Connection connection = openConnection()) {
+            return executeUpdate(connection, sql, args);
+        } catch (SQLException e) {
+            throw sqlFailure("Failed to open JDBC connection for update", e);
+        }
+    }
+
+    @Override
+    public <T> Optional<T> queryOne(String sql, RowMapper<T> mapper, Object... args) {
+        List<T> rows = queryList(sql, mapper, args);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
+
+    @Override
+    public <T> List<T> queryList(String sql, RowMapper<T> mapper, Object... args) {
+        try (Connection connection = openConnection()) {
+            return executeQuery(connection, sql, mapper, args);
+        } catch (SQLException e) {
+            throw sqlFailure("Failed to open JDBC connection for query", e);
+        }
+    }
+
+    @Override
+    public long queryLong(String sql, Object... args) {
+        return queryOne(sql, resultSet -> resultSet.getLong(1), args).orElse(0L);
+    }
+
+    /**
+     * 在同一 JDBC Connection 中执行一组操作，并统一 commit/rollback。
+     *
+     * <p>回调里必须只使用传入的 operations；若重新调用外层 databaseClient，会打开另一条连接，
+     * 那些 SQL 就不属于当前事务。这个约束会在人工确认工单的 Repository 代码旁再次注释。</p>
+     */
+    public <T> T inTransaction(TransactionWork<T> work) {
+        if (work == null) {
+            throw new IllegalArgumentException("transaction work cannot be null");
+        }
+        try (Connection connection = openConnection()) {
+            connection.setAutoCommit(false);
+            JdbcDatabaseOperations operations = new ConnectionBoundOperations(connection);
+            T result;
+            try {
+                result = work.execute(operations);
+            } catch (RuntimeException | Error failure) {
+                rollback(connection, failure);
+                throw failure;
+            }
+            try {
+                connection.commit();
+            } catch (SQLException commitFailure) {
+                // commit 失败时结果可能未知，但仍必须显式尝试 rollback，不能把行为交给不同驱动的
+                // Connection.close()。rollback 若也失败会作为 suppressed 保留。
+                rollback(connection, commitFailure);
+                throw sqlFailure("Failed to commit JDBC transaction", commitFailure);
+            }
+            return result;
+        } catch (SQLException e) {
+            throw sqlFailure("Failed to execute JDBC transaction", e);
+        }
+    }
+
+    private int executeUpdate(Connection connection, String sql, Object... args) {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
             // 超时要在 executeUpdate/executeQuery 之前设置，才能覆盖真正的 SQL 执行阶段。
             statement.setQueryTimeout(queryTimeoutSeconds);
             bindArgs(statement, args);
@@ -136,14 +198,11 @@ public class JdbcDatabaseClient {
         }
     }
 
-    public <T> Optional<T> queryOne(String sql, RowMapper<T> mapper, Object... args) {
-        List<T> rows = queryList(sql, mapper, args);
-        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
-    }
-
-    public <T> List<T> queryList(String sql, RowMapper<T> mapper, Object... args) {
-        try (Connection connection = openConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
+    private <T> List<T> executeQuery(Connection connection,
+                                     String sql,
+                                     RowMapper<T> mapper,
+                                     Object... args) {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setQueryTimeout(queryTimeoutSeconds);
             bindArgs(statement, args);
             try (ResultSet resultSet = statement.executeQuery()) {
@@ -158,8 +217,17 @@ public class JdbcDatabaseClient {
         }
     }
 
-    public long queryLong(String sql, Object... args) {
-        return queryOne(sql, resultSet -> resultSet.getLong(1), args).orElse(0L);
+    private void rollback(Connection connection, Throwable originalFailure) {
+        try {
+            connection.rollback();
+        } catch (SQLException rollbackFailure) {
+            // 保留真正触发回滚的业务/数据库异常，并把回滚失败作为 suppressed 证据交给内部日志。
+            originalFailure.addSuppressed(rollbackFailure);
+        }
+    }
+
+    private IllegalStateException sqlFailure(String message, SQLException cause) {
+        return new IllegalStateException(message, cause);
     }
 
     private Connection openConnection() throws SQLException {
@@ -228,5 +296,36 @@ public class JdbcDatabaseClient {
     @FunctionalInterface
     public interface RowMapper<T> {
         T map(ResultSet resultSet) throws SQLException;
+    }
+
+    @FunctionalInterface
+    public interface TransactionWork<T> {
+        T execute(JdbcDatabaseOperations operations);
+    }
+
+    /** 所有方法都复用同一个事务 Connection，不负责 commit 或 close。 */
+    private final class ConnectionBoundOperations implements JdbcDatabaseOperations {
+
+        private final Connection connection;
+
+        private ConnectionBoundOperations(Connection connection) {
+            this.connection = connection;
+        }
+
+        @Override
+        public int update(String sql, Object... args) {
+            return executeUpdate(connection, sql, args);
+        }
+
+        @Override
+        public <T> Optional<T> queryOne(String sql, RowMapper<T> mapper, Object... args) {
+            List<T> rows = queryList(sql, mapper, args);
+            return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+        }
+
+        @Override
+        public <T> List<T> queryList(String sql, RowMapper<T> mapper, Object... args) {
+            return executeQuery(connection, sql, mapper, args);
+        }
     }
 }
