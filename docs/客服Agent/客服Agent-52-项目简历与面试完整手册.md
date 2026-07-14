@@ -1,9 +1,10 @@
-# 客服 Agent 项目简历与面试完整手册
+# 客服 Agent 项目完整文档与简历面试手册（Phase 9.5 终版）
 
 > 整理日期：2026-07-14
 > 代码基线：Phase 9.5，Legacy 执行链清理、Maven Modules 决策与最终验收完成
 > 验证结果：clean test 共 499 项全绿；真实 MySQL IT、JAR、Agent 镜像、完整 Compose 业务链路与数据库掉线恢复均已复验
 > 使用原则：只描述代码已经证明的能力；规划中的能力必须明确说“尚未完成”
+> 验收证据：[`客服Agent-73-Phase9最终验收与架构改造完成说明.md`](客服Agent-73-Phase9最终验收与架构改造完成说明.md)
 
 ## 1. 这份文档怎么用
 
@@ -132,6 +133,63 @@ Java 17、Spring Boot、LangChain4j、Agent、Workflow、MCP、RAG、Qdrant、JW
 - 建立 JWT/RBAC 基线，生产仍需独立 IdP、非对称密钥和撤销机制。
 - 当前小规模离线评测集通过，不代表开放流量准确率。
 
+### 3.7 按求职方向选择简历版本
+
+同一个项目不应该对所有岗位使用完全相同的描述。下面三组可以直接作为选材模板，但只能选择与你要投
+岗位最相关的 3 至 5 条，不要把三组全部堆进一页简历。
+
+#### Java 后端方向
+
+推荐突出：
+
+1. 基于 Spring Boot、Spring Security 和 JDBC 构建多租户客服后端，使用
+   `(tenantId, userId, conversationId)` 作为会话与资源所有权边界。
+2. 设计 memory/JDBC 双 SessionStore、版本 CAS 和注册式状态迁移链，解决多轮任务恢复、并发覆盖和
+   Schema 演进问题。
+3. 为退货申请和人工转接等副作用建立幂等键、唯一 Claim、租约续期和结果回放；人工转接额外使用
+   调用前 Outbox 保存结果未知状态，明确区分状态一致性与副作用防重。
+4. 使用 JWT Resource Server、RBAC、ADMIN 复核 API、追加式审计和统一异常响应保护管理面与业务接口。
+5. 通过真实 MySQL、数据库掉线/readiness 恢复和 Docker Compose 验证持久化及部署边界。
+
+#### AI 应用与 Agent 方向
+
+推荐突出：
+
+1. 将客服 Agent 拆成 Skill Package、Workflow、Runtime、Action Handler 和 Capability Provider，使用
+   确定性状态机控制高风险步骤，LLM 只处理模糊意图和自然语言生成。
+2. 统一 Local/MCP Capability 契约，REST 与 JSON-RPC `tools/list`、`tools/call` 共用 Catalog，支持
+   Provider 配置替换、Schema 校验、有限重试和基础熔断。
+3. 实现 Markdown 本地检索与 Embedding + Qdrant 双 RAG 模式，包含查询改写、多路召回、rerank、
+   `knowledge_miss` Trace 和外部依赖失败回退。
+4. 建立 Trace、Monitor、用户反馈、Eval 候选审核和离线评测闭环，用确定性测试隔离真实模型波动。
+5. 使用 9 个 Skill Package 管理 Prompt、references、版本与 Capability allowlist，避免把声明式 Skill
+   与可执行 Java Workflow 混为一谈。
+
+#### 实习或校招精简方向
+
+可以使用下面四条：
+
+- 使用 Java 17、Spring Boot 和 LangChain4j 完成电商客服 Agent，覆盖订单、商品、退货、政策和人工
+  服务等场景。
+- 通过 Workflow 状态机实现多轮追问和确认，并使用 MySQL 保存会话，使服务重启后可以恢复任务。
+- 接入 MCP/JSON-RPC、RAG、JWT/RBAC 和 Trace，支持能力发现、知识检索、权限控制和调用链排查。
+- 编写 499 项默认测试、36 条离线评测样本，并完成真实 MySQL 与 Docker Compose 故障恢复验收。
+
+### 3.8 简历亮点与证据对应表
+
+面试时每说一个亮点，都应该能立刻给出“代码位置 + 自动化证据 + 已知边界”。
+
+| 简历亮点 | 代码证据 | 测试或验收证据 | 必须承认的边界 |
+| --- | --- | --- | --- |
+| Workflow 可扩展 | `WorkflowRegistry`、`WorkflowRouter`、各业务 Workflow | `WarrantySkillExtensionProofTest`、路由 Eval | 不是运行时热卸载 |
+| Local/MCP 可替换 | `CapabilityGateway`、`McpCapabilityProvider` | Local/MCP 契约测试、MCP Controller 测试 | Catalog 不能运行中原子替换 |
+| 会话并发安全 | `ConversationStore`、`JdbcSessionStore` | Session CAS 与并发测试 | 删除后仍有 generation/ABA 风险 |
+| 副作用幂等 | `JdbcCapabilityIdempotencyStore`、Handoff Outbox | 结果回放、租约和真实 MySQL IT | 不是完整 exactly-once |
+| JWT/RBAC | `HttpSecurityConfiguration`、`JwtPrincipalConverter` | Security Integration 与角色边界测试 | 生产仍需独立 IdP 和密钥轮换 |
+| RAG 双模式 | `KnowledgeTools`、`QdrantKnowledgeVectorStore` | 8 条召回 Eval 与回退测试 | 样本小，不代表线上准确率 |
+| 可观测与质量闭环 | `TraceDataSanitizer`、`MonitorService` | Trace、Monitor、反馈候选与 Eval 测试 | 指标当前仍是单 JVM 聚合 |
+| 容器故障恢复 | Dockerfile、`docker-compose.yml`、健康指标 | Phase 9.5 MySQL 掉线/恢复验收 | 尚未验证滚动发布和双 Agent 进程 |
+
 ## 4. 当前架构
 
 ### 4.1 总体调用链
@@ -216,6 +274,32 @@ AgentRuntime         = 通用执行内核
 - 新 Prompt 和资料：新增 Agent Skill Package。
 
 Runtime 只看统一接口和 ActionFlow，因此核心循环不会随着客服业务数量线性膨胀。
+
+### 4.5 架构是怎样逐步演进的
+
+这个项目不是一开始就得到当前结构，而是通过“先冻结行为，再建立接口，逐个迁移，最后删除兼容层”
+演进而来。面试时讲清这个过程，比只展示最终目录更能体现工程判断。
+
+~~~mermaid
+flowchart LR
+    A["早期 Demo<br/>大 CustomerServiceSkill<br/>ToolManager / ToolRegistry"]
+    B["建立边界<br/>AgentWorkflow API<br/>Capability API<br/>Legacy Adapter"]
+    C["迁移业务<br/>独立 Workflow<br/>Action Handler<br/>Local/MCP Provider"]
+    D["可靠性收口<br/>JWT / CAS / 幂等<br/>Outbox / Trace / Eval"]
+    E["Phase 9 清理<br/>删除 Legacy 链<br/>统一 Schema<br/>包边界门禁"]
+    A --> B --> C --> D --> E
+~~~
+
+关键策略：
+
+1. 先用 Characterization Test 和路由 Eval 冻结旧行为，避免“重构后能启动，但业务悄悄变了”。
+2. 初期允许 Adapter 让新旧接口并存，每迁移一批调用方就缩小 Legacy 允许清单。
+3. 订单、退货、政策等业务逐个迁移，任何一批都保持测试可运行和提交可回退。
+4. 新主链路稳定后再物理删除旧类、重复 Schema 和过期测试，不永久维护双轨实现。
+5. 最后通过真实 MySQL、JAR 和 Docker/Compose 验收，证明测试类路径通过不等于运行制品通过。
+
+这段经历可以总结为：项目不是通过“大爆炸式重写”获得可扩展性，而是通过稳定契约、行为基线和分批
+替换控制重构风险。
 
 ## 5. 一轮请求是怎样执行的
 
@@ -309,6 +393,23 @@ Spring 会自动收集 ActionHandler Bean。重复处理器在启动时失败，
 - user.lookup
 - knowledge.search
 - handoff.request
+
+7 个 Local Provider 与 9 个 Capability 的关系：
+
+| Capability ID | Local Provider ID | 主要职责 | 是否产生业务副作用 |
+| --- | --- | --- | --- |
+| `order.lookup` | `local-order` | 查询认证用户拥有的单个订单 | 否 |
+| `order.list-by-user` | `local-order` | 查询认证用户的订单列表 | 否 |
+| `product.search` | `local-product-catalog` | 搜索目录内商品 | 否 |
+| `product.lookup` | `local-product-catalog` | 按商品 ID 查询详情 | 否 |
+| `return.apply` | `local-return-domain` | 创建退货申请 | 是 |
+| `return.lookup` | `local-return-lookup` | 查询退货进度 | 否 |
+| `user.lookup` | `local-user-profile` | 查询当前认证用户资料 | 否 |
+| `knowledge.search` | `local-knowledge-search` | 检索客服知识库 | 否 |
+| `handoff.request` | `local-handoff` | 创建或恢复人工转接工单 | 是 |
+
+一个 Provider 可以实现多个语义接近、共享同一领域依赖的 Capability，但不能重新引入一个集中式 Registry
+承接所有业务。这样既避免每个 ID 都产生机械小类，也不会回到“一个 ToolManager 管全部能力”的结构。
 
 CapabilityDefinition 统一声明：
 
@@ -554,6 +655,65 @@ Monitor 还统计：
 
 GitHub Actions 会在 push 和 Pull Request 时使用 JDK 17 执行 Maven 测试。
 
+### 6.14 Phase 9.5 最终运行验收
+
+最终验收不只运行单元测试，还从四个层次验证真实制品：
+
+| 验收层次 | 实际结果 | 证明的边界 |
+| --- | --- | --- |
+| 默认测试 | 499 项，失败/错误/跳过均为 0 | 代码行为和架构门禁 |
+| 真实 MySQL IT | `RealMySqlPersistenceIT` 通过 | JDBC 方言、表结构与持久化契约 |
+| 独立 JAR | liveness/readiness 200，内含 9 个 manifest | 正式 classpath 与资源打包 |
+| Docker/Compose | Agent/MySQL healthy，订单和政策链路通过 | 镜像、环境变量和网络依赖 |
+| MCP/REST Catalog | 两个入口均返回同一组 9 个 Capability | Schema 单一来源 |
+| 故障注入 | MySQL 停止时 live=200、ready=503，恢复后 ready=200 | 健康探针和依赖恢复语义 |
+| 清理 | 容器与网络已停止，数据卷保留 | 验收环境没有遗留运行进程 |
+
+订单验收 Trace 明确出现 `order_query -> order.lookup -> local-order`；政策验收 Trace 明确出现
+`policy_qa -> knowledge.search -> local-knowledge-search`。这两条证据说明请求经过的是当前
+Workflow/Capability 主链路，而不是只验证接口返回 HTTP 200。
+
+完整命令、镜像与 JAR 摘要、故障恢复过程见
+[`客服Agent-73-Phase9最终验收与架构改造完成说明.md`](客服Agent-73-Phase9最终验收与架构改造完成说明.md)。
+
+### 6.15 主要 HTTP 接口
+
+| 接口 | 角色 | 用途 |
+| --- | --- | --- |
+| `POST /api/auth/demo/tokens` | 公开但仅限 Demo 配置开启 | 签发本地短期 JWT，响应禁止缓存 |
+| `POST /api/chat/send` | CUSTOMER / ADMIN | 发送一轮聊天请求 |
+| `GET/DELETE /api/chat/conversations/{id}/memory` | CUSTOMER / ADMIN | 查询或清除本人会话记忆 |
+| `GET/DELETE /api/chat/users/{id}/memory` | CUSTOMER / ADMIN | 查询或清除本人长期偏好 |
+| `GET /api/tools` | ADMIN | 查看 Capability Catalog 与 Schema |
+| `GET /api/mcp/tools` | MCP_CLIENT / ADMIN | 查看 MCP Adapter 能力列表 |
+| `POST /api/mcp/tools/call` | MCP_CLIENT / ADMIN | 通过 REST Adapter 调用能力 |
+| `POST /mcp` | MCP_CLIENT / ADMIN | 调用 MCP JSON-RPC 子集 |
+| `/api/monitor/**` | 按反馈或管理操作区分 CUSTOMER / ADMIN | 查看指标、反馈和 Eval 候选 |
+| `/api/eval/**` | ADMIN | 查看评测报告和趋势 |
+| `/api/admin/pending-handoffs/**` | ADMIN | 人工转接复核、重试、确认、核对和关闭 |
+| `/actuator/health/liveness` | 公开健康探针 | JVM 是否存活 |
+| `/actuator/health/readiness` | 公开健康探针 | 核心依赖是否允许接收流量 |
+
+接口的重点不只是数量，而是身份来源统一：Controller 不接受请求体自报的 tenantId/userId 作为最终
+权限依据，业务上下文来自 Spring Security 验证后的 JWT Principal。
+
+### 6.16 可切换运行模式
+
+| 维度 | 默认模式 | 可选模式 | 设计目的 |
+| --- | --- | --- | --- |
+| Persistence | `memory` | `jdbc` | 本地演示稳定，生产化实验使用 MySQL |
+| Capability Provider | `local` | `mcp-remote` / `hybrid` | Workflow 不感知本地或远程实现 |
+| RAG | `local` | `embedding-qdrant` | CI 无外部依赖，高级模式验证向量检索 |
+| Handoff | `memory` | `after-sales-http` | 本地模拟与真实售后平台联调分离 |
+| Demo JWT Issuer | 本地默认开启 | 共享/生产环境关闭 | 学习便利与生产身份边界分离 |
+
+Compose 默认使用 JDBC MySQL，但仓库直接运行时默认 memory。面试时要明确“默认值取决于运行入口”，
+不要笼统说项目永远使用 MySQL 或永远使用内存。
+
+Provider ID 也有一个容易被追问的细节：`mcp-remote` 模式保留远端 canonical Capability ID，使现有
+Workflow 无需修改；`hybrid` 同时保留本地能力，因此远端 ID 会增加 `mcp.<serverId>.` 前缀，避免同名
+Catalog 冲突。不能简单说 hybrid 下本地和远端会注册成两个完全相同的 ID。
+
 ## 7. 最值得在面试中讲的设计
 
 ### 7.1 决策和执行分离
@@ -701,6 +861,29 @@ Phase 9.5 的命令、制品摘要、订单/政策 Trace 和故障恢复证据�
 - 建立 36 条离线评测样本、JSON 报告、历史趋势和反馈回归闭环。
 - 迁移期用允许清单和行为基线保留可回滚路径，稳定后在 Phase 9 物理删除 Legacy 链，避免长期双轨维护。
 
+### 11.1 按岗位选择 STAR 主线
+
+不要一次讲完所有难点。根据岗位选择一条主线讲深，再把其他能力作为补充。
+
+| 主线 | 适合岗位 | Situation / Task | Action | Result |
+| --- | --- | --- | --- | --- |
+| 大类拆分与渐进迁移 | Java、架构、Agent | 新业务持续进入大 Skill 和 Runtime，修改风险上升 | 冻结行为，建立 Workflow/Capability 接口，逐批迁移并收缩 Legacy 清单 | 形成唯一主链路，Phase 9 物理删除兼容层，499 项默认测试通过 |
+| Provider 成功但会话保存失败 | Java 后端、分布式系统 | 用户重试可能重复执行退货等副作用 | 分离 Session CAS 与 Capability 幂等，增加 Claim、租约、续租和结果回放 | 测试证明重试只补写 Session，不重复调用 Provider；同时诚实保留 exactly-once 边界 |
+| Agent 质量从黑盒变成证据 | AI 应用、测试、平台 | 只看最终回复无法判断路由、工具和失败原因 | 建立 Trace、脱敏、Monitor、反馈候选和五类离线 Eval | 36 条回归样本、JSON 趋势和在线反馈闭环，问题可以定位到具体执行阶段 |
+| MySQL 故障下的健康语义 | Java 后端、云原生 | 数据库不可用不等于 JVM 已崩溃 | 分离 liveness/readiness，给 JDBC 设置连接/Socket/查询超时并做故障注入 | MySQL 掉线时 live=200、ready=503，恢复后 ready=200，容器无需错误重启 JVM |
+
+### 11.2 STAR 回答时的结构
+
+每条主线都按下面顺序讲：
+
+1. 用一两句话说明真实问题，不先罗列技术名词。
+2. 说明为什么直觉方案不够，例如“只加本地锁不能解决多实例”。
+3. 画出关键状态或调用顺序，重点讲你做的取舍。
+4. 给出测试、Trace 或故障注入证据，不编造吞吐量和业务提升比例。
+5. 主动说明剩余窗口和下一步，让答案有工程边界。
+
+一个合格回答应该同时包含“为什么、怎么做、如何证明、哪里还不够”，而不只是背诵类名。
+
 ## 12. 项目介绍话术
 
 ### 12.1 30 秒版本
@@ -809,6 +992,66 @@ Liveness 只判断 JVM 是否活着；Readiness 判断实例当前是否适合�
 ### Q20：如果给你两周继续做，你先做什么？
 
 先推动售后平台补齐按租户和 Idempotency-Key 的只读查询契约，再实现 HTTP 查询 Adapter；随后做两个真实 Agent 进程的租约接管故障注入，并补 LLM 线程池指标、按租户隔离和退货唯一约束。这些比继续增加新客服意图更能降低生产风险。
+
+### Q21：这么大的重构怎样避免一次改坏所有功能？
+
+先用 Characterization Test、路由基线和 Eval 冻结行为，再建立新接口与临时 Adapter。调用方按批迁移，
+每批都运行回归并独立提交；Legacy 依赖测试使用“允许清单只能收缩”防止新代码接回旧入口。新链路稳定
+后才物理删除旧类。这是渐进替换，不是同时重写业务、协议和数据。
+
+### Q22：Skill Package 的 Capability allowlist 真正在哪里生效？
+
+Registry 启动时先验证 manifest 中的 Capability ID 必须存在；运行时 `CapabilityActionHandler` 和
+`HandoffActionHandler` 再通过 `SkillManager` 检查当前 Package 是否允许该能力。空 allowlist 表示最小
+权限，不是漏配。即使 Workflow 错误地产生 CapabilityAction，Handler 仍会失败关闭并记录安全拒绝。
+
+### Q23：Provider 已经开始执行，但等待超时怎么办？
+
+如果是只读能力，Gateway 返回 `CAPABILITY_DEADLINE_EXCEEDED` 或中断类技术失败；如果是已经启动的
+副作用能力，不能直接说失败，而是返回 `CAPABILITY_RESULT_UNKNOWN`，提示查询或人工核对后再重试。
+人工转接还会保留 `RESULT_UNKNOWN` Outbox 状态。这样避免把“可能成功”误报为“确定失败”并立即重复执行。
+
+### Q24：为什么 Capability 既要 Java DTO，又要输入输出 Schema？
+
+Java DTO 保证进程内类型安全，Schema 服务于 MCP 发现、前端 Inspector、参数校验和跨进程协议。两者都
+从 Capability 契约维护，不能让 REST、MCP 和 Provider 各自定义一套结构。Phase 9 删除旧 Tool Schema，
+就是为了减少多权威来源漂移。
+
+### Q25：没有稳定真实模型时，怎样保证测试可靠？
+
+高风险业务用规则与状态机测试；LLM 接口使用 Fake/Stub 验证 Prompt、解析、超时和降级链路；默认
+LLM-as-Judge 也使用 Fake Judge 验证评测基础设施。真实模型评测作为显式脚本运行，不放进确定性 CI。
+因此测试能稳定发现工程回归，但不会把 Fake Judge 分数冒充真实模型质量。
+
+### Q26：已经保存的 Workflow 状态以后怎样升级？
+
+每个 Workflow payload 带独立 `schemaVersion`。`WorkflowStateMigrationRegistry` 在启动时收集迁移器并
+检查重复、跳版本和缺口，恢复时按 `v1 -> v2 -> v3` 逐步迁移，任一步失败就整体失败关闭。Runtime 和
+Codec 不包含 return/order 等业务特判，某个 Workflow 只在自己的包里新增迁移器。
+
+### Q27：项目为什么不能直接说是完整 Multi-Agent？
+
+当前确实有售前、售后、投诉和通用专家域路由，并记录 `agent_routed` Trace，但真正决定执行哪个业务
+流程的是同一进程内的 `WorkflowRouter`。它不是多个自治 Agent 的消息协作、任务委派或分布式运行时。
+准确说法是“专家域路由 + 多个独立 Workflow”。
+
+### Q28：项目实现的是完整 MCP 吗？
+
+项目实现了当前需要的 HTTP JSON-RPC 子集：`initialize`、`tools/list`、`tools/call`，并有 Bearer 服务
+身份、协议校验、有限重试、基础熔断和 TTL 发现缓存。尚未实现完整生命周期、动态 Catalog 原子替换、
+签名用户委托和细粒度 capability scope，因此不能宣称覆盖 MCP 全部规范能力。
+
+### Q29：为什么删除大 CustomerServiceSkill 后还保留 customer_service？
+
+保留的是稳定 Workflow ID，不是旧 Java 实现。Skill manifest 和已持久化会话可能引用
+`customer_service`，直接改 ID 会破坏兼容性。Phase 9 用 `GeneralCustomerServiceWorkflow` 替换实现，
+只处理闲聊、感谢和模糊诉求，并把 allowlist 收紧为空。
+
+### Q30：如何回答“499 个测试是不是为了堆数量”？
+
+不要只报数字，要按风险说明覆盖层次：Workflow 状态机、Handler、Capability 契约、JWT/角色、Session
+CAS、幂等租约、MCP 协议、Trace 脱敏、Eval、架构边界和 Spring 集成测试。再说明真实 MySQL IT、JAR 和
+Compose 故障注入是独立证据。测试数量只表示规模，真正价值是关键失败路径有可重复断言。
 
 ## 14. 面试演示路线
 
@@ -920,3 +1163,50 @@ Controller
 ### 最后一句总结
 
 这个项目最有价值的部分不是“接入了大模型”，而是把一个容易堆成大类的客服 Demo，逐步改造成了职责清晰、能够扩展、可以恢复、具备安全边界并且有自动化证据的 Agent 工程。
+
+## 17. 面试准备执行清单
+
+### 17.1 三天准备法
+
+第一天：理解，不背稿。
+
+- 不看文档画出 Controller 到 Provider 的主链路。
+- 用自己的话解释 Skill Package、Workflow、Capability 和 MCP 的区别。
+- 逐行阅读订单查询与退货申请两个 Workflow。
+- 解释 Session CAS 为什么不能替代副作用幂等。
+
+第二天：组织表达。
+
+- 从第 3.7 节选择与你目标岗位匹配的简历版本。
+- 口述 30 秒和 2 分钟项目介绍，各录音一次。
+- 从第 11.1 节选择一条 STAR 主线，控制在 3 分钟内。
+- 随机回答第 13 节十道题，答案必须包含一个代码类名和一个边界。
+
+第三天：验证与演示。
+
+- 跑一次默认测试，确认报告仍是当前基线。
+- 按第 14 节完整演示订单、多轮退货、RAG、安全和 Trace。
+- 模拟数据库不可用问题，口述 liveness/readiness 预期，不必在正式面试中现场停库。
+- 检查终端、浏览器和文档中没有 API Key、完整 JWT 或真实用户数据。
+
+### 17.2 面试前最终自检
+
+- [ ] 我能在 60 秒内讲清项目解决的业务问题，而不是只报技术栈。
+- [ ] 我能从空白画出 Runtime、Workflow、Handler、Gateway、Provider。
+- [ ] 我能解释一个完整请求如何恢复状态、调用能力并保存 Session。
+- [ ] 我能说清 Session CAS、Capability 幂等和 Handoff Outbox 各自解决什么。
+- [ ] 我能给出至少一条失败路径和对应 Trace/errorCode。
+- [ ] 我能说明 499 项测试按哪些风险层次组成。
+- [ ] 我能主动承认三个不足，并给出有优先级的下一步。
+- [ ] 我不会把 Fake Judge、基础 MCP 子集或专家域路由夸大成生产模型指标、完整 MCP 或分布式 Multi-Agent。
+
+### 17.3 回答陌生追问的通用框架
+
+遇到没有背过的问题时，按四步回答：
+
+1. 先确定边界：问题属于状态、执行、副作用、协议、安全还是观测。
+2. 再说当前实现：指出负责该问题的接口或组件。
+3. 给出证据：测试、Trace、错误码或故障注入结果。
+4. 最后说限制：当前方案在哪个并发、崩溃或生产环境下仍不够。
+
+这套框架比猜一个“标准答案”更适合项目面试，因为它能让面试官看到你真正理解了代码中的责任边界。
