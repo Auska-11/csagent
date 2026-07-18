@@ -2,8 +2,10 @@ package com.smartcs.smart_cs_agent.session.jdbc;
 
 import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStateSnapshot;
-import com.smartcs.smart_cs_agent.persistence.JdbcDatabaseClient;
 import com.smartcs.smart_cs_agent.persistence.JdbcDuplicateKeyException;
+import com.smartcs.smart_cs_agent.persistence.MyBatisMapperExecutor;
+import com.smartcs.smart_cs_agent.persistence.mybatis.mapper.SessionMapper;
+import com.smartcs.smart_cs_agent.persistence.mybatis.row.SessionRow;
 import com.smartcs.smart_cs_agent.session.api.SessionRecord;
 import com.smartcs.smart_cs_agent.session.api.SessionStore;
 import com.smartcs.smart_cs_agent.session.api.SessionVersionConflictException;
@@ -19,55 +21,38 @@ import java.util.Optional;
 @ConditionalOnProperty(name = "smartcs.persistence.mode", havingValue = "jdbc")
 public class JdbcSessionStore implements SessionStore {
 
-    private final JdbcDatabaseClient databaseClient;
+    private final SessionMapper mapper;
+    private final MyBatisMapperExecutor mapperExecutor;
     private final ConversationStateCodec codec;
 
-    public JdbcSessionStore(JdbcDatabaseClient databaseClient, ConversationStateCodec codec) {
-        this.databaseClient = databaseClient;
+    public JdbcSessionStore(SessionMapper mapper,
+                            MyBatisMapperExecutor mapperExecutor,
+                            ConversationStateCodec codec) {
+        this.mapper = Objects.requireNonNull(mapper, "mapper cannot be null");
+        this.mapperExecutor = Objects.requireNonNull(
+                mapperExecutor,
+                "mapperExecutor cannot be null"
+        );
         this.codec = codec;
         initTable();
     }
 
     private void initTable() {
-        databaseClient.update("""
-                CREATE TABLE IF NOT EXISTS cs_agent_session (
-                    tenant_id VARCHAR(64) NOT NULL,
-                    user_id VARCHAR(64) NOT NULL,
-                    conversation_id VARCHAR(128) NOT NULL,
-                    state_json LONGTEXT NOT NULL,
-                    schema_version INT NOT NULL,
-                    version BIGINT NOT NULL,
-                    created_at BIGINT NOT NULL,
-                    updated_at BIGINT NOT NULL,
-                    PRIMARY KEY (tenant_id, user_id, conversation_id),
-                    INDEX idx_cs_agent_session_updated_at (updated_at)
-                )
-                """);
+        mapperExecutor.run(mapper::createTable);
     }
 
     @Override
     public Optional<SessionRecord> load(ConversationKey key) {
-        return databaseClient.queryOne("""
-                        SELECT state_json, schema_version, version, updated_at
-                        FROM cs_agent_session
-                        WHERE tenant_id = ? AND user_id = ? AND conversation_id = ?
-                        """,
-                resultSet -> {
-                    int schemaVersion = resultSet.getInt("schema_version");
-                    ConversationStateSnapshot snapshot = codec.decode(
-                            resultSet.getString("state_json"),
-                            schemaVersion
-                    );
-                    return new SessionRecord(
-                            key,
-                            snapshot,
-                            resultSet.getLong("version"),
-                            resultSet.getLong("updated_at")
-                    );
-                },
+        SessionRow row = mapperExecutor.execute(() -> mapper.find(
                 key.tenantId(),
                 key.userId(),
-                key.conversationId());
+                key.conversationId()
+        ));
+        if (row == null) {
+            return Optional.empty();
+        }
+        ConversationStateSnapshot snapshot = codec.decode(row.stateJson(), row.schemaVersion());
+        return Optional.of(new SessionRecord(key, snapshot, row.version(), row.updatedAt()));
     }
 
     @Override
@@ -94,20 +79,15 @@ public class JdbcSessionStore implements SessionStore {
 
         if (expectedVersion == 0) {
             try {
-                changedRows = databaseClient.update("""
-                        INSERT INTO cs_agent_session(
-                            tenant_id, user_id, conversation_id, state_json,
-                            schema_version, version, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
+                changedRows = mapperExecutor.execute(() -> mapper.insert(
                         key.tenantId(),
                         key.userId(),
                         key.conversationId(),
                         stateJson,
                         snapshot.schemaVersion(),
                         nextVersion,
-                        now,
-                        now);
+                        now
+                ));
             } catch (JdbcDuplicateKeyException duplicateKey) {
                 // 复合主键已被另一个执行者创建，读取实际版本后转成统一 CAS 冲突。
                 Optional<SessionRecord> existing = load(key);
@@ -121,25 +101,16 @@ public class JdbcSessionStore implements SessionStore {
                 throw duplicateKey;
             }
         } else {
-            changedRows = databaseClient.update("""
-                    UPDATE cs_agent_session
-                    SET state_json = ?,
-                        schema_version = ?,
-                        version = ?,
-                        updated_at = ?
-                    WHERE tenant_id = ?
-                      AND user_id = ?
-                      AND conversation_id = ?
-                      AND version = ?
-                    """,
-                    stateJson,
-                    snapshot.schemaVersion(),
-                    nextVersion,
-                    now,
+            changedRows = mapperExecutor.execute(() -> mapper.updateCas(
                     key.tenantId(),
                     key.userId(),
                     key.conversationId(),
-                    expectedVersion);
+                    stateJson,
+                    snapshot.schemaVersion(),
+                    nextVersion,
+                    expectedVersion,
+                    now
+            ));
         }
 
         if (changedRows != 1) {
@@ -154,17 +125,12 @@ public class JdbcSessionStore implements SessionStore {
         if (expectedVersion <= 0) {
             throw new IllegalArgumentException("expectedVersion must be positive");
         }
-        int changedRows = databaseClient.update("""
-                DELETE FROM cs_agent_session
-                WHERE tenant_id = ?
-                  AND user_id = ?
-                  AND conversation_id = ?
-                  AND version = ?
-                """,
+        int changedRows = mapperExecutor.execute(() -> mapper.deleteCas(
                 key.tenantId(),
                 key.userId(),
                 key.conversationId(),
-                expectedVersion);
+                expectedVersion
+        ));
         if (changedRows == 1) {
             return true;
         }

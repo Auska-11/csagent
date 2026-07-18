@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smartcs.smart_cs_agent.persistence.mybatis.mapper.OrderMapper">
+    <resultMap id="orderResult" type="com.smartcs.smart_cs_agent.model.Order">
+        <constructor>
+            <arg column="order_id" javaType="java.lang.String"/>
+            <arg column="user_id" javaType="java.lang.String"/>
+            <arg column="product_id" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="tracking_no" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <update id="createTable">
+        CREATE TABLE IF NOT EXISTS cs_order (
+            order_id VARCHAR(64) PRIMARY KEY,
+            user_id VARCHAR(64) NOT NULL,
+            product_id VARCHAR(64) NOT NULL,
+            status VARCHAR(64) NOT NULL,
+            tracking_no VARCHAR(128)
+        )
+    </update>
+
+    <insert id="upsert">
+        INSERT INTO cs_order(order_id, user_id, product_id, status, tracking_no)
+        VALUES (#{orderId}, #{userId}, #{productId}, #{status}, #{trackingNo})
+        ON DUPLICATE KEY UPDATE
+            user_id = VALUES(user_id),
+            product_id = VALUES(product_id),
+            status = VALUES(status),
+            tracking_no = VALUES(tracking_no)
+    </insert>
+
+    <select id="findByOrderId" resultMap="orderResult">
+        SELECT order_id, user_id, product_id, status, tracking_no
+        FROM cs_order
+        WHERE order_id = #{orderId}
+    </select>
+
+    <select id="findByUserId" resultMap="orderResult">
+        SELECT order_id, user_id, product_id, status, tracking_no
+        FROM cs_order
+        WHERE user_id = #{userId}
+        ORDER BY order_id
+    </select>
+</mapper>

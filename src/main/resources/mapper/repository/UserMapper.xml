@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smartcs.smart_cs_agent.persistence.mybatis.mapper.UserMapper">
+    <resultMap id="userResult" type="com.smartcs.smart_cs_agent.model.User">
+        <constructor>
+            <arg column="user_id" javaType="java.lang.String"/>
+            <arg column="name" javaType="java.lang.String"/>
+            <arg column="phone" javaType="java.lang.String"/>
+            <arg column="token" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <update id="createTable">
+        CREATE TABLE IF NOT EXISTS cs_user (
+            user_id VARCHAR(64) PRIMARY KEY,
+            name VARCHAR(128) NOT NULL,
+            phone VARCHAR(64),
+            token VARCHAR(128) NOT NULL UNIQUE
+        )
+    </update>
+
+    <insert id="upsert">
+        INSERT INTO cs_user(user_id, name, phone, token)
+        VALUES (#{userId}, #{name}, #{phone}, #{token})
+        ON DUPLICATE KEY UPDATE
+            name = VALUES(name),
+            phone = VALUES(phone),
+            token = VALUES(token)
+    </insert>
+
+    <select id="findByUserId" resultMap="userResult">
+        SELECT user_id, name, phone, token
+        FROM cs_user
+        WHERE user_id = #{userId}
+    </select>
+
+    <select id="findByToken" resultMap="userResult">
+        SELECT user_id, name, phone, token
+        FROM cs_user
+        WHERE token = #{token}
+    </select>
+</mapper>

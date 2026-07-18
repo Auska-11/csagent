@@ -25,6 +25,11 @@ spring:
   application:
     name: smart-cs-agent
 
+mybatis:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
 smartcs:
   agent:
     # 防止错误 Workflow/Handler 无限返回 CONTINUE；这是步骤预算，不替代 HTTP/JDBC 超时。
@@ -135,6 +140,7 @@ smartcs:
       connect-timeout-ms: ${SMARTCS_JDBC_CONNECT_TIMEOUT_MS:3000}
       socket-timeout-ms: ${SMARTCS_JDBC_SOCKET_TIMEOUT_MS:10000}
       query-timeout-seconds: ${SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS:5}
+      pool-max-size: ${SMARTCS_JDBC_POOL_MAX_SIZE:10}
   monitor:
     # Eval 候选样本默认保存到本地 data 目录。
     # 这样用户点“无用”后生成的待审核样本，项目重启后仍然可以继续审核。

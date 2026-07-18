@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smartcs.smart_cs_agent.persistence.mybatis.mapper.ReturnMapper">
+    <resultMap id="returnResult" type="com.smartcs.smart_cs_agent.model.ReturnRecord">
+        <constructor>
+            <arg column="return_id" javaType="java.lang.String"/>
+            <arg column="order_id" javaType="java.lang.String"/>
+            <arg column="reason" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <update id="createTable">
+        CREATE TABLE IF NOT EXISTS cs_return_record (
+            return_id VARCHAR(64) PRIMARY KEY,
+            order_id VARCHAR(64) NOT NULL,
+            reason TEXT,
+            status VARCHAR(64) NOT NULL
+        )
+    </update>
+
+    <insert id="upsert">
+        INSERT INTO cs_return_record(return_id, order_id, reason, status)
+        VALUES (#{returnId}, #{orderId}, #{reason}, #{status})
+        ON DUPLICATE KEY UPDATE
+            order_id = VALUES(order_id),
+            reason = VALUES(reason),
+            status = VALUES(status)
+    </insert>
+
+    <select id="findByReturnId" resultMap="returnResult">
+        SELECT return_id, order_id, reason, status
+        FROM cs_return_record
+        WHERE return_id = #{returnId}
+    </select>
+
+    <select id="findFirstByOrderId" resultMap="returnResult">
+        SELECT return_id, order_id, reason, status
+        FROM cs_return_record
+        WHERE order_id = #{orderId}
+        ORDER BY return_id
+        LIMIT 1
+    </select>
+
+    <select id="count" resultType="long">
+        SELECT COUNT(*) FROM cs_return_record
+    </select>
+</mapper>

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smartcs.smart_cs_agent.persistence.mybatis.mapper.ProductMapper">
+    <resultMap id="productResult" type="com.smartcs.smart_cs_agent.model.Product">
+        <constructor>
+            <arg column="product_id" javaType="java.lang.String"/>
+            <arg column="name" javaType="java.lang.String"/>
+            <arg column="price" javaType="_int"/>
+            <arg column="stock" javaType="_int"/>
+            <arg column="product_desc" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <update id="createTable">
+        CREATE TABLE IF NOT EXISTS cs_product (
+            product_id VARCHAR(64) PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            price INT NOT NULL,
+            stock INT NOT NULL,
+            product_desc TEXT
+        )
+    </update>
+
+    <insert id="upsert">
+        INSERT INTO cs_product(product_id, name, price, stock, product_desc)
+        VALUES (#{productId}, #{name}, #{price}, #{stock}, #{desc})
+        ON DUPLICATE KEY UPDATE
+            name = VALUES(name),
+            price = VALUES(price),
+            stock = VALUES(stock),
+            product_desc = VALUES(product_desc)
+    </insert>
+
+    <select id="findByProductId" resultMap="productResult">
+        SELECT product_id, name, price, stock, product_desc
+        FROM cs_product
+        WHERE product_id = #{productId}
+    </select>
+
+    <select id="searchByName" resultMap="productResult">
+        SELECT product_id, name, price, stock, product_desc
+        FROM cs_product
+        WHERE name LIKE #{keywordPattern}
+        ORDER BY product_id
+    </select>
+
+    <select id="findAll" resultMap="productResult">
+        SELECT product_id, name, price, stock, product_desc
+        FROM cs_product
+        ORDER BY product_id
+    </select>
+</mapper>

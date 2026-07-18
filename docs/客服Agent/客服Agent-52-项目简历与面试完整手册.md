@@ -786,7 +786,7 @@ Provider 已经成功，但应用在保存 COMPLETED 幂等结果前崩溃时，
 ### 9.2 数据与多实例
 
 1. 已用真实 MySQL 8.4.0 验证 CAS、幂等并发、Outbox 租约、查询超时、数据库掉线/readiness 恢复和完整容器重启；尚缺两个真实 Agent 实例同时恢复的进程级故障注入。
-2. JdbcDatabaseClient 仍通过 DriverManager 每次新建连接，没有 HikariCP。
+2. JDBC 模式已使用 MyBatis XML Mapper、HikariCP 和 Spring 事务，不再保留 DriverManager 访问链路。
 3. 建表由 CREATE TABLE IF NOT EXISTS 完成，没有 Flyway/Liquibase。
 4. Session 物理删除后版本重置，存在 generation/ABA 风险。
 5. Provider 副作用与幂等结果落库之间仍有崩溃窗口。
@@ -827,7 +827,7 @@ Phase 9.5 的命令、制品摘要、订单/政策 Trace 和故障恢复证据�
 2. 使用两个真实 Agent 进程做 Outbox 租约接管、迟到结果和管理员竞态故障注入。
 3. 加入 MySQL Testcontainers 集成测试。
 4. 为退货 order_id 增加唯一约束，替换 COUNT(*) + 1。
-5. 引入 HikariCP 和 Flyway。
+5. HikariCP 已完成；下一步引入 Flyway 管理可审计的 Schema 版本。
 6. 处理 Session generation/ABA。
 7. 建设集中式安全审计、保留期、访问控制和告警。
 8. 为 LLM 执行器增加 Micrometer 指标和按租户/模型 bulkhead。

@@ -1,8 +1,10 @@
 package com.smartcs.smart_cs_agent.repository;
 
 import com.smartcs.smart_cs_agent.model.Order;
-import com.smartcs.smart_cs_agent.persistence.JdbcDatabaseClient;
+import com.smartcs.smart_cs_agent.persistence.MyBatisMapperExecutor;
+import com.smartcs.smart_cs_agent.persistence.mybatis.mapper.OrderMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Repository;
 
 import java.util.*;
@@ -17,15 +19,20 @@ public class OrderRepository {
     // 模拟订单表：orderId -> Order 对象
     private final Map<String, Order> orderTable = new HashMap<>();
 
-    private final JdbcDatabaseClient databaseClient;
+    private final OrderMapper mapper;
+    private final MyBatisMapperExecutor mapperExecutor;
 
     public OrderRepository() {
-        this(null);
+        this.mapper = null;
+        this.mapperExecutor = new MyBatisMapperExecutor();
+        initMockData();
     }
 
     @Autowired
-    public OrderRepository(JdbcDatabaseClient databaseClient) {
-        this.databaseClient = databaseClient;
+    public OrderRepository(ObjectProvider<OrderMapper> mapperProvider,
+                           MyBatisMapperExecutor mapperExecutor) {
+        this.mapper = mapperProvider.getIfAvailable();
+        this.mapperExecutor = mapperExecutor;
         if (isJdbcMode()) {
             initJdbcTable();
         } else {
@@ -44,15 +51,7 @@ public class OrderRepository {
     }
 
     private void initJdbcTable() {
-        databaseClient.update("""
-                CREATE TABLE IF NOT EXISTS cs_order (
-                    order_id VARCHAR(64) PRIMARY KEY,
-                    user_id VARCHAR(64) NOT NULL,
-                    product_id VARCHAR(64) NOT NULL,
-                    status VARCHAR(64) NOT NULL,
-                    tracking_no VARCHAR(128)
-                )
-                """);
+        mapperExecutor.run(mapper::createTable);
 
         // 第一版使用 upsert 写入演示数据，保证重复启动不会插入重复订单。
         seedJdbc(new Order("ORD-001", "USER-001", "PROD-001", "已发货", "SF1234567890"));
@@ -62,20 +61,7 @@ public class OrderRepository {
     }
 
     private void seedJdbc(Order order) {
-        databaseClient.update("""
-                INSERT INTO cs_order(order_id, user_id, product_id, status, tracking_no)
-                VALUES (?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE
-                    user_id = VALUES(user_id),
-                    product_id = VALUES(product_id),
-                    status = VALUES(status),
-                    tracking_no = VALUES(tracking_no)
-                """,
-                order.getOrderId(),
-                order.getUserId(),
-                order.getProductId(),
-                order.getStatus(),
-                order.getTrackingNo());
+        mapperExecutor.execute(() -> mapper.upsert(order));
     }
 
     public void save(Order order) {
@@ -91,19 +77,7 @@ public class OrderRepository {
      */
     public Order findByOrderId(String orderId) {
         if (isJdbcMode()) {
-            return databaseClient.queryOne("""
-                            SELECT order_id, user_id, product_id, status, tracking_no
-                            FROM cs_order
-                            WHERE order_id = ?
-                            """,
-                    resultSet -> new Order(
-                            resultSet.getString("order_id"),
-                            resultSet.getString("user_id"),
-                            resultSet.getString("product_id"),
-                            resultSet.getString("status"),
-                            resultSet.getString("tracking_no")
-                    ),
-                    orderId).orElse(null);
+            return mapperExecutor.execute(() -> mapper.findByOrderId(orderId));
         }
         return orderTable.get(orderId);
     }
@@ -113,20 +87,7 @@ public class OrderRepository {
      */
     public List<Order> findByUserId(String userId) {
         if (isJdbcMode()) {
-            return databaseClient.queryList("""
-                            SELECT order_id, user_id, product_id, status, tracking_no
-                            FROM cs_order
-                            WHERE user_id = ?
-                            ORDER BY order_id
-                            """,
-                    resultSet -> new Order(
-                            resultSet.getString("order_id"),
-                            resultSet.getString("user_id"),
-                            resultSet.getString("product_id"),
-                            resultSet.getString("status"),
-                            resultSet.getString("tracking_no")
-                    ),
-                    userId);
+            return mapperExecutor.execute(() -> mapper.findByUserId(userId));
         }
         return orderTable.values().stream()
             .filter(o -> o.getUserId().equals(userId))
@@ -134,6 +95,6 @@ public class OrderRepository {
     }
 
     private boolean isJdbcMode() {
-        return databaseClient != null && databaseClient.isEnabled();
+        return mapper != null;
     }
 }

@@ -20,7 +20,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - LLM 降级：模型调用失败时不会直接中断接口，会基于工具结构化结果生成模板回复，并记录 `llm_failed` Trace。
 - Capability 与 MCP：统一 `CapabilityDefinition`、输入/输出 schema、三态结果、Gateway 和 Local/MCP Provider；9 个能力由 7 个独立 Local Provider 覆盖，`GET /api/mcp/tools`、`POST /api/mcp/tools/call` 与 `POST /mcp` 共用同一 Catalog 和 Server Adapter。
 - 独立 MCP Server 第一版：`POST /mcp` 支持 `initialize`、`tools/list` 和 `tools/call`；HTTP Client 每次请求使用 MCP_CLIENT Bearer JWT，JSON-RPC body 不再携带身份凭据。
-- 数据库持久化：支持 `memory` / `jdbc` 双模式，默认内存模式保证本地测试和 CI 稳定；JDBC 模式除业务数据外，还持久化会话状态和 Capability 幂等记录，并为连接、网络读取和 SQL 执行设置明确超时。
+- 数据库持久化：支持 `memory` / `jdbc` 双模式，默认内存模式保证本地测试和 CI 稳定；`jdbc` 模式内部使用 MyBatis XML Mapper、HikariCP 和 Spring 事务，除业务数据外还持久化会话状态、Capability 幂等与 Handoff Outbox，并为连接、网络读取和 SQL 执行设置明确超时。
 - Capability 执行预算：能力默认超时与上游 deadline 取较早值，Provider 在有界线程池中执行；副作用开始后超时返回并回放 `CAPABILITY_RESULT_UNKNOWN`，不会把“停止等待”误写成“操作肯定失败”。
 - 整轮执行预算：每轮默认同时受 10 个 Action 和 30 秒 wall-clock 约束；LLM 有独立超时、有界线程池和总尝试次数上限，超时或队列饱和时结构化降级。
 - 状态演进：Workflow 私有状态支持按 Workflow ID 注册 `1 -> 2 -> 3` 逐版本迁移链；缺链、重复注册和未来版本都会失败关闭，不在 Runtime、Router 或 Codec 中堆业务分支。
@@ -63,7 +63,7 @@ flowchart TD
 - 当前有意保留单 Maven Module：一个 JAR、一个镜像、一个发布生命周期；用架构测试约束包边界，达到独立发布触发条件后再拆 Module。
 - HTTP 身份只来自已验证 JWT Principal，不能由请求体、LLM 参数或 MCP `_meta` 覆盖。
 - Session CAS、Capability 幂等和 Handoff Outbox 分别保护会话状态、副作用执行和外部结果未知，三者不能互相替代。
-- Repository 默认使用内存模式，开启 JDBC 模式后可连接 MySQL，保证学习演示和真实持久化两种需求都能覆盖。
+- Repository 默认使用内存模式，开启 JDBC 模式后通过 MyBatis/HikariCP 连接 MySQL，保证学习演示和真实持久化两种需求都能覆盖。
 - 人工转接创建支持本地/售后 HTTP 双模式；售后结果查询使用独立三态 Port，当前默认明确 unavailable。
 - RAG 默认使用本地检索，开启 `embedding-qdrant` 后再依赖真实 embedding API 和 Qdrant，保证基础演示和高级检索都能覆盖。
 - 先做稳定、可解释的规则评测，再补 LLM-as-Judge。
@@ -381,6 +381,7 @@ $env:SMARTCS_JDBC_PASSWORD="your-password"
 $env:SMARTCS_JDBC_CONNECT_TIMEOUT_MS="3000"
 $env:SMARTCS_JDBC_SOCKET_TIMEOUT_MS="10000"
 $env:SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS="5"
+$env:SMARTCS_JDBC_POOL_MAX_SIZE="10"
 ```
 
 启动后，项目会自动创建四张业务表、`cs_agent_session`、`cs_capability_idempotency` 和四张人工转接
@@ -540,8 +541,8 @@ SMARTCS_EMBEDDING_API_KEY=your-api-key
 SMARTCS_QDRANT_BASE_URL=http://qdrant:6333
 ```
 
-Compose 也会透传 `SMARTCS_JDBC_CONNECT_TIMEOUT_MS`、`SMARTCS_JDBC_SOCKET_TIMEOUT_MS` 和
-`SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS`，可以在 `.env` 中覆盖默认值。
+Compose 也会透传 `SMARTCS_JDBC_CONNECT_TIMEOUT_MS`、`SMARTCS_JDBC_SOCKET_TIMEOUT_MS`、
+`SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS` 和 `SMARTCS_JDBC_POOL_MAX_SIZE`，可以在 `.env` 中覆盖默认值。
 
 访问页面和健康检查：
 

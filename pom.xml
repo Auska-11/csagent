@@ -103,6 +103,16 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!--
+            JDBC 模式内部统一使用 MyBatis。Starter 同时接入 Spring JDBC 事务与 HikariCP；
+            DataSource 仍由 smartcs.persistence.jdbc.* 条件配置，memory 模式不会创建连接池。
+        -->
+        <dependency>
+            <groupId>org.mybatis.spring.boot</groupId>
+            <artifactId>mybatis-spring-boot-starter</artifactId>
+            <version>3.0.3</version>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -140,6 +150,13 @@
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- MyBatis Mapper、Hikari 与 Spring 事务的默认 CI 集成测试数据库。 -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

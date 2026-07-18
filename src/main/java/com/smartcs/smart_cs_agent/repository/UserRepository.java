@@ -1,8 +1,10 @@
 package com.smartcs.smart_cs_agent.repository;
 
 import com.smartcs.smart_cs_agent.model.User;
-import com.smartcs.smart_cs_agent.persistence.JdbcDatabaseClient;
+import com.smartcs.smart_cs_agent.persistence.MyBatisMapperExecutor;
+import com.smartcs.smart_cs_agent.persistence.mybatis.mapper.UserMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Repository;
 
 import java.util.HashMap;
@@ -24,15 +26,20 @@ public class UserRepository {
     // Legacy token 索引：仅供 Phase 9 前的旧 Tool 兼容，不参与 HTTP/MCP 认证。
     private final Map<String, String> tokenIndex = new HashMap<>();
 
-    private final JdbcDatabaseClient databaseClient;
+    private final UserMapper mapper;
+    private final MyBatisMapperExecutor mapperExecutor;
 
     public UserRepository() {
-        this(null);
+        this.mapper = null;
+        this.mapperExecutor = new MyBatisMapperExecutor();
+        initMockData();
     }
 
     @Autowired
-    public UserRepository(JdbcDatabaseClient databaseClient) {
-        this.databaseClient = databaseClient;
+    public UserRepository(ObjectProvider<UserMapper> mapperProvider,
+                          MyBatisMapperExecutor mapperExecutor) {
+        this.mapper = mapperProvider.getIfAvailable();
+        this.mapperExecutor = mapperExecutor;
         if (isJdbcMode()) {
             initJdbcTable();
         } else {
@@ -51,32 +58,14 @@ public class UserRepository {
     }
 
     private void initJdbcTable() {
-        databaseClient.update("""
-                CREATE TABLE IF NOT EXISTS cs_user (
-                    user_id VARCHAR(64) PRIMARY KEY,
-                    name VARCHAR(128) NOT NULL,
-                    phone VARCHAR(64),
-                    token VARCHAR(128) NOT NULL UNIQUE
-                )
-                """);
+        mapperExecutor.run(mapper::createTable);
 
         seedJdbc(new User("USER-001", "张三", "13812341234", "token-zhangsan"));
         seedJdbc(new User("USER-002", "李四", "13956785678", "token-lisi"));
     }
 
     private void seedJdbc(User user) {
-        databaseClient.update("""
-                INSERT INTO cs_user(user_id, name, phone, token)
-                VALUES (?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE
-                    name = VALUES(name),
-                    phone = VALUES(phone),
-                    token = VALUES(token)
-                """,
-                user.getUserId(),
-                user.getName(),
-                user.getPhone(),
-                user.getToken());
+        mapperExecutor.execute(() -> mapper.upsert(user));
     }
 
     /**
@@ -96,18 +85,7 @@ public class UserRepository {
      */
     public User findByUserId(String userId) {
         if (isJdbcMode()) {
-            return databaseClient.queryOne("""
-                            SELECT user_id, name, phone, token
-                            FROM cs_user
-                            WHERE user_id = ?
-                            """,
-                    resultSet -> new User(
-                            resultSet.getString("user_id"),
-                            resultSet.getString("name"),
-                            resultSet.getString("phone"),
-                            resultSet.getString("token")
-                    ),
-                    userId).orElse(null);
+            return mapperExecutor.execute(() -> mapper.findByUserId(userId));
         }
         return userTable.get(userId);
     }
@@ -120,24 +98,13 @@ public class UserRepository {
      */
     public User findByToken(String token) {
         if (isJdbcMode()) {
-            return databaseClient.queryOne("""
-                            SELECT user_id, name, phone, token
-                            FROM cs_user
-                            WHERE token = ?
-                            """,
-                    resultSet -> new User(
-                            resultSet.getString("user_id"),
-                            resultSet.getString("name"),
-                            resultSet.getString("phone"),
-                            resultSet.getString("token")
-                    ),
-                    token).orElse(null);
+            return mapperExecutor.execute(() -> mapper.findByToken(token));
         }
         String userId = tokenIndex.get(token);
         return userId != null ? userTable.get(userId) : null;
     }
 
     private boolean isJdbcMode() {
-        return databaseClient != null && databaseClient.isEnabled();
+        return mapper != null;
     }
 }

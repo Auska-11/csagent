@@ -1,6 +1,9 @@
 package com.smartcs.smart_cs_agent.observability.health;
 
-import com.smartcs.smart_cs_agent.persistence.JdbcDatabaseClient;
+import com.smartcs.smart_cs_agent.persistence.MyBatisMapperExecutor;
+import com.smartcs.smart_cs_agent.persistence.PersistenceMode;
+import com.smartcs.smart_cs_agent.persistence.mybatis.mapper.PersistenceHealthMapper;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.stereotype.Component;
@@ -16,30 +19,38 @@ import java.util.Objects;
 @Component("persistenceHealthIndicator")
 public class PersistenceHealthIndicator implements HealthIndicator {
 
-    private static final String CORE_TABLES_PROBE_SQL = """
-            SELECT
-                (SELECT 1 FROM cs_agent_session LIMIT 1) AS session_ready,
-                (SELECT 1 FROM cs_capability_idempotency LIMIT 1) AS idempotency_ready
-            """;
+    private final PersistenceMode persistenceMode;
+    private final PersistenceHealthMapper mapper;
+    private final MyBatisMapperExecutor mapperExecutor;
 
-    private final JdbcDatabaseClient databaseClient;
-
-    public PersistenceHealthIndicator(JdbcDatabaseClient databaseClient) {
-        this.databaseClient = Objects.requireNonNull(databaseClient, "databaseClient cannot be null");
+    public PersistenceHealthIndicator(PersistenceMode persistenceMode,
+                                      ObjectProvider<PersistenceHealthMapper> mapperProvider,
+                                      MyBatisMapperExecutor mapperExecutor) {
+        this.persistenceMode = Objects.requireNonNull(
+                persistenceMode,
+                "persistenceMode cannot be null"
+        );
+        this.mapper = mapperProvider.getIfAvailable();
+        this.mapperExecutor = Objects.requireNonNull(
+                mapperExecutor,
+                "mapperExecutor cannot be null"
+        );
     }
 
     @Override
     public Health health() {
-        if (!databaseClient.isEnabled()) {
+        if (!persistenceMode.isJdbc()) {
             return Health.up()
                     .withDetail("mode", "memory")
                     .build();
         }
 
         try {
-            // 子查询即使没有业务行也会成功；queryLong 返回 0 仍表示连接和两张表都可读。
-            // 合成一条 SQL 是为了让一次 readiness 轮询只创建一个 JDBC 连接。
-            databaseClient.queryLong(CORE_TABLES_PROBE_SQL);
+            if (mapper == null) {
+                throw new IllegalStateException("MyBatis persistence mapper is unavailable");
+            }
+            // 子查询即使没有业务行也会成功；合成一条 SQL 使一次 readiness 只借用一个池连接。
+            mapperExecutor.execute(mapper::probeCoreTables);
             return Health.up()
                     .withDetail("mode", "jdbc")
                     .build();

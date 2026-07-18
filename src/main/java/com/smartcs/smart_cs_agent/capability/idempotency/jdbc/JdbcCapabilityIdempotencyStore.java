@@ -6,8 +6,10 @@ import com.smartcs.smart_cs_agent.capability.idempotency.core.CapabilityResultCo
 import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyExecutionInProgressException;
 import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyKeyConflictException;
 import com.smartcs.smart_cs_agent.capability.idempotency.core.IdempotencyWaitDeadlineExceededException;
-import com.smartcs.smart_cs_agent.persistence.JdbcDatabaseClient;
 import com.smartcs.smart_cs_agent.persistence.JdbcDuplicateKeyException;
+import com.smartcs.smart_cs_agent.persistence.MyBatisMapperExecutor;
+import com.smartcs.smart_cs_agent.persistence.mybatis.mapper.CapabilityIdempotencyMapper;
+import com.smartcs.smart_cs_agent.persistence.mybatis.row.CapabilityIdempotencyRow;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -43,14 +45,16 @@ public class JdbcCapabilityIdempotencyStore implements CapabilityIdempotencyStor
     private static final ScheduledExecutorService LEASE_RENEWAL_EXECUTOR =
             Executors.newScheduledThreadPool(2, daemonThreadFactory());
 
-    private final JdbcDatabaseClient databaseClient;
+    private final CapabilityIdempotencyMapper mapper;
+    private final MyBatisMapperExecutor mapperExecutor;
     private final CapabilityResultCodec resultCodec;
     private final long leaseMs;
     private final long waitTimeoutMs;
     private final long pollIntervalMs;
 
     public JdbcCapabilityIdempotencyStore(
-            JdbcDatabaseClient databaseClient,
+            CapabilityIdempotencyMapper mapper,
+            MyBatisMapperExecutor mapperExecutor,
             CapabilityResultCodec resultCodec,
             @Value("${smartcs.capability.idempotency.lease-ms:60000}") long leaseMs,
             @Value("${smartcs.capability.idempotency.wait-timeout-ms:30000}") long waitTimeoutMs,
@@ -58,7 +62,11 @@ public class JdbcCapabilityIdempotencyStore implements CapabilityIdempotencyStor
         if (leaseMs <= 0 || waitTimeoutMs <= 0 || pollIntervalMs <= 0) {
             throw new IllegalArgumentException("Idempotency lease and wait settings must be positive");
         }
-        this.databaseClient = Objects.requireNonNull(databaseClient, "databaseClient cannot be null");
+        this.mapper = Objects.requireNonNull(mapper, "mapper cannot be null");
+        this.mapperExecutor = Objects.requireNonNull(
+                mapperExecutor,
+                "mapperExecutor cannot be null"
+        );
         this.resultCodec = Objects.requireNonNull(resultCodec, "resultCodec cannot be null");
         this.leaseMs = leaseMs;
         this.waitTimeoutMs = waitTimeoutMs;
@@ -67,21 +75,7 @@ public class JdbcCapabilityIdempotencyStore implements CapabilityIdempotencyStor
     }
 
     private void initTable() {
-        databaseClient.update("""
-                CREATE TABLE IF NOT EXISTS cs_capability_idempotency (
-                    storage_key_hash CHAR(64) NOT NULL,
-                    request_fingerprint_hash CHAR(64) NOT NULL,
-                    status VARCHAR(24) NOT NULL,
-                    owner_token VARCHAR(64) NOT NULL,
-                    lease_until BIGINT NOT NULL,
-                    result_json LONGTEXT NULL,
-                    result_schema_version INT NULL,
-                    created_at BIGINT NOT NULL,
-                    updated_at BIGINT NOT NULL,
-                    PRIMARY KEY (storage_key_hash),
-                    INDEX idx_cs_capability_idempotency_updated_at (updated_at)
-                )
-                """);
+        mapperExecutor.run(mapper::createTable);
     }
 
     @Override
@@ -159,20 +153,14 @@ public class JdbcCapabilityIdempotencyStore implements CapabilityIdempotencyStor
                                    String ownerToken,
                                    long now) {
         try {
-            return databaseClient.update("""
-                    INSERT INTO cs_capability_idempotency(
-                        storage_key_hash, request_fingerprint_hash, status,
-                        owner_token, lease_until, result_json, result_schema_version,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)
-                    """,
+            return mapperExecutor.execute(() -> mapper.insertClaim(
                     keyHash,
                     fingerprintHash,
                     IN_PROGRESS,
                     ownerToken,
                     now + leaseMs,
-                    now,
-                    now) == 1;
+                    now
+            )) == 1;
         } catch (JdbcDuplicateKeyException duplicateKey) {
             // 精确识别数据库唯一键冲突。不能使用“插入失败后再查一次”的方式判断，因为原 owner
             // 可能恰好在两步之间删除记录，导致正常竞争被误报为数据库故障。
@@ -185,23 +173,16 @@ public class JdbcCapabilityIdempotencyStore implements CapabilityIdempotencyStor
                                 StoredRecord existing,
                                 String newOwnerToken,
                                 long now) {
-        return databaseClient.update("""
-                UPDATE cs_capability_idempotency
-                SET owner_token = ?, lease_until = ?, updated_at = ?
-                WHERE storage_key_hash = ?
-                  AND request_fingerprint_hash = ?
-                  AND status = ?
-                  AND owner_token = ?
-                  AND lease_until = ?
-                """,
-                newOwnerToken,
-                now + leaseMs,
-                now,
+        return mapperExecutor.execute(() -> mapper.takeOver(
                 keyHash,
                 fingerprintHash,
                 IN_PROGRESS,
                 existing.ownerToken(),
-                existing.leaseUntil()) == 1;
+                existing.leaseUntil(),
+                newOwnerToken,
+                now + leaseMs,
+                now
+        )) == 1;
     }
 
     private CapabilityResult<?> executeAsOwner(String keyHash,
@@ -222,23 +203,16 @@ public class JdbcCapabilityIdempotencyStore implements CapabilityIdempotencyStor
             // 三种 outcome 都必须落成 COMPLETED。需要重试时应先查询/人工核对，再创建新的操作 key。
             CapabilityResultCodec.EncodedCapabilityResult encoded = encodeDurableResult(result);
             long now = System.currentTimeMillis();
-            int changedRows = databaseClient.update("""
-                    UPDATE cs_capability_idempotency
-                    SET status = ?, result_json = ?, result_schema_version = ?,
-                        lease_until = 0, updated_at = ?
-                    WHERE storage_key_hash = ?
-                      AND request_fingerprint_hash = ?
-                      AND status = ?
-                      AND owner_token = ?
-                    """,
-                    COMPLETED,
-                    encoded.json(),
-                    encoded.schemaVersion(),
-                    now,
+            int changedRows = mapperExecutor.execute(() -> mapper.complete(
                     keyHash,
                     fingerprintHash,
                     IN_PROGRESS,
-                    ownerToken);
+                    COMPLETED,
+                    ownerToken,
+                    encoded.json(),
+                    encoded.schemaVersion(),
+                    now
+            ));
             if (changedRows == 1) {
                 return result;
             }
@@ -275,20 +249,14 @@ public class JdbcCapabilityIdempotencyStore implements CapabilityIdempotencyStor
     private void renewLease(String keyHash, String fingerprintHash, String ownerToken) {
         long now = System.currentTimeMillis();
         try {
-            databaseClient.update("""
-                    UPDATE cs_capability_idempotency
-                    SET lease_until = ?, updated_at = ?
-                    WHERE storage_key_hash = ?
-                      AND request_fingerprint_hash = ?
-                      AND status = ?
-                      AND owner_token = ?
-                    """,
-                    now + leaseMs,
-                    now,
+            mapperExecutor.execute(() -> mapper.renewLease(
                     keyHash,
                     fingerprintHash,
                     IN_PROGRESS,
-                    ownerToken);
+                    ownerToken,
+                    now + leaseMs,
+                    now
+            ));
         } catch (RuntimeException ignored) {
             // 续租线程不能因一次短暂数据库异常永久停止。主执行线程在保存结果时仍会看到真实错误；
             // 若数据库持续不可用，其他实例也无法成功接管，恢复后下一次心跳会继续尝试。
@@ -312,31 +280,26 @@ public class JdbcCapabilityIdempotencyStore implements CapabilityIdempotencyStor
     }
 
     private void releaseClaim(String keyHash, String ownerToken) {
-        databaseClient.update("""
-                DELETE FROM cs_capability_idempotency
-                WHERE storage_key_hash = ? AND status = ? AND owner_token = ?
-                """,
+        mapperExecutor.execute(() -> mapper.deleteOwnedClaim(
                 keyHash,
                 IN_PROGRESS,
-                ownerToken);
+                ownerToken
+        ));
     }
 
     private Optional<StoredRecord> load(String keyHash) {
-        return databaseClient.queryOne("""
-                        SELECT request_fingerprint_hash, status, owner_token, lease_until,
-                               result_json, result_schema_version
-                        FROM cs_capability_idempotency
-                        WHERE storage_key_hash = ?
-                        """,
-                resultSet -> new StoredRecord(
-                        resultSet.getString("request_fingerprint_hash"),
-                        resultSet.getString("status"),
-                        resultSet.getString("owner_token"),
-                        resultSet.getLong("lease_until"),
-                        resultSet.getString("result_json"),
-                        resultSet.getInt("result_schema_version")
-                ),
-                keyHash);
+        CapabilityIdempotencyRow row = mapperExecutor.execute(() -> mapper.find(keyHash));
+        if (row == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new StoredRecord(
+                row.requestFingerprintHash(),
+                row.status(),
+                row.ownerToken(),
+                row.leaseUntil(),
+                row.resultJson(),
+                row.resultSchemaVersion()
+        ));
     }
 
     private CapabilityResult<?> decodeReplay(StoredRecord record) {

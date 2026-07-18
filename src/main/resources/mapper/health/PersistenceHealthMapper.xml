@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smartcs.smart_cs_agent.persistence.mybatis.mapper.PersistenceHealthMapper">
+    <select id="probeCoreTables" resultType="long">
+        SELECT
+            COALESCE((SELECT 1 FROM cs_agent_session LIMIT 1), 0)
+            + COALESCE((SELECT 1 FROM cs_capability_idempotency LIMIT 1), 0)
+    </select>
+</mapper>

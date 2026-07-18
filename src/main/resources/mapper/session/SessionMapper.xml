@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smartcs.smart_cs_agent.persistence.mybatis.mapper.SessionMapper">
+    <resultMap id="sessionRow" type="com.smartcs.smart_cs_agent.persistence.mybatis.row.SessionRow">
+        <constructor>
+            <arg column="state_json" javaType="java.lang.String"/>
+            <arg column="schema_version" javaType="_int"/>
+            <arg column="version" javaType="_long"/>
+            <arg column="updated_at" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <update id="createTable">
+        CREATE TABLE IF NOT EXISTS cs_agent_session (
+            tenant_id VARCHAR(64) NOT NULL,
+            user_id VARCHAR(64) NOT NULL,
+            conversation_id VARCHAR(128) NOT NULL,
+            state_json LONGTEXT NOT NULL,
+            schema_version INT NOT NULL,
+            version BIGINT NOT NULL,
+            created_at BIGINT NOT NULL,
+            updated_at BIGINT NOT NULL,
+            PRIMARY KEY (tenant_id, user_id, conversation_id),
+            INDEX idx_cs_agent_session_updated_at (updated_at)
+        )
+    </update>
+
+    <select id="find" resultMap="sessionRow">
+        SELECT state_json, schema_version, version, updated_at
+        FROM cs_agent_session
+        WHERE tenant_id = #{tenantId}
+          AND user_id = #{userId}
+          AND conversation_id = #{conversationId}
+    </select>
+
+    <insert id="insert">
+        INSERT INTO cs_agent_session(
+            tenant_id, user_id, conversation_id, state_json,
+            schema_version, version, created_at, updated_at
+        ) VALUES (
+            #{tenantId}, #{userId}, #{conversationId}, #{stateJson},
+            #{schemaVersion}, #{version}, #{now}, #{now}
+        )
+    </insert>
+
+    <update id="updateCas">
+        UPDATE cs_agent_session
+        SET state_json = #{stateJson},
+            schema_version = #{schemaVersion},
+            version = #{nextVersion},
+            updated_at = #{now}
+        WHERE tenant_id = #{tenantId}
+          AND user_id = #{userId}
+          AND conversation_id = #{conversationId}
+          AND version = #{expectedVersion}
+    </update>
+
+    <delete id="deleteCas">
+        DELETE FROM cs_agent_session
+        WHERE tenant_id = #{tenantId}
+          AND user_id = #{userId}
+          AND conversation_id = #{conversationId}
+          AND version = #{expectedVersion}
+    </delete>
+</mapper>

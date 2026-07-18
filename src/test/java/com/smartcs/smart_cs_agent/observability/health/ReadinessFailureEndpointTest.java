@@ -1,6 +1,7 @@
 package com.smartcs.smart_cs_agent.observability.health;
 
-import com.smartcs.smart_cs_agent.persistence.JdbcDatabaseClient;
+import com.smartcs.smart_cs_agent.persistence.PersistenceMode;
+import com.smartcs.smart_cs_agent.persistence.mybatis.mapper.PersistenceHealthMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,7 +12,6 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -27,12 +27,15 @@ class ReadinessFailureEndpointTest {
     private MockMvc mockMvc;
 
     @MockBean
-    private JdbcDatabaseClient databaseClient;
+    private PersistenceMode persistenceMode;
+
+    @MockBean
+    private PersistenceHealthMapper persistenceHealthMapper;
 
     @BeforeEach
     void setUp() {
-        when(databaseClient.isEnabled()).thenReturn(true);
-        when(databaseClient.queryLong(anyString())).thenThrow(
+        when(persistenceMode.isJdbc()).thenReturn(true);
+        when(persistenceHealthMapper.probeCoreTables()).thenThrow(
                 new IllegalStateException("jdbc:mysql://secret-host/root-password")
         );
     }

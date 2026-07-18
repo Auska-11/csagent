@@ -1,8 +1,10 @@
 package com.smartcs.smart_cs_agent.repository;
 
 import com.smartcs.smart_cs_agent.model.Product;
-import com.smartcs.smart_cs_agent.persistence.JdbcDatabaseClient;
+import com.smartcs.smart_cs_agent.persistence.MyBatisMapperExecutor;
+import com.smartcs.smart_cs_agent.persistence.mybatis.mapper.ProductMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Repository;
 
 import java.util.*;
@@ -17,15 +19,20 @@ public class ProductRepository {
     // 模拟产品表：productId -> Product 对象
     private final Map<String, Product> productTable = new HashMap<>();
 
-    private final JdbcDatabaseClient databaseClient;
+    private final ProductMapper mapper;
+    private final MyBatisMapperExecutor mapperExecutor;
 
     public ProductRepository() {
-        this(null);
+        this.mapper = null;
+        this.mapperExecutor = new MyBatisMapperExecutor();
+        initMockData();
     }
 
     @Autowired
-    public ProductRepository(JdbcDatabaseClient databaseClient) {
-        this.databaseClient = databaseClient;
+    public ProductRepository(ObjectProvider<ProductMapper> mapperProvider,
+                             MyBatisMapperExecutor mapperExecutor) {
+        this.mapper = mapperProvider.getIfAvailable();
+        this.mapperExecutor = mapperExecutor;
         if (isJdbcMode()) {
             initJdbcTable();
         } else {
@@ -41,15 +48,7 @@ public class ProductRepository {
     }
 
     private void initJdbcTable() {
-        databaseClient.update("""
-                CREATE TABLE IF NOT EXISTS cs_product (
-                    product_id VARCHAR(64) PRIMARY KEY,
-                    name VARCHAR(255) NOT NULL,
-                    price INT NOT NULL,
-                    stock INT NOT NULL,
-                    product_desc TEXT
-                )
-                """);
+        mapperExecutor.run(mapper::createTable);
 
         seedJdbc(new Product("PROD-001", "蓝牙耳机 Pro Max", 599, 100, "支持主动降噪，续航30小时，蓝牙5.3"));
         seedJdbc(new Product("PROD-002", "智能手表 S2", 1299, 50, "14天超长续航，5ATM防水，1.43英寸AMOLED屏"));
@@ -58,20 +57,7 @@ public class ProductRepository {
     }
 
     private void seedJdbc(Product product) {
-        databaseClient.update("""
-                INSERT INTO cs_product(product_id, name, price, stock, product_desc)
-                VALUES (?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE
-                    name = VALUES(name),
-                    price = VALUES(price),
-                    stock = VALUES(stock),
-                    product_desc = VALUES(product_desc)
-                """,
-                product.getProductId(),
-                product.getName(),
-                product.getPrice(),
-                product.getStock(),
-                product.getDesc());
+        mapperExecutor.execute(() -> mapper.upsert(product));
     }
 
     public void save(Product product) {
@@ -87,19 +73,7 @@ public class ProductRepository {
      */
     public Product findByProductId(String productId) {
         if (isJdbcMode()) {
-            return databaseClient.queryOne("""
-                            SELECT product_id, name, price, stock, product_desc
-                            FROM cs_product
-                            WHERE product_id = ?
-                            """,
-                    resultSet -> new Product(
-                            resultSet.getString("product_id"),
-                            resultSet.getString("name"),
-                            resultSet.getInt("price"),
-                            resultSet.getInt("stock"),
-                            resultSet.getString("product_desc")
-                    ),
-                    productId).orElse(null);
+            return mapperExecutor.execute(() -> mapper.findByProductId(productId));
         }
         return productTable.get(productId);
     }
@@ -109,20 +83,7 @@ public class ProductRepository {
      */
     public List<Product> searchByName(String keyword) {
         if (isJdbcMode()) {
-            return databaseClient.queryList("""
-                            SELECT product_id, name, price, stock, product_desc
-                            FROM cs_product
-                            WHERE name LIKE ?
-                            ORDER BY product_id
-                            """,
-                    resultSet -> new Product(
-                            resultSet.getString("product_id"),
-                            resultSet.getString("name"),
-                            resultSet.getInt("price"),
-                            resultSet.getInt("stock"),
-                            resultSet.getString("product_desc")
-                    ),
-                    "%" + keyword + "%");
+            return mapperExecutor.execute(() -> mapper.searchByName("%" + keyword + "%"));
         }
         return productTable.values().stream()
             .filter(p -> p.getName().contains(keyword))
@@ -134,23 +95,12 @@ public class ProductRepository {
      */
     public List<Product> findAll() {
         if (isJdbcMode()) {
-            return databaseClient.queryList("""
-                            SELECT product_id, name, price, stock, product_desc
-                            FROM cs_product
-                            ORDER BY product_id
-                            """,
-                    resultSet -> new Product(
-                            resultSet.getString("product_id"),
-                            resultSet.getString("name"),
-                            resultSet.getInt("price"),
-                            resultSet.getInt("stock"),
-                            resultSet.getString("product_desc")
-                    ));
+            return mapperExecutor.execute(mapper::findAll);
         }
         return new ArrayList<>(productTable.values());
     }
 
     private boolean isJdbcMode() {
-        return databaseClient != null && databaseClient.isEnabled();
+        return mapper != null;
     }
 }

@@ -303,7 +303,8 @@ Compose 默认启动 MySQL 8.4.0、Qdrant 和 Agent。Agent 容器默认使用 J
 2. 当前是单 Maven Module。依赖分析发现仍有核心上下文双向引用，且系统只有一个 JAR/镜像发布单元；
    当前用包边界测试约束，待 MCP Server 或 Agent Core 出现独立发布/复用需求后再拆。
 3. 没有两个真实 Agent 进程同时恢复的故障注入和高并发压测。
-4. JDBC 仍直接使用 DriverManager，没有 HikariCP；Schema 也没有 Flyway/Liquibase 版本管理。
+4. JDBC 模式已迁移到 MyBatis XML Mapper、HikariCP 和 Spring 事务；Schema 仍由
+   `CREATE TABLE IF NOT EXISTS` 初始化，尚未引入 Flyway/Liquibase 版本迁移。
 5. 退货表缺少 orderId 唯一约束，业务编号生成方式不适合高并发。
 6. LLM 执行器还缺 Micrometer 指标和按租户/模型 bulkhead。
 7. RAG 和 Eval 数据集规模较小，离线通过不能代表真实线上准确率。

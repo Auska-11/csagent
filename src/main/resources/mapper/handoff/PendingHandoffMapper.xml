@@ -1,0 +1,401 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smartcs.smart_cs_agent.persistence.mybatis.mapper.PendingHandoffMapper">
+    <resultMap id="keyRow" type="com.smartcs.smart_cs_agent.persistence.mybatis.row.PendingHandoffKeyRow">
+        <constructor>
+            <arg column="tenant_id" javaType="java.lang.String"/>
+            <arg column="idempotency_key" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="pendingRow"
+               type="com.smartcs.smart_cs_agent.persistence.mybatis.row.PendingHandoffRow">
+        <constructor>
+            <arg column="outbox_id" javaType="java.lang.String"/>
+            <arg column="tenant_id" javaType="java.lang.String"/>
+            <arg column="idempotency_key" javaType="java.lang.String"/>
+            <arg column="request_fingerprint_hash" javaType="java.lang.String"/>
+            <arg column="user_id" javaType="java.lang.String"/>
+            <arg column="conversation_id" javaType="java.lang.String"/>
+            <arg column="reason" javaType="java.lang.String"/>
+            <arg column="summary_text" javaType="java.lang.String"/>
+            <arg column="request_title" javaType="java.lang.String"/>
+            <arg column="request_description" javaType="java.lang.String"/>
+            <arg column="customer_id" javaType="java.lang.String"/>
+            <arg column="product_line" javaType="java.lang.String"/>
+            <arg column="issue_type" javaType="java.lang.String"/>
+            <arg column="priority_code" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="failure_type" javaType="java.lang.String"/>
+            <arg column="attempt_count" javaType="_int"/>
+            <arg column="next_attempt_at" javaType="_long"/>
+            <arg column="version" javaType="_long"/>
+            <arg column="created_at" javaType="_long"/>
+            <arg column="updated_at" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="resultRow"
+               type="com.smartcs.smart_cs_agent.persistence.mybatis.row.PendingHandoffResultRow">
+        <constructor>
+            <arg column="ticket_id" javaType="java.lang.String"/>
+            <arg column="ticket_status" javaType="java.lang.String"/>
+            <arg column="ticket_created_at" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="claimRow"
+               type="com.smartcs.smart_cs_agent.persistence.mybatis.row.PendingHandoffClaimRow">
+        <constructor>
+            <arg column="owner_token" javaType="java.lang.String"/>
+            <arg column="lease_until" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="auditRow"
+               type="com.smartcs.smart_cs_agent.persistence.mybatis.row.PendingHandoffAuditRow">
+        <constructor>
+            <arg column="audit_id" javaType="java.lang.String"/>
+            <arg column="tenant_id" javaType="java.lang.String"/>
+            <arg column="outbox_id" javaType="java.lang.String"/>
+            <arg column="action" javaType="java.lang.String"/>
+            <arg column="actor_id" javaType="java.lang.String"/>
+            <arg column="authority_used" javaType="java.lang.String"/>
+            <arg column="reason_code" javaType="java.lang.String"/>
+            <arg column="decision_note" javaType="java.lang.String"/>
+            <arg column="evidence_source" javaType="java.lang.String"/>
+            <arg column="from_status" javaType="java.lang.String"/>
+            <arg column="to_status" javaType="java.lang.String"/>
+            <arg column="from_version" javaType="_long"/>
+            <arg column="to_version" javaType="_long"/>
+            <arg column="review_failure_type" javaType="java.lang.String"/>
+            <arg column="attempt_count_at_decision" javaType="_int"/>
+            <arg column="scheduled_at" javaType="java.lang.Long"/>
+            <arg column="occurred_at" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <update id="createPendingTable">
+        CREATE TABLE IF NOT EXISTS cs_pending_handoff (
+            outbox_id CHAR(36) NOT NULL,
+            tenant_id VARCHAR(64) NOT NULL,
+            idempotency_key VARCHAR(255) NOT NULL,
+            request_fingerprint_hash CHAR(64) NOT NULL,
+            user_id VARCHAR(64) NOT NULL,
+            conversation_id VARCHAR(128) NOT NULL,
+            reason VARCHAR(64) NOT NULL,
+            summary_text TEXT NOT NULL,
+            request_title VARCHAR(120) NOT NULL,
+            request_description TEXT NOT NULL,
+            customer_id VARCHAR(64) NOT NULL,
+            product_line VARCHAR(64) NOT NULL,
+            issue_type VARCHAR(64) NOT NULL,
+            priority_code VARCHAR(32) NOT NULL,
+            status VARCHAR(32) NOT NULL,
+            failure_type VARCHAR(128) NOT NULL,
+            attempt_count INT NOT NULL,
+            next_attempt_at BIGINT NOT NULL,
+            version BIGINT NOT NULL,
+            created_at BIGINT NOT NULL,
+            updated_at BIGINT NOT NULL,
+            PRIMARY KEY (outbox_id),
+            UNIQUE KEY uk_cs_pending_handoff_tenant_idempotency (tenant_id, idempotency_key),
+            INDEX idx_cs_pending_handoff_due (status, next_attempt_at),
+            INDEX idx_cs_pending_handoff_tenant_review
+                (tenant_id, status, updated_at, outbox_id)
+        )
+    </update>
+
+    <update id="createResultTable">
+        CREATE TABLE IF NOT EXISTS cs_pending_handoff_result (
+            tenant_id VARCHAR(64) NOT NULL,
+            idempotency_key VARCHAR(255) NOT NULL,
+            ticket_id VARCHAR(128) NOT NULL,
+            ticket_status VARCHAR(64) NOT NULL,
+            ticket_created_at VARCHAR(128) NOT NULL,
+            recorded_at BIGINT NOT NULL,
+            PRIMARY KEY (tenant_id, idempotency_key)
+        )
+    </update>
+
+    <update id="createClaimTable">
+        CREATE TABLE IF NOT EXISTS cs_pending_handoff_claim (
+            tenant_id VARCHAR(64) NOT NULL,
+            idempotency_key VARCHAR(255) NOT NULL,
+            owner_token VARCHAR(64) NOT NULL,
+            lease_until BIGINT NOT NULL,
+            updated_at BIGINT NOT NULL,
+            PRIMARY KEY (tenant_id, idempotency_key),
+            INDEX idx_cs_pending_handoff_claim_lease (lease_until)
+        )
+    </update>
+
+    <update id="createAuditTable">
+        CREATE TABLE IF NOT EXISTS cs_pending_handoff_review_audit (
+            audit_id VARCHAR(64) NOT NULL,
+            tenant_id VARCHAR(64) NOT NULL,
+            outbox_id VARCHAR(64) NOT NULL,
+            action VARCHAR(32) NOT NULL,
+            actor_id VARCHAR(128) NOT NULL,
+            authority_used VARCHAR(32) NOT NULL,
+            reason_code VARCHAR(64) NOT NULL,
+            decision_note VARCHAR(256) NOT NULL,
+            evidence_source VARCHAR(64) NOT NULL,
+            from_status VARCHAR(32) NOT NULL,
+            to_status VARCHAR(32) NOT NULL,
+            from_version BIGINT NOT NULL,
+            to_version BIGINT NOT NULL,
+            review_failure_type VARCHAR(128) NOT NULL,
+            attempt_count_at_decision INT NOT NULL,
+            scheduled_at BIGINT NULL,
+            occurred_at BIGINT NOT NULL,
+            PRIMARY KEY (audit_id),
+            UNIQUE KEY uk_cs_pending_handoff_review_audit_transition
+                (tenant_id, outbox_id, to_version),
+            INDEX idx_cs_pending_handoff_review_audit_page
+                (tenant_id, outbox_id, occurred_at, audit_id)
+        )
+    </update>
+
+    <insert id="insertPending">
+        INSERT INTO cs_pending_handoff(
+            outbox_id, tenant_id, idempotency_key, request_fingerprint_hash,
+            user_id, conversation_id, reason, summary_text,
+            request_title, request_description, customer_id,
+            product_line, issue_type, priority_code,
+            status, failure_type, attempt_count, next_attempt_at,
+            version, created_at, updated_at
+        ) VALUES (
+            #{outboxId}, #{command.tenantId}, #{command.request.idempotencyKey}, #{fingerprint},
+            #{command.userId}, #{command.conversationId}, #{command.reason}, #{command.summary},
+            #{command.request.title}, #{command.request.description}, #{command.request.customerId},
+            #{command.request.productLine}, #{command.request.issueType}, #{command.request.priority},
+            #{status}, #{failureType}, 0, #{nextAttemptAt}, 1, #{now}, #{now}
+        )
+    </insert>
+
+    <update id="markResultUnknown">
+        UPDATE cs_pending_handoff
+        SET status = 'RESULT_UNKNOWN', failure_type = #{failureType},
+            attempt_count = attempt_count + 1, next_attempt_at = #{now},
+            version = version + 1, updated_at = #{now}
+        WHERE tenant_id = #{tenantId}
+          AND idempotency_key = #{idempotencyKey}
+          AND version = #{expectedVersion}
+          AND status IN ('PREPARED', 'RESULT_UNKNOWN')
+    </update>
+
+    <update id="projectConfirmed">
+        UPDATE cs_pending_handoff
+        SET status = 'CONFIRMED', failure_type = 'NONE',
+            attempt_count = attempt_count + 1, next_attempt_at = 0,
+            version = version + 1, updated_at = #{now}
+        WHERE tenant_id = #{tenantId}
+          AND idempotency_key = #{idempotencyKey}
+          AND status NOT IN ('CONFIRMED', 'MANUALLY_CLOSED')
+    </update>
+
+    <select id="findDueKeys" resultMap="keyRow">
+        SELECT tenant_id, idempotency_key
+        FROM cs_pending_handoff
+        WHERE status IN ('PREPARED', 'RESULT_UNKNOWN', 'RETRY_SCHEDULED', 'PROCESSING')
+          AND next_attempt_at &lt;= #{now}
+          AND NOT EXISTS (
+              SELECT 1 FROM cs_pending_handoff_result AS result_row
+              WHERE result_row.tenant_id = cs_pending_handoff.tenant_id
+                AND result_row.idempotency_key = cs_pending_handoff.idempotency_key
+          )
+        ORDER BY next_attempt_at, outbox_id
+        LIMIT #{limit}
+    </select>
+
+    <update id="markProcessing">
+        UPDATE cs_pending_handoff
+        SET status = 'PROCESSING', next_attempt_at = #{leaseUntil},
+            version = version + 1, updated_at = #{now}
+        WHERE tenant_id = #{tenantId}
+          AND idempotency_key = #{idempotencyKey}
+          AND version = #{expectedVersion}
+          AND status IN ('PREPARED', 'RESULT_UNKNOWN', 'RETRY_SCHEDULED', 'PROCESSING')
+          AND next_attempt_at &lt;= #{now}
+    </update>
+
+    <update id="finishClaim">
+        UPDATE cs_pending_handoff
+        SET status = #{targetStatus}, failure_type = #{failureType},
+            attempt_count = attempt_count + 1, next_attempt_at = #{nextAttemptAt},
+            version = version + 1, updated_at = #{now}
+        WHERE tenant_id = #{tenantId}
+          AND idempotency_key = #{idempotencyKey}
+          AND version = #{expectedVersion}
+          AND status = 'PROCESSING'
+          AND EXISTS (
+              SELECT 1 FROM cs_pending_handoff_claim
+              WHERE tenant_id = #{tenantId}
+                AND idempotency_key = #{idempotencyKey}
+                AND owner_token = #{ownerToken}
+                AND lease_until = #{leaseUntil}
+                AND lease_until &gt; #{now}
+          )
+    </update>
+
+    <select id="findPending" resultMap="pendingRow">
+        SELECT outbox_id, tenant_id, idempotency_key, request_fingerprint_hash,
+               user_id, conversation_id, reason, summary_text,
+               request_title, request_description, customer_id,
+               product_line, issue_type, priority_code,
+               status, failure_type, attempt_count, next_attempt_at,
+               version, created_at, updated_at
+        FROM cs_pending_handoff
+        WHERE tenant_id = #{tenantId} AND idempotency_key = #{idempotencyKey}
+    </select>
+
+    <select id="findKeyByOutboxId" resultMap="keyRow">
+        SELECT tenant_id, idempotency_key
+        FROM cs_pending_handoff
+        WHERE tenant_id = #{tenantId} AND outbox_id = #{outboxId}
+    </select>
+
+    <select id="findKeyByOutboxIdForUpdate" resultMap="keyRow">
+        SELECT tenant_id, idempotency_key
+        FROM cs_pending_handoff
+        WHERE tenant_id = #{tenantId} AND outbox_id = #{outboxId}
+        FOR UPDATE
+    </select>
+
+    <select id="findKeyForUpdate" resultMap="keyRow">
+        SELECT tenant_id, idempotency_key
+        FROM cs_pending_handoff
+        WHERE tenant_id = #{tenantId} AND idempotency_key = #{idempotencyKey}
+        FOR UPDATE
+    </select>
+
+    <select id="findReviewKeys" resultMap="keyRow">
+        SELECT tenant_id, idempotency_key
+        FROM cs_pending_handoff
+        WHERE tenant_id = #{tenantId}
+        AND
+        <choose>
+            <when test="status == 'CONFIRMED'">
+                (status = #{status} OR (
+                    status &lt;&gt; 'MANUALLY_CLOSED' AND EXISTS (
+                        SELECT 1 FROM cs_pending_handoff_result AS result_row
+                        WHERE result_row.tenant_id = cs_pending_handoff.tenant_id
+                          AND result_row.idempotency_key = cs_pending_handoff.idempotency_key
+                    )
+                ))
+            </when>
+            <when test="status == 'MANUALLY_CLOSED'">
+                status = #{status}
+            </when>
+            <otherwise>
+                status = #{status} AND NOT EXISTS (
+                    SELECT 1 FROM cs_pending_handoff_result AS result_row
+                    WHERE result_row.tenant_id = cs_pending_handoff.tenant_id
+                      AND result_row.idempotency_key = cs_pending_handoff.idempotency_key
+                )
+            </otherwise>
+        </choose>
+        <if test="cursorUpdatedAt != null">
+            AND (
+                updated_at &lt; #{cursorUpdatedAt}
+                OR (updated_at = #{cursorUpdatedAt} AND outbox_id &lt; #{cursorOutboxId})
+            )
+        </if>
+        ORDER BY updated_at DESC, outbox_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <insert id="insertResult">
+        INSERT INTO cs_pending_handoff_result(
+            tenant_id, idempotency_key, ticket_id, ticket_status,
+            ticket_created_at, recorded_at
+        ) VALUES (
+            #{tenantId}, #{idempotencyKey}, #{result.ticketId}, #{result.status},
+            #{result.createdAt}, #{recordedAt}
+        )
+    </insert>
+
+    <select id="findResult" resultMap="resultRow">
+        SELECT ticket_id, ticket_status, ticket_created_at
+        FROM cs_pending_handoff_result
+        WHERE tenant_id = #{tenantId} AND idempotency_key = #{idempotencyKey}
+    </select>
+
+    <insert id="insertClaim">
+        INSERT INTO cs_pending_handoff_claim(
+            tenant_id, idempotency_key, owner_token, lease_until, updated_at
+        ) VALUES (#{tenantId}, #{idempotencyKey}, #{ownerToken}, #{leaseUntil}, #{now})
+    </insert>
+
+    <select id="findClaim" resultMap="claimRow">
+        SELECT owner_token, lease_until
+        FROM cs_pending_handoff_claim
+        WHERE tenant_id = #{tenantId} AND idempotency_key = #{idempotencyKey}
+    </select>
+
+    <update id="takeOverClaim">
+        UPDATE cs_pending_handoff_claim
+        SET owner_token = #{newOwnerToken},
+            lease_until = #{newLeaseUntil},
+            updated_at = #{now}
+        WHERE tenant_id = #{tenantId}
+          AND idempotency_key = #{idempotencyKey}
+          AND owner_token = #{oldOwnerToken}
+          AND lease_until = #{oldLeaseUntil}
+    </update>
+
+    <delete id="deleteClaim">
+        DELETE FROM cs_pending_handoff_claim
+        WHERE tenant_id = #{tenantId}
+          AND idempotency_key = #{idempotencyKey}
+          AND owner_token = #{ownerToken}
+    </delete>
+
+    <update id="updateManualDecision">
+        UPDATE cs_pending_handoff
+        SET status = #{targetStatus}, failure_type = #{failureType},
+            next_attempt_at = #{nextAttemptAt},
+            version = version + 1, updated_at = #{now}
+        WHERE tenant_id = #{tenantId}
+          AND outbox_id = #{outboxId}
+          AND version = #{expectedVersion}
+          AND status = 'NEEDS_MANUAL_REVIEW'
+    </update>
+
+    <insert id="insertAudit">
+        INSERT INTO cs_pending_handoff_review_audit(
+            audit_id, tenant_id, outbox_id, action, actor_id,
+            authority_used, reason_code, decision_note, evidence_source,
+            from_status, to_status, from_version, to_version,
+            review_failure_type, attempt_count_at_decision,
+            scheduled_at, occurred_at
+        ) VALUES (
+            #{event.auditId}, #{event.tenantId}, #{event.outboxId}, #{event.action},
+            #{event.actorId}, #{event.authorityUsed}, #{event.reasonCode},
+            #{event.decisionNote}, #{event.evidenceSource}, #{event.fromStatus},
+            #{event.toStatus}, #{event.fromVersion}, #{event.toVersion},
+            #{event.reviewFailureType}, #{event.attemptCountAtDecision},
+            #{event.scheduledAt}, #{event.occurredAt}
+        )
+    </insert>
+
+    <select id="findAuditPage" resultMap="auditRow">
+        SELECT audit_id, tenant_id, outbox_id, action, actor_id,
+               authority_used, reason_code, decision_note, evidence_source,
+               from_status, to_status, from_version, to_version,
+               review_failure_type, attempt_count_at_decision,
+               scheduled_at, occurred_at
+        FROM cs_pending_handoff_review_audit
+        WHERE tenant_id = #{tenantId} AND outbox_id = #{outboxId}
+        <if test="cursorOccurredAt != null">
+            AND (
+                occurred_at &lt; #{cursorOccurredAt}
+                OR (occurred_at = #{cursorOccurredAt} AND audit_id &lt; #{cursorAuditId})
+            )
+        </if>
+        ORDER BY occurred_at DESC, audit_id DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

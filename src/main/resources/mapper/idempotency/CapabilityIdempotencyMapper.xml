@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smartcs.smart_cs_agent.persistence.mybatis.mapper.CapabilityIdempotencyMapper">
+    <resultMap id="idempotencyRow"
+               type="com.smartcs.smart_cs_agent.persistence.mybatis.row.CapabilityIdempotencyRow">
+        <constructor>
+            <arg column="request_fingerprint_hash" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="owner_token" javaType="java.lang.String"/>
+            <arg column="lease_until" javaType="_long"/>
+            <arg column="result_json" javaType="java.lang.String"/>
+            <arg column="result_schema_version" javaType="_int"/>
+        </constructor>
+    </resultMap>
+
+    <update id="createTable">
+        CREATE TABLE IF NOT EXISTS cs_capability_idempotency (
+            storage_key_hash CHAR(64) NOT NULL,
+            request_fingerprint_hash CHAR(64) NOT NULL,
+            status VARCHAR(24) NOT NULL,
+            owner_token VARCHAR(64) NOT NULL,
+            lease_until BIGINT NOT NULL,
+            result_json LONGTEXT NULL,
+            result_schema_version INT NULL,
+            created_at BIGINT NOT NULL,
+            updated_at BIGINT NOT NULL,
+            PRIMARY KEY (storage_key_hash),
+            INDEX idx_cs_capability_idempotency_updated_at (updated_at)
+        )
+    </update>
+
+    <insert id="insertClaim">
+        INSERT INTO cs_capability_idempotency(
+            storage_key_hash, request_fingerprint_hash, status,
+            owner_token, lease_until, result_json, result_schema_version,
+            created_at, updated_at
+        ) VALUES (
+            #{keyHash}, #{fingerprintHash}, #{status},
+            #{ownerToken}, #{leaseUntil}, NULL, NULL, #{now}, #{now}
+        )
+    </insert>
+
+    <update id="takeOver">
+        UPDATE cs_capability_idempotency
+        SET owner_token = #{newOwnerToken},
+            lease_until = #{newLeaseUntil},
+            updated_at = #{now}
+        WHERE storage_key_hash = #{keyHash}
+          AND request_fingerprint_hash = #{fingerprintHash}
+          AND status = #{status}
+          AND owner_token = #{oldOwnerToken}
+          AND lease_until = #{oldLeaseUntil}
+    </update>
+
+    <update id="complete">
+        UPDATE cs_capability_idempotency
+        SET status = #{completedStatus},
+            result_json = #{resultJson},
+            result_schema_version = #{resultSchemaVersion},
+            lease_until = 0,
+            updated_at = #{now}
+        WHERE storage_key_hash = #{keyHash}
+          AND request_fingerprint_hash = #{fingerprintHash}
+          AND status = #{inProgressStatus}
+          AND owner_token = #{ownerToken}
+    </update>
+
+    <update id="renewLease">
+        UPDATE cs_capability_idempotency
+        SET lease_until = #{leaseUntil}, updated_at = #{now}
+        WHERE storage_key_hash = #{keyHash}
+          AND request_fingerprint_hash = #{fingerprintHash}
+          AND status = #{status}
+          AND owner_token = #{ownerToken}
+    </update>
+
+    <delete id="deleteOwnedClaim">
+        DELETE FROM cs_capability_idempotency
+        WHERE storage_key_hash = #{keyHash}
+          AND status = #{status}
+          AND owner_token = #{ownerToken}
+    </delete>
+
+    <select id="find" resultMap="idempotencyRow">
+        SELECT request_fingerprint_hash, status, owner_token, lease_until,
+               result_json, COALESCE(result_schema_version, 0) AS result_schema_version
+        FROM cs_capability_idempotency
+        WHERE storage_key_hash = #{keyHash}
+    </select>
+</mapper>
