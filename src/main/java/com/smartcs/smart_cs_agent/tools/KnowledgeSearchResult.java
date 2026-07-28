@@ -1,5 +1,7 @@
 package com.smartcs.smart_cs_agent.tools;
 
+import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeType;
+
 import java.util.List;
 
 /**
@@ -45,6 +47,14 @@ public class KnowledgeSearchResult {
     /** 本地向量相似度分数，范围大致是 0 到 100 */
     private final double vectorScore;
 
+    private final String chunkId;
+    private final KnowledgeType knowledgeType;
+    private final String productCategory;
+    private final String productModel;
+    private final String source;
+    private final String version;
+    private final List<String> retrievalChannels;
+
     public KnowledgeSearchResult(String documentId, String category, String title, int score, String snippet) {
         this(documentId, category, title, score, snippet, List.of(), List.of(), List.of(), "", 0);
     }
@@ -71,9 +81,53 @@ public class KnowledgeSearchResult {
                                  List<String> queryVariants,
                                  String rerankReason,
                                  double vectorScore) {
+        this(
+                documentId,
+                documentId + "#chunk-1",
+                KnowledgeType.POLICY,
+                category,
+                "",
+                "",
+                title,
+                "",
+                "",
+                score,
+                snippet,
+                matchedTerms,
+                matchedFields,
+                queryVariants,
+                rerankReason,
+                vectorScore,
+                List.of()
+        );
+    }
+
+    public KnowledgeSearchResult(String documentId,
+                                 String chunkId,
+                                 KnowledgeType knowledgeType,
+                                 String category,
+                                 String productCategory,
+                                 String productModel,
+                                 String title,
+                                 String source,
+                                 String version,
+                                 int score,
+                                 String snippet,
+                                 List<String> matchedTerms,
+                                 List<String> matchedFields,
+                                 List<String> queryVariants,
+                                 String rerankReason,
+                                 double vectorScore,
+                                 List<String> retrievalChannels) {
         this.documentId = documentId;
+        this.chunkId = chunkId == null ? "" : chunkId;
+        this.knowledgeType = knowledgeType == null ? KnowledgeType.POLICY : knowledgeType;
         this.category = category;
+        this.productCategory = productCategory == null ? "" : productCategory;
+        this.productModel = productModel == null ? "" : productModel;
         this.title = title;
+        this.source = source == null ? "" : source;
+        this.version = version == null ? "" : version;
         this.score = score;
         this.snippet = snippet;
         this.matchedTerms = matchedTerms == null ? List.of() : List.copyOf(matchedTerms);
@@ -81,6 +135,7 @@ public class KnowledgeSearchResult {
         this.queryVariants = queryVariants == null ? List.of() : List.copyOf(queryVariants);
         this.rerankReason = rerankReason == null ? "" : rerankReason;
         this.vectorScore = vectorScore;
+        this.retrievalChannels = retrievalChannels == null ? List.of() : List.copyOf(retrievalChannels);
     }
 
     public String getDocumentId() {
@@ -89,6 +144,22 @@ public class KnowledgeSearchResult {
 
     public String getCategory() {
         return category;
+    }
+
+    public String getChunkId() {
+        return chunkId;
+    }
+
+    public KnowledgeType getKnowledgeType() {
+        return knowledgeType;
+    }
+
+    public String getProductCategory() {
+        return productCategory;
+    }
+
+    public String getProductModel() {
+        return productModel;
     }
 
     public String getTitle() {
@@ -123,13 +194,31 @@ public class KnowledgeSearchResult {
         return vectorScore;
     }
 
+    public String getSource() {
+        return source;
+    }
+
+    public String getVersion() {
+        return version;
+    }
+
+    public List<String> getRetrievalChannels() {
+        return retrievalChannels;
+    }
+
     /**
      * 转成适合放进 Prompt 的文本。
      */
     public String toPromptText() {
         return "标题：" + title + "\n" +
+                "来源：" + (source.isBlank() ? documentId : source) + "\n" +
+                "知识类型：" + knowledgeType + "\n" +
+                "Chunk：" + chunkId + "\n" +
                 "分类：" + category + "\n" +
+                "商品品类：" + productCategory + "\n" +
+                "商品型号：" + productModel + "\n" +
                 "相关度：" + score + "\n" +
+                "召回通道：" + String.join(", ", retrievalChannels) + "\n" +
                 "命中词：" + String.join(", ", matchedTerms) + "\n" +
                 "命中字段：" + String.join(", ", matchedFields) + "\n" +
                 "向量分：" + String.format("%.2f", vectorScore) + "\n" +

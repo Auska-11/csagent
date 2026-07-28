@@ -90,6 +90,7 @@ public class CapabilityActionHandler implements ActionHandler<CapabilityAction> 
                         buildExecutionContext(handlingContext, canonicalCapabilityId)
                 );
                 result = CapabilityObservation.from(gatewayResult);
+                recordKnowledgeDiagnostics(context, canonicalCapabilityId, gatewayResult.getMetadata());
             } catch (RuntimeException e) {
                 Map<String, Object> failedData = new LinkedHashMap<>();
                 failedData.put("capability", capability);
@@ -178,5 +179,41 @@ public class CapabilityActionHandler implements ActionHandler<CapabilityAction> 
             return true;
         }
         return data instanceof List<?> results && results.isEmpty();
+    }
+
+    private void recordKnowledgeDiagnostics(TurnContext context,
+                                            String capabilityId,
+                                            Map<String, Object> metadata) {
+        if (!CapabilityIds.KNOWLEDGE_SEARCH.equals(capabilityId) || metadata == null) {
+            return;
+        }
+        Object rawDiagnostics = metadata.get("diagnostics");
+        if (!(rawDiagnostics instanceof List<?> diagnostics)) {
+            return;
+        }
+        for (Object rawDiagnostic : diagnostics) {
+            if (!(rawDiagnostic instanceof Map<?, ?> diagnostic)) {
+                continue;
+            }
+            String eventName = String.valueOf(diagnostic.get("eventName"));
+            if (!"vector_retrieval_degraded".equals(eventName)) {
+                continue;
+            }
+            Map<String, Object> traceData = new LinkedHashMap<>();
+            traceData.put("capability", capabilityId);
+            copyDiagnosticField(diagnostic, traceData, "stage");
+            copyDiagnosticField(diagnostic, traceData, "errorType");
+            copyDiagnosticField(diagnostic, traceData, "errorSummary");
+            copyDiagnosticField(diagnostic, traceData, "profile");
+            copyDiagnosticField(diagnostic, traceData, "knowledgeType");
+            context.addTrace(eventName, "向量检索通道降级，继续使用关键词结果", traceData);
+        }
+    }
+
+    private void copyDiagnosticField(Map<?, ?> source, Map<String, Object> target, String field) {
+        Object value = source.get(field);
+        if (value != null) {
+            target.put(field, value.toString());
+        }
     }
 }

@@ -1,3 +1,10 @@
+---
+documentId: policy/return_policy.md
+knowledgeType: POLICY
+source: 客服中心/售后政策/退换货
+version: 2026.1
+effectiveDate: 2026-01-01
+---
 # 退换货政策
 
 关键词：退货, 换货, 七天无理由, 超过七天, 运费, 质量问题, 退款

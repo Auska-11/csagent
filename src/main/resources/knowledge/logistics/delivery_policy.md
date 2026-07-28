@@ -1,3 +1,10 @@
+---
+documentId: logistics/delivery_policy.md
+knowledgeType: POLICY
+source: 客服中心/履约政策/配送
+version: 2026.1
+effectiveDate: 2026-01-01
+---
 # 配送政策
 
 关键词：配送, 物流, 发货, 偏远地区, 运费, 时效, 签收

@@ -147,6 +147,9 @@ public class McpJsonRpcController {
             meta.put("providerId", result.getProviderId());
             meta.put("outcome", result.getOutcome().name());
             meta.put("replayed", result.isReplayed());
+            if (!result.getMetadata().isEmpty()) {
+                meta.put("capabilityMetadata", result.getMetadata());
+            }
         }
         response.put("_meta", meta);
         response.put("isError", true);
@@ -157,12 +160,15 @@ public class McpJsonRpcController {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("content", List.of(Map.of("type", "text", "text", result.getMessage())));
         response.put("structuredContent", result.getData());
-        response.put("_meta", Map.of(
-                "capabilityId", result.getCapabilityId(),
-                "providerId", result.getProviderId(),
-                "outcome", result.getOutcome().name(),
-                "replayed", result.isReplayed()
-        ));
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("capabilityId", result.getCapabilityId());
+        meta.put("providerId", result.getProviderId());
+        meta.put("outcome", result.getOutcome().name());
+        meta.put("replayed", result.isReplayed());
+        if (!result.getMetadata().isEmpty()) {
+            meta.put("capabilityMetadata", result.getMetadata());
+        }
+        response.put("_meta", meta);
         return response;
     }
 

@@ -137,10 +137,13 @@ public class HttpMcpClientTransport implements McpClientTransport {
         String message = contentText(result.get("content"));
         Object data = result.get("structuredContent");
         boolean isError = bool(result.get("isError"), false);
+        Map<String, Object> capabilityMetadata = map(meta.get("capabilityMetadata"));
 
         CapabilityResult<?> mapped;
         if (!isError) {
-            mapped = CapabilityResult.success(call.getCapabilityId(), providerId, message, data);
+            mapped = CapabilityResult.success(
+                    call.getCapabilityId(), providerId, message, data, capabilityMetadata
+            );
         } else {
             String errorCode = defaultText(text(meta.get("errorCode")), "MCP_REMOTE_ERROR");
             CapabilityOutcome outcome = outcome(meta.get("outcome"));

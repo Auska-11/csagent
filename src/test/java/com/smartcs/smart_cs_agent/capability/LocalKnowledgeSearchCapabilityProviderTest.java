@@ -31,12 +31,16 @@ class LocalKnowledgeSearchCapabilityProviderTest {
         CapabilityDefinition definition = provider.definitions().iterator().next();
 
         assertEquals(CapabilityIds.KNOWLEDGE_SEARCH, definition.getId());
-        assertEquals("1.0.0", definition.getVersion());
+        assertEquals("2.0.0", definition.getVersion());
         assertFalse(definition.isRequiresIdentity());
         assertFalse(definition.isRequiresAuthentication());
         assertFalse(definition.isSideEffect());
         assertFalse(definition.isIdempotent());
         assertEquals(CapabilityRiskLevel.READ_ONLY, definition.getRiskLevel());
+        Map<?, ?> properties = (Map<?, ?>) definition.getInputSchema().get("properties");
+        assertTrue(properties.containsKey("knowledge_type"));
+        assertTrue(properties.containsKey("product_category"));
+        assertTrue(properties.containsKey("product_model"));
     }
 
     @Test
@@ -51,6 +55,8 @@ class LocalKnowledgeSearchCapabilityProviderTest {
         List<?> hits = (List<?>) result.getData();
         KnowledgeSearchHit first = (KnowledgeSearchHit) hits.get(0);
         assertEquals("policy/return_policy.md", first.getDocumentId());
+        assertEquals("POLICY", first.getKnowledgeType());
+        assertFalse(first.getChunkId().isBlank());
         assertEquals("退换货政策", first.getTitle());
         assertTrue(first.getScore() > 0);
         assertTrue(first.getSnippet().contains("7 天"));

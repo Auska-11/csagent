@@ -54,5 +54,33 @@
     "expectedDocumentId": "logistics/delivery_policy.md",
     "expectedKeywords": ["发货时效", "24 小时"],
     "topK": 3
+  },
+  {
+    "id": "recall_headphones_oral_single_side",
+    "query": "耳机听着听着只剩左边响了",
+    "expectedDocumentId": "troubleshooting/headphones_pro_max.md",
+    "expectedKeywords": ["重新配对左右耳", "重置蓝牙连接"],
+    "topK": 3
+  },
+  {
+    "id": "recall_watch_message_sync",
+    "query": "S2 手表微信消息老是不来",
+    "expectedDocumentId": "troubleshooting/watch_s2.md",
+    "expectedKeywords": ["通知", "后台运行"],
+    "topK": 3
+  },
+  {
+    "id": "recall_charger_overheat",
+    "query": "无线充电器特别烫手怎么办",
+    "expectedDocumentId": "troubleshooting/charger_qi_15w.md",
+    "expectedKeywords": ["断开", "联系人工客服"],
+    "topK": 3
+  },
+  {
+    "id": "recall_cable_charge_only",
+    "query": "Type-C 数据线插电脑只能充电不能传文件",
+    "expectedDocumentId": "troubleshooting/cable_type_c_60w.md",
+    "expectedKeywords": ["文件传输", "USB 2.0"],
+    "topK": 3
   }
 ]

@@ -14,8 +14,14 @@ import java.util.Map;
 public final class KnowledgeSearchHit {
 
     private final String documentId;
+    private final String chunkId;
+    private final String knowledgeType;
     private final String category;
+    private final String productCategory;
+    private final String productModel;
     private final String title;
+    private final String source;
+    private final String version;
     private final int score;
     private final String snippet;
 
@@ -24,9 +30,29 @@ public final class KnowledgeSearchHit {
                               String title,
                               int score,
                               String snippet) {
+        this(documentId, "", "", category, "", "", title, "", "", score, snippet);
+    }
+
+    public KnowledgeSearchHit(String documentId,
+                              String chunkId,
+                              String knowledgeType,
+                              String category,
+                              String productCategory,
+                              String productModel,
+                              String title,
+                              String source,
+                              String version,
+                              int score,
+                              String snippet) {
         this.documentId = safeText(documentId);
+        this.chunkId = safeText(chunkId);
+        this.knowledgeType = safeText(knowledgeType);
         this.category = safeText(category);
+        this.productCategory = safeText(productCategory);
+        this.productModel = safeText(productModel);
         this.title = safeText(title);
+        this.source = safeText(source);
+        this.version = safeText(version);
         this.score = score;
         this.snippet = safeText(snippet);
     }
@@ -40,11 +66,17 @@ public final class KnowledgeSearchHit {
             return null;
         }
         return new KnowledgeSearchHit(
-                text(map.get("documentId")),
-                text(map.get("category")),
-                text(map.get("title")),
+                text(map, "documentId", "document_id"),
+                text(map, "chunkId", "chunk_id"),
+                text(map, "knowledgeType", "knowledge_type"),
+                text(map, "category"),
+                text(map, "productCategory", "product_category"),
+                text(map, "productModel", "product_model"),
+                text(map, "title"),
+                text(map, "source"),
+                text(map, "version"),
                 number(map.get("score")),
-                text(map.get("snippet"))
+                text(map, "snippet")
         );
     }
 
@@ -54,6 +86,22 @@ public final class KnowledgeSearchHit {
 
     public String getCategory() {
         return category;
+    }
+
+    public String getChunkId() {
+        return chunkId;
+    }
+
+    public String getKnowledgeType() {
+        return knowledgeType;
+    }
+
+    public String getProductCategory() {
+        return productCategory;
+    }
+
+    public String getProductModel() {
+        return productModel;
     }
 
     public String getTitle() {
@@ -68,12 +116,26 @@ public final class KnowledgeSearchHit {
         return snippet;
     }
 
+    public String getSource() {
+        return source;
+    }
+
+    public String getVersion() {
+        return version;
+    }
+
     private static String safeText(String value) {
         return value == null ? "" : value;
     }
 
-    private static String text(Object value) {
-        return value == null ? "" : value.toString();
+    private static String text(Map<?, ?> map, String... keys) {
+        for (String key : keys) {
+            Object value = map.get(key);
+            if (value != null) {
+                return value.toString();
+            }
+        }
+        return "";
     }
 
     private static int number(Object value) {

@@ -88,9 +88,13 @@ smartcs:
       circuit-open-ms: ${SMARTCS_MCP_CIRCUIT_OPEN_MS:30000}
       discovery-cache-ttl-ms: ${SMARTCS_MCP_DISCOVERY_CACHE_TTL_MS:60000}
   rag:
-    # local：默认使用 Markdown + 关键词 + 本地轻量向量分，不依赖外部服务。
-    # embedding-qdrant：调用真实 embedding API，并使用 Qdrant 向量数据库检索知识库。
+    # local：只使用本地字段加权关键词检索，不访问外部向量服务。
+    # hybrid：故障排查使用关键词 + Embedding/Qdrant 混合召回；向量通道失败时保留关键词结果。
+    # 旧值 embedding-qdrant 仍作为 hybrid 的兼容别名。
     mode: ${SMARTCS_RAG_MODE:local}
+    policy-min-score: ${SMARTCS_RAG_POLICY_MIN_SCORE:24}
+    troubleshooting-min-score: ${SMARTCS_RAG_TROUBLESHOOTING_MIN_SCORE:24}
+    vector-min-score: ${SMARTCS_RAG_VECTOR_MIN_SCORE:0.72}
     embedding:
       base-url: ${SMARTCS_EMBEDDING_BASE_URL:${OPENAI_BASE_URL:https://api.openai.com/v1}}
       api-key: ${SMARTCS_EMBEDDING_API_KEY:${OPENAI_API_KEY:dummy-test-key}}

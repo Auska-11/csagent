@@ -10,23 +10,39 @@ import org.springframework.stereotype.Component;
  * 真 embedding + 向量数据库需要外部模型和 Qdrant 服务。
  * 如果默认启用，会让本地学习、单元测试和 CI 都变复杂。
  *
- * 所以第一版采用双模式：
- * - local：默认模式，继续使用 Markdown + 关键词 + 本地轻量向量分。
- * - embedding-qdrant：高级模式，调用 OpenAI-compatible embedding API，并从 Qdrant 检索。
+ * 所以采用双模式：
+ * - local：默认模式，只使用本地字段加权关键词检索。
+ * - hybrid：故障知识使用关键词 + Embedding/Qdrant 混合召回。
+ *
+ * <p>旧值 embedding-qdrant 作为 hybrid 的兼容别名保留。</p>
  */
 @Component
 @ConfigurationProperties(prefix = "smartcs.rag")
 public class RagProperties {
 
-    /** local 或 embedding-qdrant */
+    /** local 或 hybrid；embedding-qdrant 是兼容别名 */
     private String mode = "local";
+
+    /** 政策严格阈值，使用规则重排后的 0-100 分。 */
+    private double policyMinScore = 24;
+
+    /** 故障知识统一阈值，使用规则重排后的 0-100 分。 */
+    private double troubleshootingMinScore = 24;
+
+    /** Qdrant 原始余弦相似度最低要求。 */
+    private double vectorMinScore = 0.72;
 
     private Embedding embedding = new Embedding();
 
     private Qdrant qdrant = new Qdrant();
 
     public boolean isEmbeddingQdrantMode() {
-        return "embedding-qdrant".equalsIgnoreCase(mode);
+        return isHybridMode();
+    }
+
+    public boolean isHybridMode() {
+        return "hybrid".equalsIgnoreCase(mode)
+                || "embedding-qdrant".equalsIgnoreCase(mode);
     }
 
     public String getMode() {
@@ -35,6 +51,34 @@ public class RagProperties {
 
     public void setMode(String mode) {
         this.mode = mode;
+    }
+
+    public double getPolicyMinScore() {
+        return policyMinScore;
+    }
+
+    public void setPolicyMinScore(double policyMinScore) {
+        this.policyMinScore = requireScore("smartcs.rag.policy-min-score", policyMinScore, 100);
+    }
+
+    public double getTroubleshootingMinScore() {
+        return troubleshootingMinScore;
+    }
+
+    public void setTroubleshootingMinScore(double troubleshootingMinScore) {
+        this.troubleshootingMinScore = requireScore(
+                "smartcs.rag.troubleshooting-min-score",
+                troubleshootingMinScore,
+                100
+        );
+    }
+
+    public double getVectorMinScore() {
+        return vectorMinScore;
+    }
+
+    public void setVectorMinScore(double vectorMinScore) {
+        this.vectorMinScore = requireScore("smartcs.rag.vector-min-score", vectorMinScore, 1);
     }
 
     public Embedding getEmbedding() {
@@ -177,5 +221,12 @@ public class RagProperties {
                     readTimeoutMs
             );
         }
+    }
+
+    private double requireScore(String property, double value, double max) {
+        if (value < 0 || value > max) {
+            throw new IllegalArgumentException(property + " must be between 0 and " + max);
+        }
+        return value;
     }
 }

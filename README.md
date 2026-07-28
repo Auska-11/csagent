@@ -11,7 +11,7 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 - 退换货：支持退货进度查询，以及“我要退货 -> 追问订单号 -> 追问原因 -> 提交退货申请”的多轮流程。
 - 多轮记忆：支持短期消息窗口、任务记忆快照、规则摘要压缩；摘要默认限制为 2000 个 Unicode 字符，生成和旧快照恢复时都会脱敏，超限后优先保留最近内容。Trace 会记录 `memory_loaded` / `memory_compressed`，前端 Memory 面板可查看当前会话记忆。
 - 长期用户偏好：支持记录“我喜欢蓝牙耳机”等商品偏好，默认 30 天 TTL，重复表达会刷新有效期；内存实现限制用户总量、每用户偏好数和单条长度，并按用户访问顺序、偏好最后表达顺序淘汰旧数据。手机号、邮箱、证件号、长数字和常见凭据会在写入前脱敏，敏感信息-only 输入不会保存；同时支持查询和清空长期记忆。
-- 知识库问答：支持退货政策、发票、保修、配送、转人工规则等 Markdown 知识库检索，并已增强查询改写、多路召回、本地轻量向量分、简单 rerank 和 `knowledge_miss` Trace；可选开启真 embedding + Qdrant 向量数据库模式。
+- 知识库问答：政策问题使用字段加权关键词检索、严格阈值和确定性回答；商品使用/故障问题使用关键词与可选 Qdrant 向量混合召回、RRF 去重融合、规则重排和证据约束 LLM 回答。Markdown 按标题切成带类型、品类、型号、来源和版本元数据的 Chunk，统一未命中继续记录 `knowledge_miss`。
 - Multi-Agent 路由：支持把用户消息路由到售前、售后、投诉和通用专家域，并在 Trace 中记录 `agent_routed`。
 - 人工转接：外部调用前先保存租户隔离的 Outbox，支持结果未知、短租约有限恢复和 ADMIN 列表/详情/审计/retry/confirm/reconcile/close；售后平台没有只读幂等查询协议时，reconcile 会安全返回 503，绝不把“查不了”伪装成“不存在”。
 - Agent Trace：接口和前端调试面板可以看到 Action、工具调用、LLM 调用、转人工、耗时等事件。
@@ -59,13 +59,13 @@ flowchart TD
 - 当前输入、跨轮状态、本轮执行过程分别放在 `ChatRequest`、`ConversationState`、`TurnContext`。
 - Local/MCP Provider 共用 Capability 契约，Workflow 不感知能力位于本地还是远程。
 - Phase 9 已物理删除 Legacy Skill/Workflow Adapter、ToolManager、ToolRegistry 和重复 Tool Schema；运行时只有 Workflow/Capability 主链路。
-- Phase 9.5 已通过 499 个默认测试、真实 MySQL、JAR、容器制品、订单/政策主链路和 readiness 掉线恢复总验收；验收后项目容器已停止。
+- Phase 9.5 历史验收曾通过当时的 499 个默认测试、真实 MySQL、JAR、容器制品、订单/政策主链路和 readiness 掉线恢复；499 不是当前代码的最新测试数，验收后项目容器已停止。
 - 当前有意保留单 Maven Module：一个 JAR、一个镜像、一个发布生命周期；用架构测试约束包边界，达到独立发布触发条件后再拆 Module。
 - HTTP 身份只来自已验证 JWT Principal，不能由请求体、LLM 参数或 MCP `_meta` 覆盖。
 - Session CAS、Capability 幂等和 Handoff Outbox 分别保护会话状态、副作用执行和外部结果未知，三者不能互相替代。
 - Repository 默认使用内存模式，开启 JDBC 模式后通过 MyBatis/HikariCP 连接 MySQL，保证学习演示和真实持久化两种需求都能覆盖。
 - 人工转接创建支持本地/售后 HTTP 双模式；售后结果查询使用独立三态 Port，当前默认明确 unavailable。
-- RAG 默认使用本地检索，开启 `embedding-qdrant` 后再依赖真实 embedding API 和 Qdrant，保证基础演示和高级检索都能覆盖。
+- RAG 默认 `local`，只使用本地字段加权关键词检索；`hybrid` 仅为故障排查增加 Embedding/Qdrant 通道，向量通道失败时关键词结果仍继续。旧值 `embedding-qdrant` 暂作为 `hybrid` 兼容别名。
 - 先做稳定、可解释的规则评测，再补 LLM-as-Judge。
 
 ## 主要接口
@@ -392,7 +392,7 @@ $env:SMARTCS_JDBC_POOL_MAX_SIZE="10"
 [SessionStore 持久化与恢复说明](docs/客服Agent/客服Agent-43-SessionStore持久化与恢复说明.md) 和
 [Capability 幂等持久化与租约说明](docs/客服Agent/客服Agent-44-Capability幂等持久化与租约说明.md)。
 
-默认 RAG 使用本地检索，不依赖外部向量库。如果要演示真 embedding + Qdrant，可以先启动 Qdrant：
+默认 RAG 使用 `local`，完全不访问 embedding 或向量库。如果要为故障排查启用关键词 + 真向量混合召回，可以先启动 Qdrant：
 
 ```powershell
 docker compose up -d qdrant
@@ -401,7 +401,10 @@ docker compose up -d qdrant
 再设置环境变量：
 
 ```powershell
-$env:SMARTCS_RAG_MODE="embedding-qdrant"
+$env:SMARTCS_RAG_MODE="hybrid"
+$env:SMARTCS_RAG_POLICY_MIN_SCORE="24"
+$env:SMARTCS_RAG_TROUBLESHOOTING_MIN_SCORE="24"
+$env:SMARTCS_RAG_VECTOR_MIN_SCORE="0.72"
 $env:SMARTCS_EMBEDDING_BASE_URL="https://api.openai.com/v1"
 $env:SMARTCS_EMBEDDING_API_KEY="your-api-key"
 $env:SMARTCS_EMBEDDING_MODEL_NAME="text-embedding-3-small"
@@ -414,7 +417,7 @@ $env:SMARTCS_QDRANT_CONNECT_TIMEOUT_MS="3000"
 $env:SMARTCS_QDRANT_READ_TIMEOUT_MS="10000"
 ```
 
-开启后，`KnowledgeTools` 会把 Markdown 知识库向量化后写入 Qdrant，并用用户问题的 query embedding 做相似度检索；如果 embedding 或 Qdrant 暂时不可用，会自动回退本地 RAG。设计说明见 [客服Agent-33-Embedding向量数据库RAG设计.md](docs/客服Agent/客服Agent-33-Embedding向量数据库RAG设计.md)。
+开启后，系统只把故障知识 Chunk 向量化写入 Qdrant；Qdrant 使用知识类型、商品品类、型号和版本过滤。向量命中必须先通过原始相似度阈值，再与关键词结果做 RRF 融合。RRF 原始分数按双路理论上限归一化并以最多 8 分进入规则重排，能影响接近候选的顺序，但不会压过关键词、向量相似度和型号奖励。Embedding/Qdrant 异常只关闭向量通道，不影响关键词召回，并由 `CapabilityActionHandler` 记录 `vector_retrieval_degraded` 结构化 Trace。当前设计见 [客服知识库 RAG 架构改造](docs/客服Agent/客服Agent-74-客服知识库RAG架构改造.md)。
 
 默认人工转接使用本地模拟工单。如果要联调独立售后工单平台，先在它自己的仓库启动服务，例如两个仓库位于同一级目录时：
 
@@ -536,7 +539,7 @@ JDBC，并等待 MySQL healthy 后再启动；宿主机默认通过 3307 访问�
 默认 `.env.example` 中 `SMARTCS_RAG_MODE=local`，所以 Agent 不会强制依赖 embedding 服务；需要在容器中演示真向量库时，把 `.env` 改成：
 
 ```text
-SMARTCS_RAG_MODE=embedding-qdrant
+SMARTCS_RAG_MODE=hybrid
 SMARTCS_EMBEDDING_API_KEY=your-api-key
 SMARTCS_QDRANT_BASE_URL=http://qdrant:6333
 ```
@@ -580,15 +583,15 @@ Phase 9 清理后的最终复验证据见
 
 ## 当前评测
 
-当前评测样本共 36 条：
+当前评测样本共 44 条：
 
-- 路由评测：16 条。
-- 知识库召回评测：8 条。
+- 路由评测：20 条。
+- 知识库召回评测：12 条。
 - 回复质量规则评测：6 条。
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次 `clean test` 通过 499 个测试用例（0 失败、0 错误、0 跳过）；另有 1 项显式真实 MySQL IT。
+最近一次 `clean test` 通过 492 个测试用例（0 失败、0 错误、0 跳过）。本轮 RAG 测试使用 Fake Embedding/Fake VectorStore，不代表真实 Qdrant 集成验证；真实 MySQL IT 和外部 Qdrant 均不包含在默认测试中。
 评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
@@ -655,6 +658,7 @@ Phase 9 清理后的最终复验证据见
 - [Phase 9 独立 Capability Provider 与 ToolRegistry 清理说明](docs/客服Agent/客服Agent-71-Phase9独立CapabilityProvider与ToolRegistry清理说明.md)
 - [Phase 9 Maven Modules 决策与包边界说明](docs/客服Agent/客服Agent-72-Phase9MavenModules决策与包边界说明.md)
 - [Phase 9 最终验收与架构改造完成说明](docs/客服Agent/客服Agent-73-Phase9最终验收与架构改造完成说明.md)
+- [客服知识库 RAG 架构改造](docs/客服Agent/客服Agent-74-客服知识库RAG架构改造.md)
 
 ## 简历表达参考
 
@@ -667,7 +671,7 @@ Phase 9 清理后的最终复验证据见
 - 设计统一 Capability 契约，以 `CapabilityDefinition`、`CapabilityCall`、`CapabilityResult` 和输入/输出 schema 作为唯一协议；7 个独立 Local Provider 覆盖 9 个能力，Workflow 只依赖 `CapabilityGateway`。
 - 实现 `/mcp` JSON-RPC 风格入口，支持 `initialize`、`tools/list` 和 `tools/call`，REST 与 MCP 共用同一 Capability Catalog，并支持 Local/MCP Provider 配置替换。
 - 接入 Spring Security Resource Server，统一校验 JWT 签名、issuer、audience、有效期、租户和角色；区分 CUSTOMER、ADMIN 与 MCP_CLIENT，并禁止 MCP 服务通过普通元数据冒充最终用户。
-- 实现 RAG 双模式：默认 local 模式保证测试和演示稳定，高级模式接入 OpenAI-compatible embedding API 与 Qdrant 向量数据库，并在外部服务失败时回退本地检索。
+- 实现面向业务类型的 RAG：政策问题走字段加权精确检索、严格 Gate 和确定性 Workflow；故障问题走关键词/Qdrant 混合召回、RRF 去重、规则重排和证据约束 LLM Workflow。`local` 不访问外部服务，`hybrid` 的向量通道可独立降级。
 - 实现轻量 Multi-Agent 路由，将用户消息分配到售前、售后、投诉和通用专家域，并通过 Trace 记录路由原因和置信度。
 - 实现 Repository 层 `memory` / `jdbc` 双模式，默认内存模式保证测试稳定，开启 JDBC 模式后可将用户、商品、订单和退货记录持久化到 MySQL。
 - 实现人工转接 `memory` / `after-sales-http` 双模式，远端结果未知时写入租户隔离的 memory/JDBC Outbox；可选 Worker 使用短租约、原 Idempotency-Key 和有限退避恢复，ADMIN API 提供列表、详情、retry/confirm/reconcile/close 及追加式审计，查询不可用时明确返回 503。

@@ -84,7 +84,7 @@ public class WarrantyQueryWorkflow implements AgentWorkflow {
             return WorkflowDecision.next(
                     new CapabilityAction(
                             CapabilityIds.KNOWLEDGE_SEARCH,
-                            Map.of("query", context.getMessage())
+                            Map.of("query", context.getMessage(), "knowledge_type", "POLICY")
                     ),
                     "先检索正式保修政策，避免根据模型常识猜答案"
             );

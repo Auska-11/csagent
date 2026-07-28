@@ -1,6 +1,7 @@
 package com.smartcs.smart_cs_agent.tools;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeChunk;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -64,18 +65,18 @@ public class QdrantKnowledgeVectorStore implements KnowledgeVectorStore {
     }
 
     @Override
-    public void upsertDocuments(List<KnowledgeDocument> documents, List<List<Double>> embeddings) {
-        if (documents.size() != embeddings.size()) {
-            throw new IllegalArgumentException("documents size must match embeddings size");
+    public void upsertChunks(List<KnowledgeChunk> chunks, List<List<Double>> embeddings) {
+        if (chunks.size() != embeddings.size()) {
+            throw new IllegalArgumentException("chunks size must match embeddings size");
         }
 
         List<Map<String, Object>> points = new ArrayList<>();
-        for (int i = 0; i < documents.size(); i++) {
-            KnowledgeDocument document = documents.get(i);
+        for (int i = 0; i < chunks.size(); i++) {
+            KnowledgeChunk chunk = chunks.get(i);
             Map<String, Object> point = new LinkedHashMap<>();
-            point.put("id", toStablePointId(document.getId()));
+            point.put("id", toStablePointId(chunk.chunkId()));
             point.put("vector", embeddings.get(i));
-            point.put("payload", toPayload(document));
+            point.put("payload", toPayload(chunk));
             points.add(point);
         }
 
@@ -91,11 +92,17 @@ public class QdrantKnowledgeVectorStore implements KnowledgeVectorStore {
     }
 
     @Override
-    public List<VectorKnowledgeHit> search(List<Double> queryEmbedding, int topK) {
+    public List<VectorKnowledgeHit> search(List<Double> queryEmbedding,
+                                           int topK,
+                                           KnowledgeVectorFilter filter) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("vector", queryEmbedding);
         body.put("limit", topK);
         body.put("with_payload", true);
+        Map<String, Object> qdrantFilter = toFilter(filter);
+        if (!qdrantFilter.isEmpty()) {
+            body.put("filter", qdrantFilter);
+        }
 
         try {
             SearchResponse response = restClient.post()
@@ -117,21 +124,54 @@ public class QdrantKnowledgeVectorStore implements KnowledgeVectorStore {
         }
     }
 
-    private Map<String, Object> toPayload(KnowledgeDocument document) {
+    private Map<String, Object> toPayload(KnowledgeChunk chunk) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("documentId", document.getId());
-        payload.put("category", document.getCategory());
-        payload.put("title", document.getTitle());
-        payload.put("content", document.getContent());
+        payload.put("documentId", chunk.documentId());
+        payload.put("chunkId", chunk.chunkId());
+        payload.put("knowledgeType", chunk.knowledgeType().name());
+        payload.put("category", chunk.category());
+        payload.put("productCategory", chunk.productCategory());
+        payload.put("productModel", chunk.productModel());
+        payload.put("title", chunk.title());
+        payload.put("source", chunk.source());
+        payload.put("version", chunk.version());
+        payload.put("effectiveDate", chunk.effectiveDate() == null ? "" : chunk.effectiveDate().toString());
+        payload.put("content", chunk.content());
+        payload.put("keywords", chunk.keywords());
         return payload;
+    }
+
+    private Map<String, Object> toFilter(KnowledgeVectorFilter filter) {
+        if (filter == null) {
+            return Map.of();
+        }
+        List<Map<String, Object>> must = new ArrayList<>();
+        addMatch(must, "knowledgeType", filter.knowledgeType() == null ? "" : filter.knowledgeType().name());
+        addMatch(must, "productCategory", filter.productCategory());
+        addMatch(must, "productModel", filter.productModel());
+        addMatch(must, "version", filter.version());
+        return must.isEmpty() ? Map.of() : Map.of("must", must);
+    }
+
+    private void addMatch(List<Map<String, Object>> must, String key, String value) {
+        if (value != null && !value.isBlank()) {
+            must.add(Map.of("key", key, "match", Map.of("value", value)));
+        }
     }
 
     private VectorKnowledgeHit toHit(SearchResult result) {
         Map<String, Object> payload = result.payload() == null ? Map.of() : result.payload();
         return new VectorKnowledgeHit(
                 stringPayload(payload, "documentId"),
+                stringPayload(payload, "chunkId"),
+                stringPayload(payload, "knowledgeType"),
                 stringPayload(payload, "category"),
+                stringPayload(payload, "productCategory"),
+                stringPayload(payload, "productModel"),
                 stringPayload(payload, "title"),
+                stringPayload(payload, "source"),
+                stringPayload(payload, "version"),
+                stringPayload(payload, "effectiveDate"),
                 stringPayload(payload, "content"),
                 result.score()
         );

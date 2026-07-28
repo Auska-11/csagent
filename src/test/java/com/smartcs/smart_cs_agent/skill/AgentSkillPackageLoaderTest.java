@@ -41,7 +41,7 @@ class AgentSkillPackageLoaderTest {
                 new AgentSkillManifestParser()
         ).load();
 
-        assertEquals(9, packages.size());
+        assertEquals(10, packages.size());
         AgentSkillPackage skillPackage = packages.stream()
                 .filter(candidate -> "customer-service".equals(candidate.getDefinition().getId()))
                 .findFirst()

@@ -151,7 +151,10 @@ public class PolicyQaWorkflow implements AgentWorkflow {
         state.setQuery(query);
         state.transitionTo(PolicyQaStep.SEARCHING);
         return WorkflowDecision.next(
-                new CapabilityAction(CapabilityIds.KNOWLEDGE_SEARCH, Map.of("query", query)),
+                new CapabilityAction(
+                        CapabilityIds.KNOWLEDGE_SEARCH,
+                        Map.of("query", query, "knowledge_type", "POLICY")
+                ),
                 "检索正式客服知识库，避免根据常识猜测政策"
         );
     }

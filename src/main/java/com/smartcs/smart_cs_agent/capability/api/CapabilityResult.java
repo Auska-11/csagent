@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.capability.api;
 
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -17,6 +18,7 @@ public final class CapabilityResult<T> {
     private final T data;
     private final String errorCode;
     private final boolean replayed;
+    private final Map<String, Object> metadata;
 
     private CapabilityResult(CapabilityOutcome outcome,
                              String capabilityId,
@@ -24,7 +26,8 @@ public final class CapabilityResult<T> {
                              String message,
                              T data,
                              String errorCode,
-                             boolean replayed) {
+                             boolean replayed,
+                             Map<String, Object> metadata) {
         this.outcome = Objects.requireNonNull(outcome, "outcome cannot be null");
         this.capabilityId = requireText(capabilityId, "capabilityId cannot be empty");
         this.providerId = requireText(providerId, "providerId cannot be empty");
@@ -32,6 +35,7 @@ public final class CapabilityResult<T> {
         this.data = data;
         this.errorCode = errorCode;
         this.replayed = replayed;
+        this.metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
     }
 
     public static <T> CapabilityResult<T> success(String capabilityId,
@@ -45,7 +49,26 @@ public final class CapabilityResult<T> {
                 message,
                 data,
                 null,
-                false
+                false,
+                Map.of()
+        );
+    }
+
+    /** 成功结果的结构化运行元数据，例如非致命通道降级；业务 data 契约保持不变。 */
+    public static <T> CapabilityResult<T> success(String capabilityId,
+                                                   String providerId,
+                                                   String message,
+                                                   T data,
+                                                   Map<String, Object> metadata) {
+        return new CapabilityResult<>(
+                CapabilityOutcome.SUCCESS,
+                capabilityId,
+                providerId,
+                message,
+                data,
+                null,
+                false,
+                metadata
         );
     }
 
@@ -61,7 +84,8 @@ public final class CapabilityResult<T> {
                 message,
                 data,
                 requireText(errorCode, "Business rejection errorCode cannot be empty"),
-                false
+                false,
+                Map.of()
         );
     }
 
@@ -76,7 +100,8 @@ public final class CapabilityResult<T> {
                 message,
                 null,
                 requireText(errorCode, "Technical failure errorCode cannot be empty"),
-                false
+                false,
+                Map.of()
         );
     }
 
@@ -113,6 +138,10 @@ public final class CapabilityResult<T> {
         return replayed;
     }
 
+    public Map<String, Object> getMetadata() {
+        return metadata;
+    }
+
     /** 复制同一个结构化结果，并标记为幂等回放。 */
     public CapabilityResult<T> asReplayed() {
         return new CapabilityResult<>(
@@ -122,7 +151,8 @@ public final class CapabilityResult<T> {
                 message,
                 data,
                 errorCode,
-                true
+                true,
+                metadata
         );
     }
 

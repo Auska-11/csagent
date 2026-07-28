@@ -108,6 +108,10 @@ class McpCapabilityProviderTest {
     @Test
     void shouldRestoreKnowledgeContractFromRemoteJsonMaps() {
         FakeTransport transport = new FakeTransport(List.of(readOnlyDefinition("knowledge.search")));
+        transport.invokeMetadata = Map.of("diagnostics", List.of(Map.of(
+                "eventName", "vector_retrieval_degraded",
+                "stage", "search"
+        )));
         transport.invokeData = List.of(Map.of(
                 "documentId", "policy/warranty_policy.md",
                 "category", "policy",
@@ -125,6 +129,7 @@ class McpCapabilityProviderTest {
         Object first = ((List<?>) result.getData()).get(0);
         assertTrue(first instanceof KnowledgeSearchHit);
         assertEquals("保修政策", ((KnowledgeSearchHit) first).getTitle());
+        assertTrue(result.getMetadata().containsKey("diagnostics"));
     }
 
     @Test
@@ -329,6 +334,7 @@ class McpCapabilityProviderTest {
         private boolean failInvoke;
         private boolean failDiscovery;
         private Object invokeData;
+        private Map<String, Object> invokeMetadata = Map.of();
 
         private FakeTransport(Collection<CapabilityDefinition> definitions) {
             this.definitions = definitions;
@@ -360,7 +366,8 @@ class McpCapabilityProviderTest {
                     call.getCapabilityId(),
                     "fake-remote-provider",
                     "ok",
-                    invokeData == null ? call.getArguments() : invokeData
+                    invokeData == null ? call.getArguments() : invokeData,
+                    invokeMetadata
             );
         }
 

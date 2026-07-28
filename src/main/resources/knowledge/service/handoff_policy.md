@@ -1,3 +1,10 @@
+---
+documentId: service/handoff_policy.md
+knowledgeType: POLICY
+source: 客服中心/服务规范/人工转接
+version: 2026.1
+effectiveDate: 2026-01-01
+---
 # 人工转接政策
 
 关键词：人工客服, 转人工, 投诉, 赔偿, 维权, 情绪激烈, 敏感信息

@@ -8,6 +8,9 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityProvider;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityRiskLevel;
 import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
+import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeSearchProfile;
+import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeSearchResponse;
+import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeType;
 import com.smartcs.smart_cs_agent.tools.KnowledgeSearchResult;
 import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -62,23 +65,45 @@ public class LocalKnowledgeSearchCapabilityProvider implements CapabilityProvide
             );
         }
 
-        List<KnowledgeSearchResult> internalResults = knowledgeTools.search(query, DEFAULT_TOP_K);
+        KnowledgeType type = KnowledgeType.parse(
+                firstNonBlank(textArgument(call, "knowledge_type"), textArgument(call, "profile")),
+                null
+        );
+        KnowledgeSearchProfile profile = new KnowledgeSearchProfile(
+                type,
+                textArgument(call, "product_category"),
+                textArgument(call, "product_model"),
+                textArgument(call, "version")
+        );
+        int topK = intArgument(call, "top_k", DEFAULT_TOP_K);
+        KnowledgeSearchResponse response = knowledgeTools.searchWithDiagnostics(query, topK, profile);
+        List<KnowledgeSearchResult> internalResults = response.results();
         List<KnowledgeSearchHit> hits = internalResults.stream()
                 .map(this::toContract)
+                .toList();
+        List<Map<String, Object>> diagnostics = response.diagnostics().stream()
+                .map(diagnostic -> diagnostic.toMap())
                 .toList();
         return CapabilityResult.success(
                 CapabilityIds.KNOWLEDGE_SEARCH,
                 PROVIDER_ID,
                 knowledgeTools.formatSearchResult(query, internalResults),
-                hits
+                hits,
+                Map.of("diagnostics", diagnostics)
         );
     }
 
     private KnowledgeSearchHit toContract(KnowledgeSearchResult result) {
         return new KnowledgeSearchHit(
                 result.getDocumentId(),
+                result.getChunkId(),
+                result.getKnowledgeType().name(),
                 result.getCategory(),
+                result.getProductCategory(),
+                result.getProductModel(),
                 result.getTitle(),
+                result.getSource(),
+                result.getVersion(),
                 result.getScore(),
                 result.getSnippet()
         );
@@ -89,25 +114,55 @@ public class LocalKnowledgeSearchCapabilityProvider implements CapabilityProvide
         return value == null ? "" : value.toString().trim();
     }
 
+    private int intArgument(CapabilityCall call, String key, int fallback) {
+        Object value = call.getArguments().get(key);
+        if (value instanceof Number number) {
+            return Math.max(1, Math.min(10, number.intValue()));
+        }
+        return fallback;
+    }
+
+    private String firstNonBlank(String first, String second) {
+        return first == null || first.isBlank() ? second : first;
+    }
+
     private CapabilityDefinition buildDefinition() {
         Map<String, Object> hitSchema = Map.of(
                 "type", "object",
-                "properties", Map.of(
-                        "document_id", Map.of("type", "string"),
-                        "category", Map.of("type", "string"),
-                        "title", Map.of("type", "string"),
-                        "score", Map.of("type", "integer"),
-                        "snippet", Map.of("type", "string")
+                "properties", Map.ofEntries(
+                        Map.entry("document_id", Map.of("type", "string")),
+                        Map.entry("chunk_id", Map.of("type", "string")),
+                        Map.entry("knowledge_type", Map.of("type", "string")),
+                        Map.entry("category", Map.of("type", "string")),
+                        Map.entry("product_category", Map.of("type", "string")),
+                        Map.entry("product_model", Map.of("type", "string")),
+                        Map.entry("title", Map.of("type", "string")),
+                        Map.entry("source", Map.of("type", "string")),
+                        Map.entry("version", Map.of("type", "string")),
+                        Map.entry("score", Map.of("type", "integer")),
+                        Map.entry("snippet", Map.of("type", "string"))
                 )
         );
         return new CapabilityDefinition(
                 CapabilityIds.KNOWLEDGE_SEARCH,
-                "1.0.0",
-                "检索客服知识库，用于回答政策、保修、发票、配送等规则问题",
+                "2.0.0",
+                "检索政策或商品故障知识；实时订单、库存和售后进度不进入本能力",
                 Map.of(
                         "type", "object",
-                        "properties", Map.of(
-                                "query", Map.of("type", "string", "description", "用户提出的客服政策问题")
+                        "properties", Map.ofEntries(
+                                Map.entry("query", Map.of("type", "string", "description", "用户问题")),
+                                Map.entry("knowledge_type", Map.of(
+                                        "type", "string",
+                                        "enum", List.of("POLICY", "TROUBLESHOOTING")
+                                )),
+                                Map.entry("profile", Map.of(
+                                        "type", "string",
+                                        "description", "knowledge_type 的兼容别名"
+                                )),
+                                Map.entry("product_category", Map.of("type", "string")),
+                                Map.entry("product_model", Map.of("type", "string")),
+                                Map.entry("version", Map.of("type", "string")),
+                                Map.entry("top_k", Map.of("type", "integer", "minimum", 1, "maximum", 10))
                         ),
                         "required", List.of("query")
                 ),

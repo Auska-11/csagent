@@ -2,6 +2,8 @@ package com.smartcs.smart_cs_agent.controller;
 
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 
+import java.util.Map;
+
 /**
  * MCP Adapter 工具调用响应。
  *
@@ -28,6 +30,7 @@ public class McpToolResponse {
     private final String outcome;
     private final String providerId;
     private final boolean replayed;
+    private final Map<String, Object> metadata;
 
     private McpToolResponse(boolean success,
                             String toolName,
@@ -36,7 +39,8 @@ public class McpToolResponse {
                             String errorCode,
                             String outcome,
                             String providerId,
-                            boolean replayed) {
+                            boolean replayed,
+                            Map<String, Object> metadata) {
         this.success = success;
         this.toolName = toolName;
         this.message = message;
@@ -45,6 +49,7 @@ public class McpToolResponse {
         this.outcome = outcome;
         this.providerId = providerId;
         this.replayed = replayed;
+        this.metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
     }
 
     public static McpToolResponse from(CapabilityResult<?> result) {
@@ -56,12 +61,15 @@ public class McpToolResponse {
                 result.getErrorCode(),
                 result.getOutcome().name(),
                 result.getProviderId(),
-                result.isReplayed()
+                result.isReplayed(),
+                result.getMetadata()
         );
     }
 
     public static McpToolResponse failure(String toolName, String errorCode, String message) {
-        return new McpToolResponse(false, toolName, message, null, errorCode, "TECHNICAL_FAILURE", null, false);
+        return new McpToolResponse(
+                false, toolName, message, null, errorCode, "TECHNICAL_FAILURE", null, false, Map.of()
+        );
     }
 
     public boolean isSuccess() {
@@ -94,5 +102,9 @@ public class McpToolResponse {
 
     public boolean isReplayed() {
         return replayed;
+    }
+
+    public Map<String, Object> getMetadata() {
+        return metadata;
     }
 }

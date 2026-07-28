@@ -57,6 +57,7 @@ class PolicyQaWorkflowTest {
         );
         assertEquals(CapabilityIds.KNOWLEDGE_SEARCH, search.getCapability());
         assertEquals("超过七天还能退吗", search.getArguments().get("query"));
+        assertEquals("POLICY", search.getArguments().get("knowledge_type"));
 
         context.addObservation("capability_result", success(List.of(new KnowledgeSearchHit(
                 "policy/return_policy.md",

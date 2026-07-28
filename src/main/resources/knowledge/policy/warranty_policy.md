@@ -1,3 +1,10 @@
+---
+documentId: policy/warranty_policy.md
+knowledgeType: POLICY
+source: 客服中心/售后政策/保修
+version: 2026.1
+effectiveDate: 2026-01-01
+---
 # 保修政策
 
 关键词：保修, 质保, 维修, 售后检测, 质量问题, 一年保修

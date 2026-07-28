@@ -1,5 +1,8 @@
 package com.smartcs.smart_cs_agent.tools;
 
+import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeType;
+
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -30,12 +33,51 @@ public class KnowledgeDocument {
     /** 人工维护的关键词，用于提升轻量检索命中率 */
     private final List<String> keywords;
 
+    private final KnowledgeType knowledgeType;
+    private final String productCategory;
+    private final String productModel;
+    private final String source;
+    private final String version;
+    private final LocalDate effectiveDate;
+
     public KnowledgeDocument(String id, String category, String title, String content, List<String> keywords) {
+        this(
+                id,
+                category,
+                title,
+                content,
+                keywords,
+                inferKnowledgeType(category),
+                "",
+                "",
+                "classpath:/knowledge/" + id,
+                "",
+                null
+        );
+    }
+
+    public KnowledgeDocument(String id,
+                             String category,
+                             String title,
+                             String content,
+                             List<String> keywords,
+                             KnowledgeType knowledgeType,
+                             String productCategory,
+                             String productModel,
+                             String source,
+                             String version,
+                             LocalDate effectiveDate) {
         this.id = id;
         this.category = category;
         this.title = title;
         this.content = content;
         this.keywords = List.copyOf(keywords);
+        this.knowledgeType = knowledgeType == null ? inferKnowledgeType(category) : knowledgeType;
+        this.productCategory = safe(productCategory);
+        this.productModel = safe(productModel);
+        this.source = safe(source);
+        this.version = safe(version);
+        this.effectiveDate = effectiveDate;
     }
 
     public String getId() {
@@ -56,5 +98,39 @@ public class KnowledgeDocument {
 
     public List<String> getKeywords() {
         return keywords;
+    }
+
+    public KnowledgeType getKnowledgeType() {
+        return knowledgeType;
+    }
+
+    public String getProductCategory() {
+        return productCategory;
+    }
+
+    public String getProductModel() {
+        return productModel;
+    }
+
+    public String getSource() {
+        return source;
+    }
+
+    public String getVersion() {
+        return version;
+    }
+
+    public LocalDate getEffectiveDate() {
+        return effectiveDate;
+    }
+
+    private static KnowledgeType inferKnowledgeType(String category) {
+        return "troubleshooting".equalsIgnoreCase(category)
+                ? KnowledgeType.TROUBLESHOOTING
+                : KnowledgeType.POLICY;
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value.trim();
     }
 }

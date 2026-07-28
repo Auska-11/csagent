@@ -40,6 +40,58 @@ import static org.mockito.Mockito.when;
 class CapabilityActionHandlerTenantTest {
 
     @Test
+    void shouldWriteStructuredTraceForVectorRetrievalDegradation() {
+        CapabilityGateway capabilityGateway = mock(CapabilityGateway.class);
+        SkillManager skillManager = mock(SkillManager.class);
+        AgentSkillPackage skillPackage = packageAllowing("knowledge.search");
+        when(skillManager.isCapabilityAllowed(skillPackage, "knowledge.search")).thenReturn(true);
+        doReturn(CapabilityResult.success(
+                        "knowledge.search",
+                        "test-provider",
+                        "keyword fallback",
+                        List.of(Map.of("documentId", "troubleshooting/headphones.md")),
+                        Map.of("diagnostics", List.of(Map.of(
+                                "eventName", "vector_retrieval_degraded",
+                                "stage", "search",
+                                "errorType", "IllegalStateException",
+                                "errorSummary", "qdrant unavailable",
+                                "profile", "hybrid",
+                                "knowledgeType", "TROUBLESHOOTING"
+                        )))
+                ))
+                .when(capabilityGateway).invoke(any(CapabilityCall.class), any(ExecutionContext.class));
+
+        ChatRequest request = new ChatRequest("conv-vector-trace", "USER-001", "耳机断连");
+        ConversationState state = new ConversationState(request.getMessage(), request.getUserId());
+        EscalationWorkflow workflow = new EscalationWorkflow(new GlobalInterruptPolicy());
+        state.startOrResumeWorkflow(workflow.descriptor().getId(), workflow.descriptor().getVersion());
+        TurnContext turnContext = new TurnContext(request, state);
+        turnContext.startTurnBudget(2_000);
+        ActionHandlingContext handlingContext = new ActionHandlingContext(
+                turnContext,
+                workflow,
+                skillPackage
+        );
+
+        new CapabilityActionHandler(capabilityGateway, skillManager).handle(
+                new CapabilityAction("knowledge.search", Map.of(
+                        "query", "耳机断连",
+                        "knowledge_type", "TROUBLESHOOTING"
+                )),
+                handlingContext
+        );
+
+        var event = turnContext.getTraceEvents().stream()
+                .filter(trace -> "vector_retrieval_degraded".equals(trace.getEventType()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("search", event.getData().get("stage"));
+        assertEquals("IllegalStateException", event.getData().get("errorType"));
+        assertEquals("hybrid", event.getData().get("profile"));
+        assertEquals("TROUBLESHOOTING", event.getData().get("knowledgeType"));
+    }
+
+    @Test
     void shouldPropagateTenantAndOwnerScopeToExecutionContext() throws Exception {
         CapabilityGateway capabilityGateway = mock(CapabilityGateway.class);
         SkillManager skillManager = mock(SkillManager.class);

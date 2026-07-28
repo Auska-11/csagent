@@ -1,0 +1,17 @@
+id: troubleshooting
+version: 1.0.0
+description: 根据可靠知识证据处理商品使用方法和故障排查
+workflow: troubleshooting
+priority: 185
+triggers:
+  - 耳机只有一边有声音
+  - 手表无法充电
+  - 充电器异常发热
+  - 数据线只能充电不能传输
+allowed_capabilities:
+  - knowledge.search
+  - handoff.request
+risk_level: read_only
+confirmation_policy: none
+prompt: SKILL.md
+references: []

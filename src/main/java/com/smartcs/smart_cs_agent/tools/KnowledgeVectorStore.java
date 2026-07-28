@@ -1,5 +1,7 @@
 package com.smartcs.smart_cs_agent.tools;
 
+import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeChunk;
+
 import java.util.List;
 
 /**
@@ -13,7 +15,9 @@ public interface KnowledgeVectorStore {
 
     void ensureCollection(int dimensions);
 
-    void upsertDocuments(List<KnowledgeDocument> documents, List<List<Double>> embeddings);
+    void upsertChunks(List<KnowledgeChunk> chunks, List<List<Double>> embeddings);
 
-    List<VectorKnowledgeHit> search(List<Double> queryEmbedding, int topK);
+    List<VectorKnowledgeHit> search(List<Double> queryEmbedding,
+                                    int topK,
+                                    KnowledgeVectorFilter filter);
 }

@@ -78,5 +78,25 @@
     "id": "chitchat",
     "turns": ["你好"],
     "expectedWorkflow": "customer_service"
+  },
+  {
+    "id": "troubleshooting_headphones",
+    "turns": ["耳机听着听着只剩左边响了"],
+    "expectedWorkflow": "troubleshooting"
+  },
+  {
+    "id": "troubleshooting_watch",
+    "turns": ["S2 手表消息不同步"],
+    "expectedWorkflow": "troubleshooting"
+  },
+  {
+    "id": "troubleshooting_charger",
+    "turns": ["无线充电器异常发热"],
+    "expectedWorkflow": "troubleshooting"
+  },
+  {
+    "id": "troubleshooting_cable",
+    "turns": ["数据线只能充电不能传输"],
+    "expectedWorkflow": "troubleshooting"
   }
 ]

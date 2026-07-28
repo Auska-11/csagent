@@ -1,3 +1,10 @@
+---
+documentId: policy/invoice_policy.md
+knowledgeType: POLICY
+source: 客服中心/交易政策/发票
+version: 2026.1
+effectiveDate: 2026-01-01
+---
 # 发票政策
 
 关键词：发票, 电子发票, 普通发票, 增值税专用发票, 抬头, 税号

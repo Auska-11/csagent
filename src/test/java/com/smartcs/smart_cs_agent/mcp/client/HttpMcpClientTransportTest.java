@@ -107,7 +107,14 @@ class HttpMcpClientTransportTest {
                             "content":[{"type":"text","text":"命中保修政策"}],
                             "structuredContent":[{"title":"保修政策","snippet":"通常提供 1 年保修"}],
                             "isError":false,
-                            "_meta":{"providerId":"remote-knowledge","replayed":true}
+                            "_meta":{
+                              "providerId":"remote-knowledge",
+                              "replayed":true,
+                              "capabilityMetadata":{"diagnostics":[{
+                                "eventName":"vector_retrieval_degraded",
+                                "stage":"search"
+                              }]}
+                            }
                           }
                         }
                         """, MediaType.APPLICATION_JSON));
@@ -124,6 +131,7 @@ class HttpMcpClientTransportTest {
         assertTrue(result.isSuccess());
         assertTrue(result.isReplayed());
         assertEquals("remote-knowledge", result.getProviderId());
+        assertTrue(result.getMetadata().containsKey("diagnostics"));
         fixture.server.verify();
     }
 

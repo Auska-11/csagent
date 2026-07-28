@@ -159,7 +159,13 @@ public class McpCapabilityProvider implements CapabilityProvider {
         Object normalizedData = normalizeContractData(remote.getCapabilityId(), remote.getData());
         CapabilityResult<?> result;
         if (remote.getOutcome() == CapabilityOutcome.SUCCESS) {
-            result = CapabilityResult.success(externalId, providerId(), remote.getMessage(), normalizedData);
+            result = CapabilityResult.success(
+                    externalId,
+                    providerId(),
+                    remote.getMessage(),
+                    normalizedData,
+                    remote.getMetadata()
+            );
         } else if (remote.getOutcome() == CapabilityOutcome.BUSINESS_REJECTED) {
             result = CapabilityResult.businessRejected(
                     externalId, providerId(), remote.getErrorCode(), remote.getMessage(), normalizedData
