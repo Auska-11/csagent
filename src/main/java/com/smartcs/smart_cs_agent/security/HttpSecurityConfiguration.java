@@ -100,6 +100,7 @@ public class HttpSecurityConfiguration {
                         .requestMatchers(
                                 "/",
                                 "/index.html",
+                                "/app.css",
                                 "/favicon.ico",
                                 "/error",
                                 "/api/health",

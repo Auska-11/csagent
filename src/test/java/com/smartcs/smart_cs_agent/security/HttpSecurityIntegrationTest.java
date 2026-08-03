@@ -57,6 +57,16 @@ class HttpSecurityIntegrationTest {
     }
 
     @Test
+    void workbenchStylesheetShouldBePublicWithoutOpeningArbitraryStaticPaths() throws Exception {
+        mockMvc.perform(get("/app.css"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CONTENT_TYPE, "text/css"));
+
+        mockMvc.perform(get("/not-allowlisted.css"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void bodyTokenMustNotBypassBearerAuthentication() throws Exception {
         mockMvc.perform(post("/api/chat/send")
                         .contentType(MediaType.APPLICATION_JSON)

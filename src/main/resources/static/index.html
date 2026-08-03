@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smart CS Agent</title>
-    <style>
+    <style media="not all">
         :root {
             --bg: #f4f6f8;
             --surface: #ffffff;
@@ -791,53 +791,81 @@
             }
         }
     </style>
+    <link rel="stylesheet" href="/app.css">
 </head>
 <body>
 <div class="app">
     <aside class="sidebar">
         <div class="brand">
-            <div class="brand-title">Smart CS Agent</div>
-            <div class="brand-subtitle">Customer Service Runtime</div>
+            <div class="brand-mark" aria-hidden="true"></div>
+            <div class="brand-copy">
+                <div class="brand-title">Smart CS <span>Agent</span></div>
+                <div class="brand-subtitle">可解释的智能客服演示台</div>
+            </div>
         </div>
 
-        <section class="sidebar-section">
-            <div class="section-label">Users</div>
-            <div class="user-list" id="userList"></div>
-        </section>
+        <div class="sidebar-scroll">
+            <section class="sidebar-section">
+                <div class="section-heading">
+                    <span class="step-number">1</span>
+                    <span>选择体验身份</span>
+                </div>
+                <p class="section-description">身份之间的会话与记忆相互隔离</p>
+                <div class="user-list" id="userList"></div>
+            </section>
 
-        <section class="sidebar-section">
-            <div class="section-label">Cases</div>
-            <div class="quick-list">
-                <button class="quick-button" data-message="帮我查一下订单 ORD-001">查询订单 ORD-001</button>
-                <button class="quick-button" data-message="我想退 ORD-004 这个订单">申请退货 ORD-004</button>
-                <button class="quick-button" data-message="超过七天还能退吗？">退货政策</button>
-                <button class="quick-button" data-message="我要找人工客服">人工转接</button>
-            </div>
-        </section>
+            <section class="sidebar-section">
+                <div class="section-heading">
+                    <span class="step-number">2</span>
+                    <span>选择客服场景</span>
+                </div>
+                <p class="section-description">点一下即可发起真实请求</p>
+                <div class="quick-list">
+                    <button class="quick-button" data-message="帮我查一下订单 ORD-001">
+                        <span class="quick-icon">查</span>
+                        <span class="quick-label">订单查询</span>
+                    </button>
+                    <button class="quick-button" data-message="我想退 ORD-004 这个订单">
+                        <span class="quick-icon">退</span>
+                        <span class="quick-label">申请退货</span>
+                    </button>
+                    <button class="quick-button" data-message="超过七天还能退吗？">
+                        <span class="quick-icon">策</span>
+                        <span class="quick-label">退货政策</span>
+                    </button>
+                    <button class="quick-button" data-message="我要找人工客服">
+                        <span class="quick-icon">人</span>
+                        <span class="quick-label">人工转接</span>
+                    </button>
+                </div>
+            </section>
 
-        <section class="sidebar-section">
-            <div class="section-label">Demo</div>
-            <div class="demo-box">
-                <select class="scenario-select" id="demoSelect" aria-label="选择演示脚本">
-                    <option value="returnApply">退货多轮演示</option>
-                    <option value="orderLookup">订单查询演示</option>
-                    <option value="handoff">人工转接演示</option>
-                </select>
-                <button class="demo-run-button" id="runDemoBtn">运行演示</button>
-                <div class="demo-status" id="demoStatus">自动发送多轮消息，适合面试时演示 Trace 和工具调用。</div>
-            </div>
-        </section>
+            <section class="sidebar-section">
+                <div class="demo-box">
+                    <div class="demo-heading">想快速看完整效果？</div>
+                    <div class="demo-caption">自动完成多轮对话，并展示每一步 Agent 执行过程。</div>
+                    <select class="scenario-select" id="demoSelect" aria-label="选择演示脚本">
+                        <option value="returnApply">退货多轮演示</option>
+                        <option value="orderLookup">订单查询演示</option>
+                        <option value="handoff">人工转接演示</option>
+                    </select>
+                    <button class="demo-run-button" id="runDemoBtn">▶ 一键运行完整流程</button>
+                    <div class="demo-status" id="demoStatus">推荐第一次体验时直接运行「退货多轮演示」。</div>
+                </div>
+            </section>
+        </div>
 
         <div class="sidebar-footer">
-            <button class="side-action" id="newConversationBtn">新会话</button>
+            <button class="side-action" id="newConversationBtn">＋ 开始一个新会话</button>
         </div>
     </aside>
 
     <main class="main">
         <header class="topbar">
-            <div>
-                <div class="topbar-title">智能客服工作台</div>
-                <div class="topbar-meta" id="conversationMeta">conversation: -</div>
+            <div class="topbar-copy">
+                <div class="topbar-kicker">Live playground</div>
+                <h1 class="topbar-title">和客服 Agent 对话</h1>
+                <div class="topbar-meta" id="conversationMeta">会话 · -</div>
             </div>
             <div class="status-pill" id="statusPill">
                 <span class="status-dot"></span>
@@ -846,59 +874,73 @@
         </header>
 
         <section class="chat" id="chatContainer">
-            <div class="empty-state" id="emptyState">当前会话暂无消息</div>
+            <div class="empty-state loading-state" id="emptyState">正在准备体验环境…</div>
         </section>
 
         <footer class="composer">
-            <div class="composer-row">
-                <input id="messageInput" type="text" autocomplete="off" placeholder="输入消息">
-                <button class="icon-button" id="sendBtn" aria-label="发送">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M5 12h14"></path>
-                        <path d="m13 6 6 6-6 6"></path>
-                    </svg>
-                </button>
+            <div class="composer-shell">
+                <div class="composer-header">
+                    <span class="composer-label">发送给 Smart CS Agent</span>
+                    <span class="composer-hint">按 Enter 快速发送</span>
+                </div>
+                <div class="composer-row">
+                    <input id="messageInput" type="text" autocomplete="off"
+                           aria-label="输入消息"
+                           placeholder="输入订单、退货、商品或政策问题…">
+                    <button class="icon-button" id="sendBtn" aria-label="发送">
+                        <span>发送</span>
+                        <span class="send-arrow" aria-hidden="true">↗</span>
+                    </button>
+                </div>
+                <div class="composer-note">本地演示身份已自动登录 · 可直接输入问题，不需要额外配置</div>
             </div>
         </footer>
     </main>
 
     <aside class="inspector">
         <header class="inspector-header">
-            <div class="inspector-title">Agent Inspector</div>
+            <div class="inspector-heading">
+                <div>
+                    <div class="inspector-title">Agent 执行过程</div>
+                    <div class="inspector-subtitle">理解这条回复是怎样生成的</div>
+                </div>
+                <span class="inspector-live">LIVE</span>
+            </div>
             <div class="tabs">
-                <button class="tab-button active" data-tab="trace">Trace</button>
-                <button class="tab-button" data-tab="memory">Memory</button>
-                <button class="tab-button" data-tab="tools">Tools</button>
-                <button class="tab-button" data-tab="monitor">Monitor</button>
-                <button class="tab-button" data-tab="eval">Eval</button>
+                <button class="tab-button active" data-tab="trace">轨迹</button>
+                <button class="tab-button" data-tab="memory">记忆</button>
+                <button class="tab-button" data-tab="tools">能力</button>
+                <button class="tab-button" data-tab="monitor">监控</button>
+                <button class="tab-button" data-tab="eval">评测</button>
             </div>
         </header>
 
         <section class="mini-grid">
             <div class="mini-stat">
-                <div class="mini-label">Events</div>
+                <div class="mini-label">本轮事件</div>
                 <div class="mini-value" id="eventCount">0</div>
             </div>
             <div class="mini-stat">
-                <div class="mini-label">Tool</div>
+                <div class="mini-label">调用能力</div>
                 <div class="mini-value" id="lastTool">-</div>
             </div>
             <div class="mini-stat">
-                <div class="mini-label">Latency</div>
+                <div class="mini-label">最近耗时</div>
                 <div class="mini-value" id="lastLatency">-</div>
             </div>
         </section>
 
         <section class="panel" id="tracePanel">
+            <div class="panel-intro">发送消息后，这里会按时间展示意图路由、状态变化、工具调用和最终回复。</div>
             <div class="panel-toolbar">
-                <button class="filter-chip active" data-trace-filter="all">All</button>
-                <button class="filter-chip" data-trace-filter="memory">Memory</button>
-                <button class="filter-chip" data-trace-filter="tool">Tool</button>
-                <button class="filter-chip" data-trace-filter="knowledge">RAG</button>
-                <button class="filter-chip" data-trace-filter="llm">LLM</button>
-                <button class="filter-chip" data-trace-filter="handoff">Handoff</button>
-                <button class="filter-chip" data-trace-filter="failed">Failed</button>
-                <button class="filter-chip" data-trace-filter="final">Final</button>
+                <button class="filter-chip active" data-trace-filter="all">全部</button>
+                <button class="filter-chip" data-trace-filter="memory">记忆</button>
+                <button class="filter-chip" data-trace-filter="tool">工具</button>
+                <button class="filter-chip" data-trace-filter="knowledge">知识</button>
+                <button class="filter-chip" data-trace-filter="llm">模型</button>
+                <button class="filter-chip" data-trace-filter="handoff">人工</button>
+                <button class="filter-chip" data-trace-filter="failed">异常</button>
+                <button class="filter-chip" data-trace-filter="final">回复</button>
                 <button class="small-action" id="copyTraceBtn">复制 Trace</button>
             </div>
             <div class="metric-list" id="traceMetrics"></div>
@@ -906,13 +948,15 @@
         </section>
 
         <section class="panel hidden" id="toolsPanel">
+            <div class="panel-intro">查看 Agent 当前能调用的业务能力，以及每个能力要求的输入和返回结构。</div>
             <div class="panel-toolbar">
-                <input class="tool-search" id="toolSearchInput" type="search" placeholder="搜索工具名称或说明">
+                <input class="tool-search" id="toolSearchInput" type="search" placeholder="搜索能力名称或说明">
             </div>
             <div class="tool-list" id="toolList"></div>
         </section>
 
         <section class="panel hidden" id="memoryPanel">
+            <div class="panel-intro">查看当前会话的任务状态、摘要、最近消息，以及用户长期偏好。</div>
             <div class="panel-toolbar">
                 <button class="small-action" id="refreshMemoryBtn">刷新记忆</button>
                 <button class="small-action" id="copyMemoryBtn">复制记忆</button>
@@ -920,17 +964,18 @@
                 <button class="small-action" id="clearUserMemoryBtn">清空长期</button>
             </div>
             <div class="metric-list" id="memoryMetrics"></div>
-            <div class="eval-section-title">User Long-Term Memory</div>
+            <div class="eval-section-title">用户长期偏好</div>
             <div class="eval-list" id="userMemoryList"></div>
-            <div class="eval-section-title">Task Memory</div>
+            <div class="eval-section-title">当前任务状态</div>
             <div class="eval-list" id="taskMemoryList"></div>
-            <div class="eval-section-title">Summary Memory</div>
+            <div class="eval-section-title">会话摘要</div>
             <div class="eval-list" id="summaryMemoryList"></div>
-            <div class="eval-section-title">Short-Term Messages</div>
+            <div class="eval-section-title">最近消息</div>
             <div class="eval-list" id="shortTermMemoryList"></div>
         </section>
 
         <section class="panel hidden" id="monitorPanel">
+            <div class="panel-intro">观察工具成功率、模型失败、用户反馈和需要关注的质量风险。</div>
             <div class="panel-toolbar">
                 <button class="small-action" id="refreshMonitorBtn">刷新指标</button>
                 <button class="small-action" id="copyMonitorBtn">复制指标</button>
@@ -938,27 +983,28 @@
                 <button class="small-action" id="mergeEvalCaseBtn">合并样本</button>
             </div>
             <div class="metric-list" id="monitorMetrics"></div>
-            <div class="eval-section-title">Alerts</div>
+            <div class="eval-section-title">风险提醒</div>
             <div class="eval-list" id="monitorAlertList"></div>
-            <div class="eval-section-title">Tool Stats</div>
+            <div class="eval-section-title">工具统计</div>
             <div class="eval-list" id="toolStatsList"></div>
-            <div class="eval-section-title">Recent Turns</div>
+            <div class="eval-section-title">最近对话</div>
             <div class="eval-list" id="monitorList"></div>
-            <div class="eval-section-title">Recent Feedback</div>
+            <div class="eval-section-title">最近反馈</div>
             <div class="eval-list" id="feedbackList"></div>
-            <div class="eval-section-title">Eval Candidates</div>
+            <div class="eval-section-title">待审核评测样本</div>
             <div class="eval-list" id="evalCandidateList"></div>
         </section>
 
         <section class="panel hidden" id="evalPanel">
+            <div class="panel-intro">查看路由、知识库召回和回复质量等离线评测结果与历史趋势。</div>
             <div class="panel-toolbar">
                 <button class="small-action" id="refreshEvalBtn">刷新评测</button>
                 <button class="small-action" id="copyEvalBtn">复制报告</button>
             </div>
             <div class="metric-list" id="evalMetrics"></div>
-            <div class="eval-section-title">Reports</div>
+            <div class="eval-section-title">最新报告</div>
             <div class="eval-list" id="evalList"></div>
-            <div class="eval-section-title">Trend</div>
+            <div class="eval-section-title">历史趋势</div>
             <div class="eval-list" id="trendList"></div>
         </section>
     </aside>
@@ -1007,6 +1053,7 @@
         emptyState: document.getElementById('emptyState'),
         messageInput: document.getElementById('messageInput'),
         sendBtn: document.getElementById('sendBtn'),
+        statusPill: document.getElementById('statusPill'),
         statusText: document.getElementById('statusText'),
         conversationMeta: document.getElementById('conversationMeta'),
         eventCount: document.getElementById('eventCount'),
@@ -1076,9 +1123,15 @@
         document.getElementById('newConversationBtn').addEventListener('click', startNewConversation);
         els.runDemoBtn.addEventListener('click', runDemo);
         els.chatContainer.addEventListener('click', event => {
-            const button = event.target.closest('.feedback-button');
-            if (button) {
-                submitFeedback(button.dataset.feedbackMessageId, button.dataset.feedbackRating);
+            const starterButton = event.target.closest('.starter-button');
+            if (starterButton) {
+                sendMessage(starterButton.dataset.message);
+                return;
+            }
+
+            const feedbackButton = event.target.closest('.feedback-button');
+            if (feedbackButton) {
+                submitFeedback(feedbackButton.dataset.feedbackMessageId, feedbackButton.dataset.feedbackRating);
             }
         });
 
@@ -1259,6 +1312,7 @@
         els.userList.innerHTML = state.users.map(user => {
             const active = state.currentUser?.userId === user.userId ? 'active' : '';
             const initial = escapeHtml(user.name.slice(0, 1));
+            const isAdmin = Array.isArray(user.roles) && user.roles.includes('ADMIN');
             return `
                 <button class="user-button ${active}" data-user-id="${escapeHtml(user.userId)}">
                     <span class="avatar">${initial}</span>
@@ -1266,6 +1320,7 @@
                         <span class="user-name">${escapeHtml(user.name)}</span>
                         <span class="user-id">${escapeHtml(user.userId)}</span>
                     </span>
+                    <span class="user-role">${isAdmin ? '管理' : '顾客'}</span>
                 </button>
             `;
         }).join('');
@@ -1384,7 +1439,7 @@
         els.demoSelect.disabled = false;
         setBusy(false);
         if (completed) {
-            els.demoStatus.textContent = `${script.name} 已完成，可以在右侧查看 Trace 和工具 Schema。`;
+            els.demoStatus.textContent = `${script.name} 已完成，右侧已经生成完整执行轨迹。`;
         }
     }
 
@@ -1456,7 +1511,7 @@
         const messages = state.messagesByConversation[currentConversationId()] || [];
 
         if (!messages.length) {
-            els.chatContainer.innerHTML = '<div class="empty-state" id="emptyState">当前会话暂无消息</div>';
+            els.chatContainer.innerHTML = emptyStateMarkup();
             els.emptyState = document.getElementById('emptyState');
             return;
         }
@@ -1470,6 +1525,66 @@
         }));
     }
 
+    function emptyStateMarkup() {
+        return `
+            <div class="empty-state" id="emptyState">
+                <div class="welcome-card">
+                    <div class="welcome-mark" aria-hidden="true"></div>
+                    <div class="welcome-kicker">从这里开始</div>
+                    <h2 class="welcome-title">今天想处理什么问题？</h2>
+                    <p class="welcome-description">
+                        直接输入你的问题，或先选一个典型客服场景。每次回复的路由、工具调用和记忆变化，
+                        都会同步展示在右侧。
+                    </p>
+                    <div class="starter-grid">
+                        <button class="starter-button" data-message="帮我查一下订单 ORD-001">
+                            <span class="starter-icon">查</span>
+                            <span class="starter-copy">
+                                <span class="starter-title">查询订单进度</span>
+                                <span class="starter-example">试试：帮我查 ORD-001</span>
+                            </span>
+                        </button>
+                        <button class="starter-button" data-message="我想退 ORD-004 这个订单">
+                            <span class="starter-icon">退</span>
+                            <span class="starter-copy">
+                                <span class="starter-title">发起退货申请</span>
+                                <span class="starter-example">体验多轮信息收集</span>
+                            </span>
+                        </button>
+                        <button class="starter-button" data-message="超过七天还能退吗？">
+                            <span class="starter-icon">策</span>
+                            <span class="starter-copy">
+                                <span class="starter-title">咨询售后政策</span>
+                                <span class="starter-example">体验本地知识库检索</span>
+                            </span>
+                        </button>
+                        <button class="starter-button" data-message="我要投诉，想找人工客服处理">
+                            <span class="starter-icon">人</span>
+                            <span class="starter-copy">
+                                <span class="starter-title">转接人工客服</span>
+                                <span class="starter-example">体验安全的人工转接</span>
+                            </span>
+                        </button>
+                    </div>
+                    <div class="welcome-flow">
+                        <div class="flow-item">
+                            <span class="flow-index">1</span>
+                            <span><strong>选择场景</strong>点击上方卡片或自己提问</span>
+                        </div>
+                        <div class="flow-item">
+                            <span class="flow-index">2</span>
+                            <span><strong>查看回复</strong>体验真实客服业务流程</span>
+                        </div>
+                        <div class="flow-item">
+                            <span class="flow-index">3</span>
+                            <span><strong>理解过程</strong>在右侧检查 Agent 轨迹</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     function removeEmptyState() {
         const empty = document.getElementById('emptyState');
         if (empty) {
@@ -1479,6 +1594,7 @@
 
     function setBusy(isBusy) {
         els.sendBtn.disabled = isBusy;
+        els.statusPill.classList.toggle('busy', isBusy);
         els.statusText.textContent = isBusy ? (state.demoRunning ? '演示中' : '处理中') : '就绪';
     }
 
@@ -1501,10 +1617,10 @@
 
         // 这些指标不是业务结果，而是“可观测性摘要”：面试演示时能快速说明 Agent 这一轮做了什么。
         const metrics = [
-            ['Tool Events', toolCount],
-            ['LLM Events', llmCount],
-            ['Failed', failedCount],
-            ['Trace Time', totalDuration ? totalDuration + 'ms' : '-']
+            ['工具事件', toolCount],
+            ['模型事件', llmCount],
+            ['异常事件', failedCount],
+            ['累计耗时', totalDuration ? totalDuration + 'ms' : '-']
         ];
 
         els.traceMetrics.innerHTML = metrics.map(([label, value]) => `
@@ -1519,7 +1635,7 @@
         const visibleTrace = state.trace.filter(matchesTraceFilter);
 
         if (!visibleTrace.length) {
-            els.traceList.innerHTML = '<div class="trace-row"><div class="row-title">No trace</div><div class="row-subtitle">-</div></div>';
+            els.traceList.innerHTML = '<div class="trace-row"><div class="row-title">还没有执行记录</div><div class="row-subtitle">从左侧选择场景或发送一条消息，这里会自动展示 Agent 的每一步。</div></div>';
             return;
         }
 
@@ -1595,7 +1711,7 @@
         });
 
         if (!visibleTools.length) {
-            els.toolList.innerHTML = '<div class="tool-row"><div class="row-title">No tools</div></div>';
+            els.toolList.innerHTML = '<div class="tool-row"><div class="row-title">没有匹配的能力</div><div class="row-subtitle">换一个关键词试试。</div></div>';
             return;
         }
 
@@ -2398,7 +2514,7 @@
     }
 
     function updateConversationMeta() {
-        els.conversationMeta.textContent = 'conversation: ' + currentConversationId();
+        els.conversationMeta.textContent = '会话 · ' + currentConversationId();
     }
 
     function shouldRenderFeedback(role, options = {}) {
