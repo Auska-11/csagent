@@ -10,3 +10,7 @@ app.log
 .env.*
 !.env.example
 docs
+frontend/node_modules
+frontend/dist
+frontend/dist
+frontend/*.tsbuildinfo

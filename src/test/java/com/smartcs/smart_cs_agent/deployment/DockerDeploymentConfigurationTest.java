@@ -34,7 +34,9 @@ class DockerDeploymentConfigurationTest {
         String dockerfile = Files.readString(Path.of("Dockerfile"));
 
         assertTrue(dockerfile.contains("COPY skills skills"));
-        assertTrue(dockerfile.indexOf("COPY skills skills") < dockerfile.indexOf("package"));
+        // 校验运行 Maven 打包前已经把 Skill 包复制进构建上下文；不要匹配前面
+        // frontend/package.json 中无关的 "package" 字符串。
+        assertTrue(dockerfile.indexOf("COPY skills skills") < dockerfile.indexOf("RUN chmod +x mvnw"));
         assertTrue(dockerfile.contains("/actuator/health/readiness"));
         assertTrue(dockerfile.contains("HEALTHCHECK"));
     }

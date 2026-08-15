@@ -1,3 +1,12 @@
+FROM node:24-alpine AS frontend-build
+
+WORKDIR /app/frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
 FROM maven:3.9.9-eclipse-temurin-17 AS build
 
 WORKDIR /app
@@ -9,9 +18,13 @@ COPY .mvn .mvn
 # 再复制源码并打包。
 # Docker 构建阶段默认跳过测试，测试仍然建议在本地或 CI 里单独执行。
 COPY src src
+# React 产物只在镜像构建层叠加到静态资源目录；仓库中的旧页面仍保留为回退。
+COPY --from=frontend-build /app/frontend/dist/ src/main/resources/static/
 # Skill Package 位于项目根目录，不在 src 中；缺少这一行时本地 JAR 正常、容器 JAR 却没有 Skill。
 COPY skills skills
-RUN chmod +x mvnw && ./mvnw -DskipTests package
+# React dist 已在上一阶段复制进静态资源目录；停用默认 Maven 前端 profile，避免
+# 在没有 Node.js 的 Maven 镜像中再次执行 npm ci/build。
+RUN chmod +x mvnw && ./mvnw -P!frontend -DskipTests package
 
 FROM eclipse-temurin:17-jre
 

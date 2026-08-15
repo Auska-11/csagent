@@ -101,6 +101,7 @@ public class HttpSecurityConfiguration {
                                 "/",
                                 "/index.html",
                                 "/app.css",
+                                "/assets/**",
                                 "/favicon.ico",
                                 "/error",
                                 "/api/health",
