@@ -71,8 +71,9 @@ export function AppShell() {
       <a className="skip-link" href="#main-content">跳到主内容</a>
       <aside id="primary-navigation" className={`app-rail ${navOpen ? 'app-rail--open' : ''}`} aria-label="主导航">
         <button ref={navCloseRef} className="mobile-nav-close" aria-label="关闭导航" onClick={() => setNavOpen(false)}><X size={20} /></button>
-        <NavLink to="/workspace" className="brand-mark" title="Smart CS">
-          <Sparkles size={21} />
+        <NavLink to="/workspace" className="brand-lockup" title="Smart CS">
+          <span className="brand-mark"><Sparkles size={21} /></span>
+          <span className="brand-copy"><strong>Smart CS</strong><small>Agent Console</small></span>
         </NavLink>
         <nav className="rail-nav">
           <NavLink to="/workspace" onClick={() => setNavOpen(false)} className={({ isActive }) => `rail-link ${isActive ? 'active' : ''}`}>
@@ -86,7 +87,7 @@ export function AppShell() {
               ))
             : null}
         </nav>
-        <div className="rail-status" title="当前 Demo 凭据已签发"><span />会话</div>
+        <div className="rail-status" title="当前 Demo 凭据已签发"><span />系统在线</div>
       </aside>
 
       <section className="app-main">
