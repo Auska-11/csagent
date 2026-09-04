@@ -93,7 +93,11 @@ class CsAgentClient:
         return session
 
     def chat(self, buyer_id, item_id, message, item_snapshot=None):
-        """注册（如需）→ /api/chat/send → reply 文本。"""
+        """注册（如需）→ /api/chat/send → 完整响应 dict（reply + handoffRequested）。
+
+        handoffRequested=true 表示 Java 侧工单创建成功、会话终态 HANDED_OFF，
+        侧车据此暂停该会话自动回复（X4 双层转人工，docs-76 §5.2）。
+        """
         try:
             session = self.ensure_session(buyer_id, item_id, item_snapshot)
             data = self._post(
@@ -113,7 +117,7 @@ class CsAgentClient:
         reply = data.get("reply")
         if not isinstance(reply, str) or not reply.strip():
             raise ValueError(f"/api/chat/send 返回异常: {data}")
-        return reply
+        return data
 
 
 class XianyuLive:
@@ -151,6 +155,12 @@ class XianyuLive:
         self.manual_mode_conversations = set()  # 存储处于人工接管模式的会话ID
         self.manual_mode_timeout = int(os.getenv("MANUAL_MODE_TIMEOUT", "3600"))  # 人工接管超时时间，默认1小时
         self.manual_mode_timestamps = {}  # 记录进入人工模式的时间
+
+        # 免责话术：每个会话首条自动回复追加一次，声明由 AI 生成（置空关闭）
+        self.disclaimer_text = os.getenv(
+            "DISCLAIMER_TEXT", "（本条由智能助手自动回复，如需人工服务请直接说明）"
+        ).strip()
+        self._disclaimer_shown = set()  # 已追加过免责话术的 chat_id
 
         # 消息过期时间配置
         self.message_expire_time = int(os.getenv("MESSAGE_EXPIRE_TIME", "300000"))  # 消息过期时间，默认5分钟
@@ -492,20 +502,32 @@ class XianyuLive:
         self.item_cache[item_id] = None
         return None
 
+    def apply_disclaimer(self, chat_id, reply):
+        """每个会话首条自动回复追加免责话术（置空 DISCLAIMER_TEXT 关闭）。"""
+        if self.disclaimer_text and chat_id not in self._disclaimer_shown:
+            self._disclaimer_shown.add(chat_id)
+            return f"{reply}\n{self.disclaimer_text}"
+        return reply
+
     async def compose_reply(self, buyer_id, item_id, send_message):
-        """ECHO 本地回显；BRIDGE 转发 Java 客服 Agent（HTTP 放线程池，避免饿死心跳）。"""
+        """ECHO 本地回显；BRIDGE 转发 Java 客服 Agent（HTTP 放线程池，避免饿死心跳）。
+
+        返回 (reply, handoff_requested)：handoff_requested=True 表示 Java 侧
+        转人工成功，调用方应暂停该会话的自动回复。
+        """
         if self.mode == "ECHO":
-            return f"[echo:xianyu_{buyer_id}_{item_id}] {send_message}"
+            return f"[echo:xianyu_{buyer_id}_{item_id}] {send_message}", False
 
         snapshot = await asyncio.to_thread(self.get_item_snapshot, item_id)
         try:
-            reply = await asyncio.to_thread(
+            data = await asyncio.to_thread(
                 self.cs_client.chat, buyer_id, item_id, send_message, snapshot
             )
         except Exception as exc:
             logger.error(f"转发客服 Agent 失败: {exc}")
-            return self.fallback_reply or None
-        return reply
+            return self.fallback_reply or None, False
+        handoff = bool(data.get("handoffRequested", False))
+        return data["reply"], handoff
 
     async def pace_reply(self, buyer_id):
         """出站节流：距该买家上次回复不足 REPLY_MIN_INTERVAL 秒时补足等待（上限10秒）。"""
@@ -648,13 +670,22 @@ class XianyuLive:
                 logger.debug("系统消息，跳过处理")
                 return
 
-            # 生成回复（ECHO 回显 / BRIDGE 转发 Java）
-            bot_reply = await self.compose_reply(send_user_id, item_id, send_message)
+            # 生成回复（ECHO 回显 / BRIDGE 转发 Java），并获知本轮是否转人工
+            bot_reply, handoff_requested = await self.compose_reply(send_user_id, item_id, send_message)
 
             # 无需回复（Java 失败且未配置兜底话术等情形）
             if not bot_reply:
                 logger.info(f"[无需回复] 买家 {send_user_name} 的消息未生成回复")
                 return
+
+            # X4 双层转人工：Java 侧工单创建成功（handoffRequested=true）时暂停该会话
+            # 自动回复，进入人工接管集合；卖家在闲鱼 App 发句号即可恢复自动回复。
+            if handoff_requested:
+                self.enter_manual_mode(chat_id)
+                logger.info(f"🟠 会话 {chat_id} 触发转人工，已暂停自动回复（卖家发句号恢复）")
+
+            # X4 免责话术：每个会话仅首条自动回复追加
+            bot_reply = self.apply_disclaimer(chat_id, bot_reply)
 
             logger.info(f"机器人回复: {bot_reply}")
 

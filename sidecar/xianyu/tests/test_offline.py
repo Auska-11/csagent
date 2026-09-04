@@ -57,7 +57,10 @@ class MockHandler(BaseHTTPRequestHandler):
             if state.get("expire_token") and auth == f"Bearer {state['expire_token']}":
                 self._json(401, {"error": "expired"})
                 return
-            self._json(200, {"reply": f"ok:{payload['message']}"})
+            self._json(200, {
+                "reply": f"ok:{payload['message']}",
+                "handoffRequested": bool(state.get("handoff_flag", False)),
+            })
         else:
             self._json(404, {"error": "not found"})
 
@@ -69,6 +72,7 @@ def start_mock_server():
         "service_token": "svc-token",
         "registered": 0,
         "expire_token": None,
+        "handoff_flag": False,
     }
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
@@ -99,8 +103,10 @@ class TestUpstreamUtils(unittest.TestCase):
 class TestEchoMode(unittest.TestCase):
     def test_compose_reply_echo(self):
         live = make_live()
-        reply = asyncio.run(live.compose_reply("66001", "90111", "蓝牙耳机还在吗"))
+        reply, handoff = asyncio.run(live.compose_reply("66001", "90111", "蓝牙耳机还在吗"))
         self.assertEqual(reply, "[echo:xianyu_66001_90111] 蓝牙耳机还在吗")
+        # ECHO 模式不接 Java，永不触发转人工暂停
+        self.assertFalse(handoff)
 
     def test_send_msg_frame(self):
         live = make_live()
@@ -156,6 +162,54 @@ class TestItemSnapshot(unittest.TestCase):
         self.assertEqual(snapshot["sku_details"][0]["spec"], "黑色")
 
 
+class TestDisclaimer(unittest.TestCase):
+    def test_disclaimer_once_per_chat(self):
+        live = make_live()
+        first = live.apply_disclaimer("70001", "耳机有货")
+        second = live.apply_disclaimer("70001", "包邮发出")
+        other = live.apply_disclaimer("70002", "另一会话")
+        self.assertTrue(first.endswith(live.disclaimer_text))
+        # 同一会话仅首条追加
+        self.assertEqual(second, "包邮发出")
+        # 不同会话独立计算
+        self.assertTrue(other.endswith(live.disclaimer_text))
+
+    def test_disclaimer_disabled_by_empty_env(self):
+        live = make_live()
+        live.disclaimer_text = ""
+        self.assertEqual(live.apply_disclaimer("70001", "耳机有货"), "耳机有货")
+
+
+class TestHandoffPause(unittest.TestCase):
+    def test_bridge_handoff_flag_pauses_auto_reply(self):
+        """BRIDGE 模式收到 handoffRequested=true 时应暂停该会话自动回复。"""
+        server = start_mock_server()
+        try:
+            host, port = server.server_address
+            live = make_live()
+            live.mode = "BRIDGE"
+            # 离线测试不触网：跳过商品快照（真实路径会调闲鱼 API 并可能回写 .env cookie）
+            live.get_item_snapshot = lambda item_id: None
+            live.cs_client = CsAgentClient(f"http://{host}:{port}", "svc-token", timeout=5)
+
+            server.state["handoff_flag"] = False
+            reply, handoff = asyncio.run(live.compose_reply("66001", "90111", "在吗"))
+            self.assertEqual(reply, "ok:在吗")
+            self.assertFalse(handoff)
+
+            server.state["handoff_flag"] = True
+            reply, handoff = asyncio.run(live.compose_reply("66002", "90111", "我要人工"))
+            self.assertTrue(handoff)
+            # 侧车按标志位进入人工接管（模拟 handle_message 的 X4 分支）
+            live.enter_manual_mode("70002")
+            self.assertTrue(live.is_manual_mode("70002"))
+            # 卖家发句号恢复自动回复
+            live.toggle_manual_mode("70002")
+            self.assertFalse(live.is_manual_mode("70002"))
+        finally:
+            server.shutdown()
+
+
 class TestCsAgentClient(unittest.TestCase):
     def setUp(self):
         self.server = start_mock_server()
@@ -166,8 +220,9 @@ class TestCsAgentClient(unittest.TestCase):
         self.server.shutdown()
 
     def test_register_and_chat(self):
-        reply = self.client.chat("66001", "90111", "在吗", item_snapshot='{"title":"耳机"}')
-        self.assertEqual(reply, "ok:在吗")
+        data = self.client.chat("66001", "90111", "在吗", item_snapshot='{"title":"耳机"}')
+        self.assertEqual(data["reply"], "ok:在吗")
+        self.assertFalse(data["handoffRequested"])
         sessions = [c for c in self.server.state["calls"] if c["path"] == "/api/xianyu/sessions"]
         self.assertEqual(len(sessions), 1)
         self.assertEqual(sessions[0]["body"]["itemSnapshot"], '{"title":"耳机"}')
@@ -185,8 +240,8 @@ class TestCsAgentClient(unittest.TestCase):
 
     def test_expired_buyer_jwt_reregisters_once(self):
         self.server.state["expire_token"] = "jwt-1"
-        reply = self.client.chat("66001", "90111", "在吗")  # jwt-1 过期 → 重注册拿 jwt-2
-        self.assertEqual(reply, "ok:在吗")
+        data = self.client.chat("66001", "90111", "在吗")  # jwt-1 过期 → 重注册拿 jwt-2
+        self.assertEqual(data["reply"], "ok:在吗")
         sessions = [c for c in self.server.state["calls"] if c["path"] == "/api/xianyu/sessions"]
         self.assertEqual(len(sessions), 2)
 

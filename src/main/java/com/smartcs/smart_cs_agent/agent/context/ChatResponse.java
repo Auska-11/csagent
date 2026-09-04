@@ -32,12 +32,29 @@ public class ChatResponse {
     /** 本轮执行轨迹，用于调试和面试演示 */
     private final List<TraceEvent> trace;
 
+    /**
+     * 本轮是否成功转人工（Workflow 终态 HANDED_OFF）。
+     *
+     * 渠道适配层（如闲鱼侧车）据此对该会话暂停自动回复，人工接管后由运营侧恢复；
+     * 这是双层转人工的业务层标志位（docs-76 §5.2 设计点 4）。
+     */
+    private final boolean handoffRequested;
+
     public ChatResponse(String conversationId, String userId, String reply, List<TraceEvent> trace) {
+        this(conversationId, userId, reply, trace, false);
+    }
+
+    public ChatResponse(String conversationId,
+                        String userId,
+                        String reply,
+                        List<TraceEvent> trace,
+                        boolean handoffRequested) {
         this.conversationId = conversationId;
         this.userId = userId;
         this.reply = reply;
         this.timestamp = System.currentTimeMillis();
         this.trace = trace == null ? List.of() : List.copyOf(trace);
+        this.handoffRequested = handoffRequested;
     }
 
     public String getConversationId() {
@@ -58,5 +75,9 @@ public class ChatResponse {
 
     public List<TraceEvent> getTrace() {
         return trace;
+    }
+
+    public boolean isHandoffRequested() {
+        return handoffRequested;
     }
 }

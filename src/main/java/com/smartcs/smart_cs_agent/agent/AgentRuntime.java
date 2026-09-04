@@ -74,6 +74,14 @@ public class AgentRuntime {
      */
     private final long turnTimeoutMs;
 
+    /**
+     * 出站安全过滤：最终回复写回会话与下发给渠道前，拦截站外联系方式话术。
+     *
+     * <p>只拦“联系方式交换意图”而不拦平台名单词（如排查文档里的“微信不提醒”），
+     * 详见 {@link OutboundSafetyFilter}。</p>
+     */
+    private final OutboundSafetyFilter outboundSafetyFilter;
+
     /** 兼容纯 Java 测试的默认构造方式。 */
     public AgentRuntime(SkillManager skillManager, ActionHandlerRegistry actionHandlerRegistry) {
         this(
@@ -91,12 +99,22 @@ public class AgentRuntime {
         this(skillManager, actionHandlerRegistry, maxIterations, DEFAULT_TURN_TIMEOUT_MS);
     }
 
+    /** 兼容旧测试：不注入出站过滤时使用默认安全策略。 */
+    public AgentRuntime(SkillManager skillManager,
+                        ActionHandlerRegistry actionHandlerRegistry,
+                        int maxIterations,
+                        long turnTimeoutMs) {
+        this(skillManager, actionHandlerRegistry, maxIterations, turnTimeoutMs,
+                OutboundSafetyFilter.withDefaults());
+    }
+
     /** Spring 生产构造函数；步骤和整轮时间两种预算都可配置，但都不能关闭。 */
     @Autowired
     public AgentRuntime(SkillManager skillManager,
                         ActionHandlerRegistry actionHandlerRegistry,
                         @Value("${smartcs.agent.max-iterations:10}") int maxIterations,
-                        @Value("${smartcs.agent.turn-timeout-ms:30000}") long turnTimeoutMs) {
+                        @Value("${smartcs.agent.turn-timeout-ms:30000}") long turnTimeoutMs,
+                        OutboundSafetyFilter outboundSafetyFilter) {
         this.skillManager = Objects.requireNonNull(skillManager, "skillManager cannot be null");
         this.actionHandlerRegistry = Objects.requireNonNull(
                 actionHandlerRegistry,
@@ -110,6 +128,10 @@ public class AgentRuntime {
         }
         this.maxIterations = maxIterations;
         this.turnTimeoutMs = turnTimeoutMs;
+        this.outboundSafetyFilter = Objects.requireNonNull(
+                outboundSafetyFilter,
+                "outboundSafetyFilter cannot be null"
+        );
     }
 
     /** 兼容旧调用方：把 ConversationState 包装成 TurnContext。 */
@@ -270,6 +292,18 @@ public class AgentRuntime {
                               ActionExecutionResult result) {
         ConversationState state = context.getState();
         String answer = result.getAnswer();
+
+        // 出站安全过滤先于 final_answer Trace 与会话记忆：三处必须看到同一份最终话术。
+        // Trace 只记命中的模式，不回填原文片段，避免把联系方式换了个地方写进日志。
+        OutboundSafetyFilter.Outcome outboundOutcome = outboundSafetyFilter.apply(answer);
+        if (outboundOutcome.filtered()) {
+            answer = outboundOutcome.text();
+            context.addTrace(
+                    "outbound_filtered",
+                    "最终回复命中站外联系方式过滤，已整条替换为安全提示",
+                    Map.of("matchedPatterns", outboundOutcome.matchedPatterns())
+            );
+        }
 
         // 所有“结束型” Handler 都由 Runtime 统一补 final_answer，保证自定义 Handler 不会漏掉核心 Trace。
         // WAITING_USER 已由 Ask/Confirm Handler 分别记录 ask_user 或 confirmation_requested。

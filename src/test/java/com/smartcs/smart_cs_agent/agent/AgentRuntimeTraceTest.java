@@ -28,6 +28,7 @@ import dev.langchain4j.model.output.Response;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -173,6 +174,37 @@ class AgentRuntimeTraceTest {
         assertFalse(traceJson.contains("runtime-secret"));
         assertFalse(traceJson.contains("TRACE-LLM-REPLY"));
         assertFalse(traceJson.contains("private@example.com"));
+    }
+
+    /**
+     * X4 出站安全过滤：LLM 原始回复包含站外联系方式意图时，回复、会话记忆与 final_answer
+     * Trace 必须看到同一份替换后话术，不能出现“回复已过滤、记忆留原文”的分裂。
+     */
+    @Test
+    void shouldReplaceOutboundContactExchangeInReplyMemoryAndTraceConsistently() throws Exception {
+        CapturingChatLanguageModel chatModel =
+                new CapturingChatLanguageModel("您可以加我微信 abc123 私聊，秒回");
+        AgentRuntime runtime = createRuntime(chatModel);
+
+        ChatRequest request = request("conv-outbound-filter", "你好");
+        ConversationState state = new ConversationState(request.getMessage(), request.getUserId());
+        TurnContext context = new TurnContext(request, state);
+
+        String reply = runtime.runTurn(context);
+
+        assertEquals(OutboundSafetyFilter.DEFAULT_REPLACEMENT, reply);
+        assertEquals(reply, context.getFinalAnswer());
+
+        List<Map<String, String>> messages = state.getMessages();
+        Map<String, String> lastMessage = messages.get(messages.size() - 1);
+        assertEquals("assistant", lastMessage.get("role"));
+        assertEquals(reply, lastMessage.get("content"));
+
+        TraceEvent filtered = findTraceEvent(context, "outbound_filtered");
+        assertEquals(List.of("加.{0,4}微信"), filtered.getData().get("matchedPatterns"));
+        // 原文里的联系方式不能借道 Trace 泄漏：final_answer.answer 等自由文本字段按脱敏设计
+        // 本就是 [OMITTED]，这里验证整个 Trace 序列化结果都不含联系方式片段。
+        assertFalse(new ObjectMapper().writeValueAsString(context.getTraceEvents()).contains("abc123"));
     }
 
     private AgentRuntime createRuntime(String fakeLlmReply) {

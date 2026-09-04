@@ -28,7 +28,7 @@
 | `XianyuAgent.py` | OpenAI 客户端 + 4 个领域 Agent（classify/price/tech/default）+ 意图路由 | **整体删除**。对应职责由 Java 侧 `WorkflowRouter` + 10 个 Workflow 承担（对照实验已证明差异，见 docs-77） |
 | `prompts/*.txt` | 4 套系统提示词 | **删除**。提示词与话术决策都在 Java 侧 |
 | `context_manager.py` | SQLite 对话历史 + 商品表 + 议价计数 | **删除**。对话状态由 Java `ConversationStore` 管理；议价 v2 再加（docs-76 §5.2 决策） |
-| `_safe_filter`（XianyuAgent.py 内） | 站外联系方式关键词过滤（微信/QQ/支付宝/银行卡/线下） | **随大脑删除**。X4 将在 Java 出站侧实现同等过滤（对所有渠道生效，不只闲鱼） |
+| `_safe_filter`（XianyuAgent.py 内） | 站外联系方式关键词过滤（微信/QQ/支付宝/银行卡/线下） | **随大脑删除**。X4 已在 Java 出站侧以 `OutboundSafetyFilter` 重新实现：从平台裸关键词收窄为"联系方式交换意图"正则（如 `加.{0,4}微信`），因为本项目知识库的排查话术会合法提及"微信不提醒"等平台名词，裸关键词会误杀；对所有渠道生效，不只闲鱼 |
 | 阶梯降价/议价策略 | 价格 Agent 的动态 temperature | **删除**（v2 议价 Workflow 时以 Skill Package 形式回到 Java 侧） |
 
 ## 保留的上游逻辑（协议层）
@@ -52,15 +52,20 @@ WebSocket 连接与注册（`/reg` + token）、心跳维护与超时重连、to
    阻塞回复（上游失败直接 return 丢单）。
 4. **出站节流**（新增，X4 风控缓解）：`pace_reply()` 保证同一买家两次自动
    回复间隔 ≥ `REPLY_MIN_INTERVAL`（默认 3.5s，上限等待 10s）。上游无此机制。
-5. **HTTP 不阻塞事件循环**：BRIDGE 的阻塞 HTTP 调用经 `asyncio.to_thread`
+5. **转人工暂停**（新增，X4）：`/api/chat/send` 返回 `handoffRequested=true`
+   时把该会话置入人工接管集合（复用卖家句号开关，句号可恢复）；上游的转人工
+   只是提示词里的一句话，无协议级暂停。
+6. **免责话术**（新增，X4）：每个会话首条自动回复末尾追加一次
+   `DISCLAIMER_TEXT`（置空关闭）；上游无此机制。
+7. **HTTP 不阻塞事件循环**：BRIDGE 的阻塞 HTTP 调用经 `asyncio.to_thread`
    下沉线程池，避免长超时饿死心跳任务（上游同步 LLM 调用有同样问题，本侧车修正）。
-6. **交互式配置改为无人值守**：上游 `check_and_complete_env()` 启动时
+8. **交互式配置改为无人值守**：上游 `check_and_complete_env()` 启动时
    `input()` 交互补配置、风控时 `input()` 等人工粘贴新 Cookie；侧车作为无人
    常驻进程改为启动时校验 + 失败即退出，风控处置指引打到日志。
-7. **订单状态消息**：上游仅记录；本侧车同样只记录并显式注明"人工处理，
+9. **订单状态消息**：上游仅记录；本侧车同样只记录并显式注明"人工处理，
    v1 不自动接单"（docs-76 §5.2 设计点 5）。
-8. **日志默认级别** DEBUG → INFO（常驻进程降噪）。
-9. 卖家人工接管开关、心跳/token/重连参数、模拟打字等协议层行为原样保留。
+10. **日志默认级别** DEBUG → INFO（常驻进程降噪）。
+11. 卖家人工接管开关、心跳/token/重连参数、模拟打字等协议层行为原样保留。
 
 ## XianyuApis.py 相对上游的唯一改动
 

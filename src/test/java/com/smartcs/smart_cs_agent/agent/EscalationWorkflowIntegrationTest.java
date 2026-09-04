@@ -36,6 +36,8 @@ class EscalationWorkflowIntegrationTest {
         ));
 
         assertTrue(response.getReply().contains("工单号"), response::getReply);
+        // 工单创建成功 -> Workflow 终态 HANDED_OFF -> 渠道适配层据此暂停自动回复（X4）。
+        assertTrue(response.isHandoffRequested());
         assertTrue(hasTraceValue(response, "workflow_routed", "selectedWorkflow", "escalation"));
         assertTrue(hasTraceValue(response, "skill_package_selected", "skillId", "escalation"));
         assertTrue(hasTraceValue(response, "handoff_requested", "reason", "COMPLAINT"));
@@ -55,6 +57,8 @@ class EscalationWorkflowIntegrationTest {
         assertTrue(hasTraceValue(response, "workflow_routed", "selectedWorkflow", "policy_qa"));
         assertFalse(hasTraceEvent(response, "handoff_requested"));
         assertFalse(hasTraceEvent(response, "handoff_created"));
+        // 政策问答不转人工，标志位必须为 false。
+        assertFalse(response.isHandoffRequested());
         assertTrue(response.getReply().contains("人工"), response::getReply);
     }
 
@@ -65,6 +69,8 @@ class EscalationWorkflowIntegrationTest {
 
         ChatResponse first = agent.chatWithTrace(request(conversationId, "帮我查订单"));
         assertTrue(first.getReply().contains("订单号"), first::getReply);
+        // 追问订单号是 WAITING_USER，不是转人工。
+        assertFalse(first.isHandoffRequested());
 
         ChatResponse second = agent.chatWithTrace(request(
                 conversationId,
@@ -75,6 +81,7 @@ class EscalationWorkflowIntegrationTest {
         assertTrue(hasTraceValue(second, "workflow_routed", "selectedWorkflow", "order_query"));
         assertTrue(hasTraceValue(second, "handoff_requested", "reason", "COMPLAINT"));
         assertTrue(second.getReply().contains("工单号"), second::getReply);
+        assertTrue(second.isHandoffRequested());
 
         // 工单 Provider 仍可使用原摘要，但公开 Trace 只返回安全副本。
         String traceJson = new ObjectMapper().writeValueAsString(second.getTrace());

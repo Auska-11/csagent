@@ -5,6 +5,7 @@ import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
+import com.smartcs.smart_cs_agent.agent.context.WorkflowStatus;
 import org.springframework.stereotype.Component;
 
 /**
@@ -127,11 +128,15 @@ public class CustomerServiceAgent {
             TurnContext context = new TurnContext(request, state);
 
             String reply = runtime.runTurn(context);
+            // HANDED_OFF 是本轮终态（下一轮会重新路由并覆盖状态），此刻读取即“本轮是否转人工”，
+            // 供闲鱼侧车等渠道适配层暂停该会话的自动回复。
+            boolean handoffRequested = state.getWorkflowStatus() == WorkflowStatus.HANDED_OFF;
             return new ChatResponse(
                     request.getConversationId(),
                     request.getUserId(),
                     reply,
-                    context.getTraceEvents()
+                    context.getTraceEvents(),
+                    handoffRequested
             );
         });
     }

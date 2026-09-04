@@ -45,6 +45,7 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
     private final CapabilityCatalog catalog;
     private final CapabilityIdempotencyStore idempotencyStore;
     private final CapabilityExecutionGuard executionGuard;
+    private final CapabilityTenantPolicy tenantPolicy;
 
     public DefaultCapabilityGateway(List<CapabilityProvider> providers) {
         // 手动 new Gateway 的单元测试默认使用内存实现；Spring 运行时会走下面的注入构造函数，
@@ -68,10 +69,18 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
         this(providers, idempotencyStore, new CapabilityExecutionGuard(invocationExecutor));
     }
 
-    @Autowired
     public DefaultCapabilityGateway(List<CapabilityProvider> providers,
                                     CapabilityIdempotencyStore idempotencyStore,
                                     CapabilityExecutionGuard executionGuard) {
+        this(providers, idempotencyStore, executionGuard, CapabilityTenantPolicy.permissive());
+    }
+
+    /** Spring 生产构造函数：租户能力面策略在 Provider 执行前统一拦截（docs-76 §5.2）。 */
+    @Autowired
+    public DefaultCapabilityGateway(List<CapabilityProvider> providers,
+                                    CapabilityIdempotencyStore idempotencyStore,
+                                    CapabilityExecutionGuard executionGuard,
+                                    CapabilityTenantPolicy tenantPolicy) {
         List<CapabilityProvider> safeProviders = providers == null ? List.of() : List.copyOf(providers);
         Map<String, CapabilityProvider> providerMap = new LinkedHashMap<>();
         Collection<CapabilityDefinition> allDefinitions = new ArrayList<>();
@@ -97,6 +106,7 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
                 executionGuard,
                 "executionGuard cannot be null"
         );
+        this.tenantPolicy = Objects.requireNonNull(tenantPolicy, "tenantPolicy cannot be null");
     }
 
     @Override
@@ -124,6 +134,18 @@ public class DefaultCapabilityGateway implements CapabilityGateway {
         }
 
         CapabilityDefinition definition = catalog.get(canonicalId);
+
+        // 租户能力面拦截先于 deadline、身份和幂等检查：被屏蔽的能力连幂等占位都不应占用，
+        // 更不能启动 Provider。业务拒绝（而非技术失败）让 Workflow 能用正常话术收尾。
+        if (tenantPolicy.isBlocked(context.getTenantId(), canonicalId)) {
+            return CapabilityResult.businessRejected(
+                    canonicalId,
+                    provider.providerId(),
+                    "CAPABILITY_BLOCKED_FOR_TENANT",
+                    "当前渠道暂不支持在线办理该业务，如需处理请联系人工客服。",
+                    null
+            );
+        }
 
         // 能力自己的默认超时不能突破上游 Turn deadline；反过来，上游给了更长预算时，
         // 每项能力仍只拿到契约声明的最大执行时间。

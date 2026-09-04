@@ -36,6 +36,11 @@ smartcs:
     max-iterations: ${SMARTCS_AGENT_MAX_ITERATIONS:10}
     # 一轮对话从进入 Runtime 到最终收尾的 wall-clock 总预算，所有 LLM/Capability Action 共享。
     turn-timeout-ms: ${SMARTCS_AGENT_TURN_TIMEOUT_MS:30000}
+    outbound-safety:
+      # X4 出站安全过滤：最终回复命中站外联系方式模式时整条替换为安全提示，对所有渠道生效。
+      # 模式清单与替换话术的默认值在代码里维护（联系方式交换意图，而非平台裸关键词），
+      # 避免配置里复制一份正则后两边漂移；需要自定义时仍可用 blocked-patterns/replacement 覆盖。
+      enabled: ${SMARTCS_AGENT_OUTBOUND_SAFETY_ENABLED:true}
   llm:
     execution:
       # 模型调用放入有界执行器。call-timeout 约束单个 LLM Action，Turn 余额可能进一步收紧它。
@@ -62,6 +67,12 @@ smartcs:
   capability:
     # local：直接调用本进程 Provider；mcp-remote：只使用远程 MCP；hybrid：本地为主并额外暴露带命名空间的远程能力。
     provider-mode: ${SMARTCS_CAPABILITY_PROVIDER_MODE:local}
+    # 租户能力面：xianyu 渠道 v1 只开问答 + 只读（docs-76 §5.2 设计点 3）。
+    # handoff.request 不屏蔽——它是双层转人工的业务层出口（设计点 4）。
+    tenant-policies:
+      xianyu:
+        blocked-capabilities:
+          - return.apply
     execution:
       # Provider 在线程池中执行，deadline 到期后请求线程不再无限等待。
       # 工作线程与排队请求都有上限，防止下游卡死时继续无限创建线程或堆积任务。
