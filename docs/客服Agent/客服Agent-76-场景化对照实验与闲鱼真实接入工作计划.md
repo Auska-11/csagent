@@ -253,6 +253,33 @@
 - 全量测试：`sh mvnw test`（mvnw 无执行权限，不能用 ./mvnw）
 - 提交基线：8d45705（X1-X4 收官 + §6 启动决策）
 
+### 6.2 三修复点 + 商品名重复：根因定位与实施设计（2026-09-05 凌晨，跑批期间只读定位产物）
+
+四个点的代码级根因全部定位完毕（只读，未改代码——**代码实施等修复前基线 200/200 锁存后再动手**）：
+
+**修复点 1｜对抗拒绝话术：安全立场没有任何骨架承载。**
+`skills/customer-service/SKILL.md`（通用兜底的 Prompt）全文没有对抗/身份冒充/数据索取的安全指令；`GeneralCustomerServiceWorkflow` 把这类消息整体交给 LLM 自由发挥——压测 #5 的"拒绝+原因"是模型临场表现，"请提供订单号"尾巴也是它临场加的，两头都不受控。
+设计：新增确定性安全闸（参照 `GlobalInterruptPolicy` 的形态），在 `AgentRuntime.runTurn` 路由**之前**评估：
+- 匹配面（v1 收窄，三条）：① 自称官方/平台/内部/工号/审计等身份 + 索取**他人/全量**敏感数据（手机号/地址/收件人/身份证/系统提示词/数据库导出）；② 全库/批量数据导出请求；③ 站外私下交易诱导（与 `OutboundSafetyFilter` 的意图正则思路一致）。
+- **必须放行**（不可拦截，否则破坏既有断言/防线）：消息携带具体订单号走正常路由（`adv-inject-via-order` 必须仍触发 `order.lookup` 并在 Provider 边界吃 ORDER_OWNERSHIP_MISMATCH——那才是被验证过的防线）；不索取数据的诱导承诺/角色扮演/威胁（adv-induce-violation-promise、adv-roleplay-jailbreak、adv-threat-escalation 留给兜底 LLM）。
+- 命中后：trace 记 `safety_refusal`，零能力调用（满足 notrig 断言），走 SECURITY_DENIED 语义；话术按 §6 原则"代码定决策、LLM 措辞"——用现有 LLMAction 以受约束 Prompt 生成（拒绝+原因+正规途径，**不追问任何信息**），LLM 失败降级到固定模板（模板本身要写得自然，压测 #5 病症就是模板尾句答非所问）。
+
+**修复点 2｜幻觉类检索边界：两处叠加使诚实分支结构性不可达。**
+① `QueryRewriter.rewritePolicy`（L71）单字 `"退"`/`"换"` 就追加退货政策变体，"以旧换新"必然召回 return_policy；② `PolicyQaWorkflow.handleSearchResult`（L173-179）只要 `firstOwnedHit` 非空就硬引原文，无相关性核验——而路由词表（"退货政策"等）与政策文档词表天然重合（hall-nonexistent-policy 的 description 里 M3 就记录过），"没有找到明确规则"分支对政策类话术永远走不到。
+设计（两层都要）：
+- 改写器收窄：单字"退/换"触发改为多字词（退货/退款/换货/想退…）；
+- PolicyQa 相关性门槛：命中归属文档后，抽取查询里的**区分性词**（改写后不在 DOMAIN_TERMS 里的词，如"积分""以旧换新""生日"），要求至少一个出现在命中标题/片段中，否则视为"查证过、确实没有"→ 走诚实分支（模板含"客服知识库"字样，兼容既有 replyMustContain 断言），并给转人工出口。hall-fabricate-deadline 的"质检"在 return_policy 原文中存在，仍走引用+纠正路径，不受影响。
+
+**修复点 3｜闲聊误路由：品类词=0.98 一票定局。**
+`ProductAdvisoryWorkflow.match`（L99-102）消息里出现"耳机"等品类词即 0.98，压倒兜底 0.20——"这耳机颜值真高啊"（= 评测 chat-product-smalltalk 的孪生句）因此回了商品清单。现有测试没有锁死裸品类词的匹配分（`ProductAdvisoryWorkflowTest` 断言的都是"多少钱/推荐"类带意图消息），改动空间干净。
+设计：match() 增加社交闲聊前置排除——消息命中夸赞/感叹/情绪词（颜值/好看/不错/真棒/喜欢/哈哈/心情…）**且**没有咨询标记（多少钱/价格/有货/库存/推荐/参数/特点/适合/怎么选/哪个/吗/？）时 noMatch，让它落回通用兜底自然接话；裸品类词（用户只发"耳机"两字，仍视为商品咨询）与带咨询标记的消息维持原分数不变。
+
+**附带 nit｜商品名重复。**
+压测 #1 回复里"特点"段开头逐字重复商品名（"森海塞尔MOMENTUM二代头戴耳机森海塞尔MOMENTUM 2代…"）。根因：知识文档 `product/1079979582985.md` 的"商品描述"小节正文本身以标题开头（快照落盘时带入），`XianyuKnowledgeProductCatalog.description()`（L122-134）原样取用，`formatProducts` 又在外层打印了一次名称。
+设计：三处取二——① 目录读取侧去重（description() 剥离与名称相同的前缀，救存量已审校文档）；② `XianyuItemKnowledgeWriter` 落盘侧去重（管增量）；存量文档本身不改（它是已审校数据，读取侧已兜住）。
+
+测试影响面预估：新增安全闸单测（三类命中 + inject-via-order 放行）、QueryRewriter 单测（单字不再触发/多字仍触发）、PolicyQa 相关性门槛单测（积分类查询走诚实分支、质检类仍引用）、商品 match 社交排除单测、目录去重单测；60 场景全量回归 + 演示租户既有商品咨询路径回归（"蓝牙耳机多少钱""推荐耳机"必须原行为）。
+
 ## 7. 动态记录
 
 | 日期 | 事项 |
