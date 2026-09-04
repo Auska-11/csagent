@@ -1,0 +1,5 @@
+# 侧车仅保留协议层依赖（相对上游 XianyuAutoAgent 移除了 openai）
+websockets==13.1
+loguru==0.7.3
+python-dotenv==1.0.1
+requests==2.32.3
