@@ -36,7 +36,7 @@
 | --- | --- | --- |
 | 第一阶段 | 场景化对照实验（基线 Agent + 场景集 + 对比报告） | ✅ 完成（M1-M4 全部完成，报告见 [客服Agent-77](客服Agent-77-真实模型对照实验报告.md)） |
 | 第二阶段 | 渠道适配层（ChannelAdapter SPI；官方 API 渠道为可选项） | ⏸ 暂缓，待第一阶段完成 |
-| 第三阶段 | 闲鱼侧车接入（真实流量运行记录） | 🔄 X1 代码完成（2026-09-04，echo 实测待 cookie）；下一步 X2（Java 适配端点，不依赖账号） |
+| 第三阶段 | 闲鱼侧车接入（真实流量运行记录） | 🔄 X1 代码完成（echo 实测待 cookie）；X2 完成；下一步 X3 端到端（需 cookie） |
 | 体验优化迭代 | 混合架构：对照实验三个诊断点的修复（对抗拒绝话术 / 幻觉类检索边界 / 闲聊误路由） | 📋 已立项（2026-09-04 复盘确认，见 §6），排在第三阶段后执行 |
 
 依赖关系：第一阶段的场景集和 Runner 是基础设施，第三阶段接入后的真实对话质检可以复用同一套断言体系。
@@ -197,7 +197,7 @@
 | # | 内容 | 依赖小号？ | 状态 |
 | --- | --- | --- | --- |
 | X1 | 无脑侧车：fork 固定 commit + 砍掉 LLM + echo 模式实测协议链路 | 代码裁剪否；echo 实测**是** | 🟦 代码完成（commit 0da28da，2026-09-04）：固定 `shaxiu/XianyuAutoAgent@540bbc2`，协议层保留、LLM/prompt/SQLite 上下文全部移除（裁剪记录见 `sidecar/xianyu/PROVENANCE.md`）；ECHO/BRIDGE 双模式，离线测试 10/10；**echo 实测待小号 cookie** |
-| X2 | Java 最小适配：xianyu 用户映射/签发端点 + 商品知识生成脚本 | 否 | ⏳ |
+| X2 | Java 最小适配：xianyu 用户映射/签发端点 + 商品知识生成脚本 | 否 | 🟦 完成（2026-09-04）：`POST /api/xianyu/sessions`（静态服务令牌恒定时间比对，未启用即 404）+ `USER-XY-{sha256(buyerId)}` 幂等映射 + 买家 CUSTOMER JWT（xianyu 租户）+ itemSnapshot 首次落盘知识草稿（人工审校后进 resources/knowledge/product/ 重启生效）；集成测试 6 项含"签发 JWT 通过真实过滤链路完成 /api/chat/send" |
 | X3 | 端到端：真消息 → `/api/chat/send` → 回复回闲鱼；多轮上下文 + 商品文档生效 | 是 | ⏳ |
 | X4 | 加固：副作用租户屏蔽、HANDOFF 暂停自动回复、站外联系方式过滤、免责话术 | 否 | ⏳ |
 | X5 | 真实流量运行 + 脱敏存档 + 复用第一阶段断言体系质检 + 面试素材 | 是 | ⏳ |
@@ -243,3 +243,4 @@
 | 2026-09-04 | **第一阶段复盘 + 优先级决策**。对照实验结论采纳：骨架方向被证实（安全断言 100/100、故障注入分水岭），但体验层确认要修——三个诊断点（对抗拒绝话术模板化、幻觉类"无明确规则"分支不可达、闲聊误路由）立项为"混合架构体验优化"迭代（本文 §6），**排在第三阶段闲鱼接入之后执行，当前主线为第三阶段**。第一阶段成果已提交并推送远端（`feat(eval)` 43 文件 + 前端样式独立提交，分支 `codex/smart-cs`）。本窗口核验时发现并修复 77 号报告附录 A 表格整段重复的缺陷。 |
 | 2026-09-04 | **第三阶段方案定稿（探讨结论）**。五个设计点敲定（§5.2）：合成用户映射（Java 侧仅加幂等映射/签发端点）、商品知识文档（不塞消息正文）、**v1 副作用按租户关闭**（只读+问答）、双层转人工（句号总开关 + HANDOFF 暂停）、风控五条；**议价推迟 v2**。里程碑 X1-X5 排定（§5.3），其中 X1 代码裁剪与 X2/X4 不依赖小号可先行。用户待办：准备闲鱼小号（清单 §5.4，含养号与商品域建议：数码配件低价位，与排查场景同域）。 |
 | 2026-09-04 | **X1 代码完成**（commit `0da28da`）。上游真实归属核实为 `shaxiu/XianyuAutoAgent`（约 9k stars，非 XianyuAutoAgent 组织名），github.com 主站间歇不通但 codeload 可用，改走 API+codeload tarball 固定 `540bbc2`。侧车落 `sidecar/xianyu/`（11 文件）：协议骨架（WebSocket/`/reg`/心跳/token 刷新/MessagePack 解密/发送帧）保留，LLM 四 Agent、prompts、SQLite 上下文、议价全砍（逐文件去向记录于 `PROVENANCE.md`，GPL-3.0 LICENSE 随附）；回复改为 ECHO（X1 协议实测）/ BRIDGE（转发 `/api/chat/send`，X2 契约）双模式；风控分支交互式 `input()` 改无人值守退出；出站节流 ≥3.5s/买家；阻塞 HTTP 经 `asyncio.to_thread` 下沉；订单类系统消息只记录不自动接单。离线测试 10/10（mock X2 服务器 + MockWebSocket，不触网不需 cookie）。**echo 实测待小号 cookie**（用户小号已备好）。 |
+| 2026-09-04 | **X2 完成**。新增 `channel/xianyu` 包：`POST /api/xianyu/sessions`（`smartcs.xianyu.*` 配置，默认关闭=404；启用时服务令牌启动期强度校验 ≥32 字节 + Controller 内 `MessageDigest.isEqual` 恒定时间比对）；buyerId → `USER-XY-{sha256 前 8 hex}` 幂等映射（纯函数免存储，不泄露平台 ID）；`XianyuBuyerTokenService` 用生产 JwtEncoder/issuer/audience 签发 xianyu 租户 CUSTOMER JWT（TTL 24h 可配）；conversationId 由 Java 统一生成（`xianyu_{buyerId}_{itemId}`，侧车只透传）；itemSnapshot 首次落盘 `data/xianyu-items/{itemId}.md` 知识草稿（不覆盖已有、人工审校后移入 resources/knowledge/product/ 重启生效——知识索引启动期一次性构建无热加载，草稿机制如实记录此边界）。**工程发现**：`BearerTokenAuthenticationFilter` 对 permitAll 端点也会尝试解码任何 Bearer 头（静态服务令牌会被 JWT 解码器 401 拦截），新增 `smartCsBearerTokenResolver` 把该路径从 JWT 解析排除，令牌校验回归 Controller。集成测试 6 项（令牌三态/ID 注入防护/幂等映射/草稿只建一次/关闭态 404/**签发的买家 JWT 通过真实 SecurityFilterChain 完成 /api/chat/send 一轮**，走订单查询模板链路不依赖 LLM）；全量回归 511 项 0 失败（1 skip 为默认关闭的真模型评测）。 |

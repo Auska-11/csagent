@@ -19,6 +19,8 @@ import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
 import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
+import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.web.SecurityFilterChain;
 
 import javax.crypto.SecretKey;
@@ -36,6 +38,19 @@ public class HttpSecurityConfiguration {
                 properties.getJwtSecret().getBytes(StandardCharsets.UTF_8),
                 "HmacSHA256"
         );
+    }
+
+    /**
+     * BearerTokenAuthenticationFilter 只要看到 "Authorization: Bearer ..." 就会尝试 JWT 解码，
+     * 即使端点是 permitAll 也会在解码失败时直接回 401。闲鱼侧车携带的是静态服务令牌
+     * （由 XianyuSidecarController 恒定时间比对），不是 JWT，所以该路径必须从 JWT 解析中排除。
+     */
+    @Bean
+    public BearerTokenResolver smartCsBearerTokenResolver() {
+        DefaultBearerTokenResolver delegate = new DefaultBearerTokenResolver();
+        return request -> "/api/xianyu/sessions".equals(request.getRequestURI())
+                ? null
+                : delegate.resolve(request);
     }
 
     @Bean
@@ -108,6 +123,9 @@ public class HttpSecurityConfiguration {
                                 "/actuator/health/**",
                                 "/api/auth/demo/**"
                         ).permitAll()
+                        // 闲鱼侧车会话端点：调用方是持有静态服务令牌的本机进程而非终端用户，
+                        // 无法走 Bearer JWT 过滤链；Controller 内做恒定时间令牌比对，未启用时按 404 处理。
+                        .requestMatchers(HttpMethod.POST, "/api/xianyu/sessions").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/monitor/feedback")
                         .hasAnyRole(SecurityRoles.CUSTOMER, SecurityRoles.ADMIN)
                         .requestMatchers("/api/chat/**")

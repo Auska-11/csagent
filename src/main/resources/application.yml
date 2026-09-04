@@ -145,6 +145,16 @@ smartcs:
       socket-timeout-ms: ${SMARTCS_JDBC_SOCKET_TIMEOUT_MS:10000}
       query-timeout-seconds: ${SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS:5}
       pool-max-size: ${SMARTCS_JDBC_POOL_MAX_SIZE:10}
+  xianyu:
+    # 闲鱼侧车接入（第三阶段）。默认关闭；启用时端点才存在，且服务令牌必须与
+    # 侧车 .env 的 CS_AGENT_TOKEN 一致（不少于 32 字节，启动期校验）。
+    enabled: ${SMARTCS_XIANYU_ENABLED:false}
+    service-token: ${SMARTCS_XIANYU_SERVICE_TOKEN:}
+    # 闲鱼买家合成用户所属租户；X4 将按该租户关闭副作用类能力（只读 + 问答）。
+    tenant-id: ${SMARTCS_XIANYU_TENANT_ID:xianyu}
+    buyer-token-ttl-seconds: ${SMARTCS_XIANYU_BUYER_TOKEN_TTL_SECONDS:86400}
+    # 商品快照与知识文档草稿落盘目录；草稿需人工审校后移入 resources/knowledge/product/ 并重启生效。
+    item-snapshot-dir: ${SMARTCS_XIANYU_ITEM_SNAPSHOT_DIR:data/xianyu-items}
   monitor:
     # Eval 候选样本默认保存到本地 data 目录。
     # 这样用户点“无用”后生成的待审核样本，项目重启后仍然可以继续审核。

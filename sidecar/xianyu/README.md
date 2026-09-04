@@ -23,19 +23,25 @@ python main.py
 | ECHO | `ECHO` | 仅 cookie | X1：验证协议链路，买家消息原样回显 |
 | BRIDGE | `BRIDGE` | cookie + Java 服务（X2 端点） | X3+：真消息 → Java Agent → 回复回闲鱼 |
 
-## 转发契约（BRIDGE 模式，Java 侧 X2 实现）
+## 转发契约（BRIDGE 模式，Java 侧 X2 已实现）
 
 ```
 ① POST /api/xianyu/sessions        Authorization: Bearer <侧车服务令牌>
    {"buyerId": "...", "itemId": "...", "itemSnapshot": "..."(仅首次)}
-→ {"userId": "USER-XY-xxxx", "token": "<买家JWT>", "conversationId": "xianyu_{buyerId}_{itemId}"}
-   幂等：同 buyerId 恒返回同一合成用户；首次收到 itemSnapshot 时生成商品知识文档
+→ {"userId": "USER-XY-xxxx", "token": "<买家JWT>", "conversationId": "xianyu_{buyerId}_{itemId}",
+   "expiresAt": ..., "tenantId": "xianyu", "itemKnowledge": "created|existing|none"}
+   幂等：同 buyerId 恒返回同一合成用户；首次收到 itemSnapshot 时生成商品知识草稿
+   （data/xianyu-items/{itemId}.md，人工审校后移入 resources/knowledge/product/ 并重启生效）
 
 ② POST /api/chat/send              Authorization: Bearer <买家JWT>
    {"conversationId": "...", "message": "..."}
 → {"reply": "..."}
    与现有聊天端点同构；身份只信 JWT，conversationId 原样透传
 ```
+
+Java 侧开关（`application.yml` 的 `smartcs.xianyu.*`）：`SMARTCS_XIANYU_ENABLED=true` 且
+`SMARTCS_XIANYU_SERVICE_TOKEN`（≥32 字节，与本侧车 `CS_AGENT_TOKEN` 一致）；未启用时端点为 404。
+买家 JWT 过期后侧车凭 401 自动重注册，`expiresAt` 仅供参考。
 
 ## 人工接管（双层）
 
