@@ -26,7 +26,7 @@ import java.util.Map;
  * target 是 Maven 的构建输出目录，适合存放自动生成文件。
  * 这样不会把每次测试生成的报告误提交到源码里。
  */
-class EvalReportWriter {
+public class EvalReportWriter {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
             .enable(SerializationFeature.INDENT_OUTPUT);
@@ -37,7 +37,7 @@ class EvalReportWriter {
     private EvalReportWriter() {
     }
 
-    static void write(String reportName,
+    public static void write(String reportName,
                       Map<String, Object> summary,
                       List<Map<String, Object>> cases) throws IOException {
         Path outputDir = Path.of("target", "eval-reports");
@@ -59,7 +59,7 @@ class EvalReportWriter {
         writeTrend(outputDir);
     }
 
-    static double rate(int passed, int total) {
+    public static double rate(int passed, int total) {
         if (total == 0) {
             return 0.0;
         }

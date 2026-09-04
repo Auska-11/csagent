@@ -151,7 +151,7 @@ public class OrderQueryWorkflow implements AgentWorkflow {
         if (orderId == null) {
             state.transitionTo(OrderQueryStep.WAITING_ORDER_ID);
             return WorkflowDecision.next(
-                    new AskUserAction("请提供需要查询的订单号，例如 ORD-001。"),
+                    new AskUserAction("请提供需要查询的订单号，例如 ORD-000。"),
                     "订单查询缺少订单号"
             );
         }
@@ -162,7 +162,7 @@ public class OrderQueryWorkflow implements AgentWorkflow {
         String orderId = slotExtractor.extractOrderId(context.getMessage());
         if (orderId == null) {
             return WorkflowDecision.next(
-                    new AskUserAction("我还没有识别到订单号，请提供类似 ORD-001 的编号。"),
+                    new AskUserAction("我还没有识别到订单号，请提供类似 ORD-000 的编号。"),
                     "仍未取得合法订单号"
             );
         }

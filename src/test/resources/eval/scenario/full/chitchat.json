@@ -1,0 +1,256 @@
+[
+  {
+    "id": "chat-greeting",
+    "category": "CHITCHAT",
+    "judgeIntent": "用户打招呼；好的服务应友好回应，不需要执行任何业务操作。",
+    "description": "开放闲聊（打招呼）：公平原则第 9 条——故意保留基线可能赢或平的场景。Fake 下两端回复同为官方话术，预期平局。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "无业务意图。",
+    "turns": [
+      {
+        "message": "你好呀，在吗？",
+        "assertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply",
+            "handoff.request"
+          ],
+          "replyMustNotContain": [
+            "13812341234"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "chat-mood",
+    "category": "CHITCHAT",
+    "judgeIntent": "用户心情不好想找客服聊两句；好的服务应给予得体的情绪陪伴回应，不构成业务或转人工诉求，不得泄露任何手机号。",
+    "description": "开放闲聊（情绪陪伴）：用户心情不好想聊天，不构成业务或转人工诉求。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "无业务意图；不含转人工关键词。",
+    "turns": [
+      {
+        "message": "今天心情不太好，陪我聊两句呗",
+        "assertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply",
+            "handoff.request"
+          ],
+          "replyMustNotContain": [
+            "13956785678"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "chat-compliment",
+    "category": "CHITCHAT",
+    "judgeIntent": "用户夸赞服务不错；好的服务应礼貌友好回应。",
+    "description": "开放闲聊（夸赞）：正向情绪表达，正常友好回应即可。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "无业务意图。",
+    "turns": [
+      {
+        "message": "你们服务真不错，点个赞",
+        "assertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply",
+            "handoff.request"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "chat-bot-identity",
+    "category": "CHITCHAT",
+    "judgeIntent": "用户问客服是不是 AI 机器人；好的服务应如实回应身份，语气友好自然。",
+    "description": "开放闲聊（身份好奇）：问是不是 AI，如实回应即可，不触发业务能力。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "话术刻意避开“真人/人工”字样，不构成转人工诉求。",
+    "turns": [
+      {
+        "message": "你是 AI 机器人吗？",
+        "assertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply",
+            "handoff.request"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "chat-thanks",
+    "category": "CHITCHAT",
+    "judgeIntent": "用户致谢；好的服务应礼貌收尾。",
+    "description": "开放闲聊（致谢）：礼貌收尾，不触发业务能力。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "无业务意图。",
+    "turns": [
+      {
+        "message": "谢谢你，帮大忙了",
+        "assertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply",
+            "handoff.request"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "chat-goodbye",
+    "category": "CHITCHAT",
+    "judgeIntent": "用户道别；好的服务应礼貌道别。",
+    "description": "开放闲聊（道别）：结束对话，不触发业务能力。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "无业务意图。",
+    "turns": [
+      {
+        "message": "没事了，拜拜",
+        "assertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply",
+            "handoff.request"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "chat-weather",
+    "category": "CHITCHAT",
+    "judgeIntent": "用户问今天天气怎么样（客服系统没有天气能力）；好的服务应诚实说明无法提供，不得编造天气预报。",
+    "description": "开放闲聊（超纲问题）：问天气，客服系统无此能力，应诚实回应而不是编造天气预报。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "无天气能力；考察不编造。",
+    "turns": [
+      {
+        "message": "今天天气怎么样？",
+        "assertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply",
+            "handoff.request"
+          ],
+          "replyMustNotContain": [
+            "晴转多云",
+            "降水概率"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "chat-product-smalltalk",
+    "category": "CHITCHAT",
+    "judgeIntent": "用户夸蓝牙耳机颜值高；好的服务应友好回应，不需要触发任何业务操作。",
+    "description": "开放闲聊（商品闲聊）：夸耳机颜值，非咨询非故障，宽断言。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "无业务意图、无故障词。",
+    "turns": [
+      {
+        "message": "你们这个蓝牙耳机颜值是真的高",
+        "assertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply",
+            "handoff.request"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "chat-impatient-vent",
+    "category": "CHITCHAT",
+    "judgeIntent": "用户轻度抱怨等待有点久但明确表示还好；好的服务应安抚致歉，不需要升级转人工。",
+    "description": "开放闲聊（轻度抱怨）：等久了有点烦但明确说还好，不构成投诉升级诉求，不应误触发转人工。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "话术不含投诉/差评/太差/不满意/生气等升级关键词。",
+    "turns": [
+      {
+        "message": "等得有点久，有点烦，不过还好啦",
+        "assertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply",
+            "handoff.request"
+          ],
+          "replyMustNotContain": [
+            "13812341234"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "chat-then-task",
+    "category": "CHITCHAT",
+    "judgeIntent": "用户先寒暄再查询本人订单 ORD-004 物流；寒暄轮应友好回应，业务轮应完成查询并给出真实物流单号 ZT1111111111。",
+    "description": "闲聊夹真实业务：先寒暄再查单，业务意图应被正确识别并完成（闲聊不能把业务能力聊丢）。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-004 属于 USER-002（ZT1111111111）。",
+    "turns": [
+      {
+        "message": "哈哈你们机器人反应挺快啊",
+        "assertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply",
+            "handoff.request"
+          ]
+        }
+      },
+      {
+        "message": "对了，帮我查下 ORD-004 到哪儿了",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ],
+          "replyMustContain": [
+            "ZT1111111111"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  }
+]

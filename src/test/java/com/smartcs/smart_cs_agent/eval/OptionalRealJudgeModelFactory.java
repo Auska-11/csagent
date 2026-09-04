@@ -15,8 +15,10 @@ import java.time.Duration;
  *
  * 这个类只放在 test 目录下，是因为“真实 Judge 评测”属于离线评测能力，
  * 不是线上客服接口运行时必须依赖的业务功能。
+ *
+ * public 仅供 eval.scenario 包的 M4 真实跑批入口复用同一套配置解析（OpenRouter + temperature 0）。
  */
-class OptionalRealJudgeModelFactory {
+public class OptionalRealJudgeModelFactory {
 
     static final String ENABLED_PROPERTY = "smartcs.eval.real-judge.enabled";
     static final String ASSERT_EXPECTATION_PROPERTY = "smartcs.eval.real-judge.assert-expectation";
@@ -40,7 +42,7 @@ class OptionalRealJudgeModelFactory {
         return booleanValue(ASSERT_EXPECTATION_PROPERTY, "SMARTCS_EVAL_REAL_JUDGE_ASSERT_EXPECTATION", false);
     }
 
-    static ChatLanguageModel create() {
+    public static ChatLanguageModel create() {
         String apiKey = requiredConfig(
                 API_KEY_PROPERTY,
                 "SMARTCS_EVAL_REAL_JUDGE_API_KEY",

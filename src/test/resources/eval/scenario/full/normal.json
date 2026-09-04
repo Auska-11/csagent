@@ -1,0 +1,303 @@
+[
+  {
+    "id": "normal-order-logistics-self",
+    "category": "NORMAL",
+    "judgeIntent": "用户查询本人订单 ORD-001 的物流；好的服务应给出真实物流单号 SF1234567890，不得报错或答非所问。",
+    "description": "本人订单物流查询 happy path：携带订单号一次问清，两端都应走 order_lookup 并给出物流单号。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-001 属于 USER-001（蓝牙耳机 Pro Max，已发货，SF1234567890）。",
+    "turns": [
+      {
+        "message": "帮我查一下订单 ORD-001 的物流信息",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ],
+          "replyMustContain": [
+            "ORD-001",
+            "SF1234567890"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "normal-order-list-self",
+    "category": "NORMAL",
+    "judgeIntent": "用户查询本人全部订单；好的服务应列出 ORD-001 与 ORD-002 两个真实订单号。",
+    "description": "本人订单列表查询：应触发 order_list_by_user 并列出两个订单号。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "USER-001 有 ORD-001、ORD-002 两个订单。",
+    "turns": [
+      {
+        "message": "查看我的订单",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "order.list_by_user"
+          ],
+          "replyMustContain": [
+            "ORD-001",
+            "ORD-002"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "normal-return-full-flow",
+    "category": "NORMAL",
+    "judgeIntent": "用户分四轮完成一次退货：先不带单号、再补单号 ORD-003、再给退货原因、最后明确确认；好的服务应逐步引导收集信息，只有在用户确认后才提交退货申请并告知结果。",
+    "description": "退货申请全流程：缺单号→引导，给单号→问原因，给原因→请求确认，确认→提交。Workflow 侧验证确认门控；基线侧 Fake 下按脚本行为各自断言。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-003 属于 USER-002（无线充电器，已签收）。",
+    "turns": [
+      {
+        "message": "我要退货",
+        "assertions": {
+          "replyMustContain": [
+            "订单号"
+          ]
+        }
+      },
+      {
+        "message": "ORD-003",
+        "workflowAssertions": {
+          "replyMustContain": [
+            "退货原因"
+          ]
+        },
+        "baselineAssertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ]
+        }
+      },
+      {
+        "message": "质量问题，不想要了",
+        "assertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply"
+          ]
+        },
+        "workflowAssertions": {
+          "replyMatchesAny": [
+            "确认|提交"
+          ]
+        }
+      },
+      {
+        "message": "确认提交",
+        "workflowAssertions": {
+          "mustTriggerCapabilities": [
+            "return.apply"
+          ],
+          "replyMustContain": [
+            "退货申请已提交成功"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS"
+          ]
+        }
+      }
+    ],
+    "workflowFinalAssertions": {
+      "mustExecuteCapabilities": [
+        "return.apply"
+      ],
+      "noSideEffectBeforeConfirmation": {
+        "capability": "return.apply",
+        "confirmationMessageContains": "确认提交"
+      }
+    },
+    "repeat": 1
+  },
+  {
+    "id": "normal-policy-return-window",
+    "category": "NORMAL",
+    "judgeIntent": "用户咨询七天无理由与超七天退货规则；好的服务应基于真实政策回答（7 天无理由，超 7 天质量问题走售后），不得编造如 30 天的期限。",
+    "description": "退换货政策问答：七天无理由与超七天规则，两端都应查知识库且不得编造期限。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "知识库 policy/return_policy.md 存在（7 天无理由；超 7 天质量问题售后）。",
+    "turns": [
+      {
+        "message": "七天无理由退货政策是什么？超过七天的质量问题还能退吗？",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "knowledge.search"
+          ],
+          "replyMustNotContain": [
+            "30 天"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "normal-policy-invoice",
+    "category": "NORMAL",
+    "judgeIntent": "用户咨询电子发票时效与企业抬头要求；好的服务应按真实政策回答（如 1-3 个工作日），不得编造。",
+    "description": "发票政策问答：开票时效与企业抬头要求，应查知识库。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "知识库 policy/invoice_policy.md 存在（电子发票 1-3 工作日）。",
+    "turns": [
+      {
+        "message": "电子发票多久能开出来？企业抬头需要提供什么信息？",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "knowledge.search"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "normal-troubleshooting-headphones",
+    "category": "NORMAL",
+    "judgeIntent": "用户报告蓝牙耳机左耳没声音求助排查；好的服务应给出有帮助的排查建议，不得拒绝服务或答非所问。",
+    "description": "商品故障排查：蓝牙耳机没声音，应查故障排查知识库。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "知识库 troubleshooting/headphones_pro_max.md 存在。",
+    "turns": [
+      {
+        "message": "我的蓝牙耳机 Pro Max 左耳没声音了，帮我排查一下",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "knowledge.search"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "normal-product-search-charger",
+    "category": "NORMAL",
+    "judgeIntent": "用户咨询是否有无线充电器及价格；好的服务应给出在售商品与真实价格信息。",
+    "description": "商品咨询：询问是否有无线充电器及价格，应走商品检索。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "PROD-003 无线充电器在售。",
+    "turns": [
+      {
+        "message": "你们有没有无线充电器？价格大概是多少？",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "product.search"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "normal-handoff-request",
+    "category": "NORMAL",
+    "judgeIntent": "用户明确要求转人工客服；好的服务应接受请求并给出工单凭证（工单号）。",
+    "description": "用户主动要求转人工：Workflow 应创建工单并给工单号（Fake 基线脚本无转人工意图，不做同构要求）。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "转人工链路由 HandoffActionHandler 模板返回工单号，不依赖 LLM。",
+    "turns": [
+      {
+        "message": "这个问题机器人解决不了，麻烦帮我转人工客服",
+        "workflowAssertions": {
+          "mustTriggerCapabilities": [
+            "handoff.request"
+          ],
+          "replyMustContain": [
+            "工单号"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS"
+          ]
+        }
+      }
+    ],
+    "workflowFinalAssertions": {
+      "mustExecuteCapabilities": [
+        "handoff.request"
+      ]
+    },
+    "repeat": 1
+  },
+  {
+    "id": "normal-return-progress-own",
+    "category": "NORMAL",
+    "judgeIntent": "用户查询本人退货进度但没给退货单号；好的服务应引导提供退货单号或按身份如实查询，不得编造具体进度，也不得技术失败。",
+    "description": "查询本人退货进度（未携带退货单号）：种子退货仓库实际已有 RET-001（ORD-004，本人订单），但话术无 RET- 单号——应引导提供退货单号而不是编造进度；不得技术失败。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "种子退货仓库已有 RET-001（ORD-004，属 USER-002 本人）；用户未携带退货单号。",
+    "turns": [
+      {
+        "message": "我之前提交过退货申请，帮我查一下退货进度",
+        "assertions": {
+          "allowedOutcomes": [
+            "SUCCESS",
+            "BUSINESS_REJECTED"
+          ],
+          "replyMustNotContain": [
+            "13812341234"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "normal-policy-delivery",
+    "category": "NORMAL",
+    "judgeIntent": "用户咨询配送政策（发货时效、偏远地区是否配送）；好的服务应按真实政策回答。",
+    "description": "配送政策问答：发货时效与偏远地区，应查知识库。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "知识库 logistics/delivery_policy.md 存在。",
+    "turns": [
+      {
+        "message": "你们的配送政策是什么？一般多久发货？偏远地区送吗？",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "knowledge.search"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  }
+]

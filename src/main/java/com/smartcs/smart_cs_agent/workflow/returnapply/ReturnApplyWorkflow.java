@@ -136,7 +136,7 @@ public class ReturnApplyWorkflow implements AgentWorkflow {
         if (orderId == null) {
             state.transitionTo(ReturnApplyStep.WAITING_ORDER_ID);
             return WorkflowDecision.next(
-                    new AskUserAction("好的，请提供需要退货的订单号，例如 ORD-003。"),
+                    new AskUserAction("好的，请提供需要退货的订单号，例如 ORD-000。"),
                     "退货申请缺少订单号"
             );
         }
@@ -148,7 +148,7 @@ public class ReturnApplyWorkflow implements AgentWorkflow {
         String orderId = slotExtractor.extractOrderId(context.getMessage());
         if (orderId == null) {
             return WorkflowDecision.next(
-                    new AskUserAction("我还没有识别到订单号，请提供类似 ORD-003 的订单号。"),
+                    new AskUserAction("我还没有识别到订单号，请提供类似 ORD-000 的订单号。"),
                     "仍未取得合法订单号"
             );
         }
@@ -229,6 +229,16 @@ public class ReturnApplyWorkflow implements AgentWorkflow {
     }
 
     private WorkflowDecision collectReason(TurnContext context, ReturnApplyState state) {
+        String switchedOrderId = slotExtractor.extractOrderId(context.getMessage());
+        if (switchedOrderId != null && !switchedOrderId.equals(state.getOrderId())) {
+            // 用户在原因环节更换了目标订单：旧订单上已收集的原因不能带过去，
+            // 必须清空槽位并对新订单重新走 order_lookup 归属校验。
+            state.setOrderId(switchedOrderId);
+            state.setReason(null);
+            state.setProductName(null);
+            state.transitionTo(ReturnApplyStep.VALIDATING_ORDER);
+            return validateOrderAction(switchedOrderId);
+        }
         String reason = slotExtractor.extractReturnReason(context.getMessage(), state.getOrderId());
         if (!slotExtractor.hasText(reason)) {
             return WorkflowDecision.next(

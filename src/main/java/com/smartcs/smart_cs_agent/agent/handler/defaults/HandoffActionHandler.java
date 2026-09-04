@@ -81,6 +81,11 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
         arguments.put("reason", action.getReason());
         arguments.put("summary", action.getSummary());
 
+        // 与 CapabilityActionHandler 统一 tool_called 词汇：评测只按 tool_called 统计能力触发；
+        // 下面的 handoff_created/handoff_failed 仍保留给 MonitorService，它不统计 tool_called。
+        context.addTrace("tool_called", "调用工具：" + HANDOFF_CAPABILITY,
+                Map.of("capability", HANDOFF_CAPABILITY, "arguments", arguments));
+
         long startedAtNanos = System.nanoTime();
         CapabilityObservation result;
         try {

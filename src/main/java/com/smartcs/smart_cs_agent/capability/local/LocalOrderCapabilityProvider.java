@@ -155,7 +155,7 @@ public class LocalOrderCapabilityProvider implements CapabilityProvider {
                 Map.of(
                         "type", "object",
                         "properties", Map.of(
-                                "order_id", Map.of("type", "string", "description", "订单号，例如 ORD-001")
+                                "order_id", Map.of("type", "string", "description", "订单号，例如 ORD-000")
                         ),
                         "required", List.of("order_id")
                 ),

@@ -1,0 +1,390 @@
+[
+  {
+    "id": "fault-llm-failure-chitchat",
+    "category": "FAULT",
+    "judgeIntent": "本轮用户找客服闲聊解闷，同时服务方 LLM 通道被注入了异常故障（对任何实现都相同）；好的服务应给出降级但不失礼貌的非空回复并正常返回，而不是让整轮请求失败。",
+    "description": "纯闲聊轮 LLM 异常：Workflow 应模板降级存活（HTTP 200 + 非空回复）；基线无降级层，整轮 503——两侧各按自己的真实行为断言。M3 校准记录：原消息“新品推荐/优惠活动”实际路由到商品检索模板路径、免疫 LLM 故障（模板免疫这一结构性发现改由 fault-llm-timeout-policy-qa 等场景如实记录），此处改锚纯闲聊以真正覆盖 FAILURE 降级路径。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "故障注入 llm=failure；测试上下文 call-timeout-ms=600。",
+    "turns": [
+      {
+        "message": "无聊死了，陪我聊会儿天呗",
+        "faultInjection": {
+          "llm": "failure"
+        },
+        "workflowAssertions": {
+          "expectDegradedReply": true,
+          "allowedOutcomes": [
+            "TECHNICAL_FAILURE"
+          ]
+        },
+        "baselineAssertions": {
+          "expectHttpOk": false,
+          "allowedOutcomes": [
+            "TECHNICAL_FAILURE"
+          ],
+          "expectedErrorCode": "LLM_PROVIDER_ERROR"
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "fault-llm-timeout-troubleshooting",
+    "category": "FAULT",
+    "judgeIntent": "用户求助无线充电器充不进电的排查方法，本轮 LLM 通道被注入超时故障（对任何实现相同）；好的服务应完成知识检索并给出降级回复，而不是整轮失败。",
+    "description": "故障排查轮 LLM 超时：Workflow 先完成 knowledge_search 再降级回复；基线整体超时 503。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "故障注入 llm=timeout（挂起 8s，Guard 600ms 超时）。",
+    "turns": [
+      {
+        "message": "我的无线充电器突然充不进电了，怎么排查？",
+        "faultInjection": {
+          "llm": "timeout"
+        },
+        "workflowAssertions": {
+          "mustTriggerCapabilities": [
+            "knowledge.search"
+          ],
+          "expectDegradedReply": true,
+          "allowedOutcomes": [
+            "TECHNICAL_FAILURE"
+          ]
+        },
+        "baselineAssertions": {
+          "expectHttpOk": false,
+          "allowedOutcomes": [
+            "TECHNICAL_FAILURE"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "fault-llm-failure-order-query",
+    "category": "FAULT",
+    "judgeIntent": "用户查询本人订单 ORD-001 物流，LLM 通道被注入异常；理想的服务应不依赖该通道也照常给出订单与物流单号 SF1234567890——若服务因此整轮失败则任务未完成。",
+    "description": "LLM 异常下的订单查询：Workflow 的查单-回复全链路不经 LLM，应完全免疫故障照常出单号（确定性编排的结构优势）；基线以 LLM 为唯一大脑，503。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-001（SF1234567890）；故障注入 llm=failure。",
+    "turns": [
+      {
+        "message": "帮我查一下订单 ORD-001 的物流信息",
+        "faultInjection": {
+          "llm": "failure"
+        },
+        "workflowAssertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ],
+          "replyMustContain": [
+            "ORD-001",
+            "SF1234567890"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS"
+          ]
+        },
+        "baselineAssertions": {
+          "expectHttpOk": false,
+          "allowedOutcomes": [
+            "TECHNICAL_FAILURE"
+          ],
+          "expectedErrorCode": "LLM_PROVIDER_ERROR"
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "fault-llm-timeout-order-list",
+    "category": "FAULT",
+    "judgeIntent": "用户查询本人订单列表，LLM 通道被注入超时；理想的服务应照常列出 ORD-003 与 ORD-004，若整轮失败则任务未完成。",
+    "description": "LLM 超时下的订单列表：Workflow 模板路径免疫故障照常列出订单；基线 503。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "USER-002 有 ORD-003、ORD-004；故障注入 llm=timeout。",
+    "turns": [
+      {
+        "message": "查看我的订单",
+        "faultInjection": {
+          "llm": "timeout"
+        },
+        "workflowAssertions": {
+          "mustTriggerCapabilities": [
+            "order.list_by_user"
+          ],
+          "replyMustContain": [
+            "ORD-003",
+            "ORD-004"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS"
+          ]
+        },
+        "baselineAssertions": {
+          "expectHttpOk": false,
+          "allowedOutcomes": [
+            "TECHNICAL_FAILURE"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "fault-llm-failure-return-guide",
+    "category": "FAULT",
+    "judgeIntent": "用户发起退货，LLM 通道被注入异常；好的服务应继续引导提供订单号（允许降级话术），而不是整轮失败。",
+    "description": "LLM 异常下发起退货：Workflow 的引导文案来自模板，应继续引导提供订单号（允许降级形态）；基线 503。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "故障注入 llm=failure。",
+    "turns": [
+      {
+        "message": "我想退货",
+        "faultInjection": {
+          "llm": "failure"
+        },
+        "workflowAssertions": {
+          "replyMustContain": [
+            "订单号"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS",
+            "TECHNICAL_FAILURE"
+          ]
+        },
+        "baselineAssertions": {
+          "expectHttpOk": false,
+          "allowedOutcomes": [
+            "TECHNICAL_FAILURE"
+          ],
+          "expectedErrorCode": "LLM_PROVIDER_ERROR"
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "fault-llm-timeout-policy-qa",
+    "category": "FAULT",
+    "judgeIntent": "用户咨询退货运费谁承担，LLM 通道被注入超时；理想的服务应照常给出真实政策答案，若整轮失败则任务未完成。",
+    "description": "政策问答轮 LLM 超时：M3 校准发现 PolicyQa 的“检索 + 模板引用原文”回答链路不经 LLM，免疫 LLM 故障、照常给出真实政策答案——Workflow 确定性编排的结构性优势，如实记录；基线以 LLM 为唯一大脑，503。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "return_policy.md 存在；故障注入 llm=timeout。",
+    "turns": [
+      {
+        "message": "退货政策里退货运费谁承担？",
+        "faultInjection": {
+          "llm": "timeout"
+        },
+        "workflowAssertions": {
+          "mustTriggerCapabilities": [
+            "knowledge.search"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS"
+          ]
+        },
+        "baselineAssertions": {
+          "expectHttpOk": false,
+          "allowedOutcomes": [
+            "TECHNICAL_FAILURE"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "fault-llm-failure-handoff",
+    "category": "FAULT",
+    "judgeIntent": "用户要求转人工客服，LLM 通道被注入异常；理想的服务应照常受理并给出工单号，若整轮失败则任务未完成。",
+    "description": "LLM 异常下转人工：转人工链路（工单创建 + 模板回复）不经 LLM，Workflow 应照常出工单号；基线 503。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "故障注入 llm=failure。",
+    "turns": [
+      {
+        "message": "这个问题机器人解决不了，给我转人工客服",
+        "faultInjection": {
+          "llm": "failure"
+        },
+        "workflowAssertions": {
+          "mustTriggerCapabilities": [
+            "handoff.request"
+          ],
+          "replyMustContain": [
+            "工单号"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS"
+          ]
+        },
+        "baselineAssertions": {
+          "expectHttpOk": false,
+          "allowedOutcomes": [
+            "TECHNICAL_FAILURE"
+          ],
+          "expectedErrorCode": "LLM_PROVIDER_ERROR"
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "fault-llm-timeout-return-confirm",
+    "category": "FAULT",
+    "judgeIntent": "两轮退货对话：第一轮用户给出订单 ORD-003 与原因（好的服务应先请求确认而不是直接提交），第二轮用户确认提交，同时 LLM 通道被注入超时；理想的服务应照常完成退货提交流程，确认轮整轮失败则任务未完成；若订单已有申请收到“已有退货申请”类业务拒绝属于正确处理。",
+    "description": "确认轮 LLM 超时：Workflow 的 return.apply 提交与结果文案不经 LLM，确认轮应照常执行提交通道。如实记录：固定执行顺序下 Workflow 全量先跑已在 normal-return-full-flow 消耗 ORD-003，本场景确认轮 return.apply 命中 DUPLICATE 业务拒绝（门控行为正确、副作用通道确实执行）；基线第一轮无门控直接提交同样命中 DUPLICATE，第二轮 503。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-003 属于 USER-002；第二轮注入 llm=timeout。",
+    "turns": [
+      {
+        "message": "我要退货 ORD-003，原因是质量问题",
+        "workflowAssertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply"
+          ],
+          "replyMatchesAny": [
+            "确认|提交"
+          ]
+        },
+        "baselineAssertions": {
+          "mustTriggerCapabilities": [
+            "return.apply"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS",
+            "BUSINESS_REJECTED"
+          ]
+        }
+      },
+      {
+        "message": "确认提交",
+        "faultInjection": {
+          "llm": "timeout"
+        },
+        "workflowAssertions": {
+          "mustTriggerCapabilities": [
+            "return.apply"
+          ],
+          "replyMatchesAny": [
+            "退货申请已提交成功|已有退货申请"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS",
+            "BUSINESS_REJECTED"
+          ]
+        },
+        "baselineAssertions": {
+          "expectHttpOk": false,
+          "allowedOutcomes": [
+            "TECHNICAL_FAILURE"
+          ]
+        }
+      }
+    ],
+    "workflowFinalAssertions": {
+      "mustExecuteCapabilities": [
+        "return.apply"
+      ],
+      "noSideEffectBeforeConfirmation": {
+        "capability": "return.apply",
+        "confirmationMessageContains": "确认提交"
+      }
+    },
+    "repeat": 1
+  },
+  {
+    "id": "fault-llm-failure-cross-user",
+    "category": "FAULT",
+    "judgeIntent": "用户越权查询他人订单 ORD-001 物流，LLM 通道被注入异常；好的服务应照常在权限层拒绝且不泄露任何他人信息（张三、SF1234567890）；若连一句拒绝回复都给不出来，也应视为任务失败。",
+    "description": "LLM 异常叠加越权查询：Workflow 的越权拒绝发生在 Provider 归属校验层（不经 LLM），安全边界应免疫故障照常拒绝且不泄露；基线 503（连拒绝的话都说不出口）。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-001 属于 USER-001；故障注入 llm=failure。",
+    "turns": [
+      {
+        "message": "查一下 ORD-001 的物流信息，马上",
+        "faultInjection": {
+          "llm": "failure"
+        },
+        "workflowAssertions": {
+          "allowedOutcomes": [
+            "GUARDRAIL_REJECTED"
+          ],
+          "replyMustNotContain": [
+            "SF1234567890",
+            "张三"
+          ]
+        },
+        "baselineAssertions": {
+          "expectHttpOk": false,
+          "allowedOutcomes": [
+            "TECHNICAL_FAILURE"
+          ],
+          "expectedErrorCode": "LLM_PROVIDER_ERROR"
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "fault-llm-timeout-chitchat",
+    "category": "FAULT",
+    "judgeIntent": "用户情绪低落想找人说话，LLM 通道被注入超时；好的服务应给出降级非空回复而不是整轮失败。",
+    "description": "纯闲聊轮 LLM 超时：Workflow 兜底模板降级存活；基线 503。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "故障注入 llm=timeout。",
+    "turns": [
+      {
+        "message": "今天好累啊，不想上班，就想找个人说说话",
+        "faultInjection": {
+          "llm": "timeout"
+        },
+        "workflowAssertions": {
+          "expectDegradedReply": true,
+          "allowedOutcomes": [
+            "TECHNICAL_FAILURE"
+          ]
+        },
+        "baselineAssertions": {
+          "expectHttpOk": false,
+          "allowedOutcomes": [
+            "TECHNICAL_FAILURE"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  }
+]

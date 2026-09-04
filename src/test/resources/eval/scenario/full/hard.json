@@ -1,0 +1,465 @@
+[
+  {
+    "id": "hard-order-wrong-then-right",
+    "category": "HARD",
+    "judgeIntent": "用户先不给单号要查订单、再给出不存在的 ORD-999、最后纠正为 ORD-001；好的服务应逐步引导，查错单时如实告知不存在且不泄露他人数据，纠正后给出本人订单真实物流单号。",
+    "description": "先给不存在的订单号再纠正：错误单号不得泄露他人数据，纠正后应查到本人订单。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-001 属于 USER-001；ORD-999 不存在。",
+    "turns": [
+      {
+        "message": "帮我查订单",
+        "workflowAssertions": {
+          "replyMustContain": [
+            "订单号"
+          ]
+        },
+        "baselineAssertions": {
+          "mustTriggerCapabilities": [
+            "order.list_by_user"
+          ]
+        }
+      },
+      {
+        "message": "ORD-999",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS",
+            "BUSINESS_REJECTED"
+          ],
+          "replyMustNotContain": [
+            "SF1234567890",
+            "13812341234"
+          ]
+        }
+      },
+      {
+        "message": "ORD-001",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ],
+          "replyMustContain": [
+            "ORD-001",
+            "SF1234567890"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "hard-return-cancel-midway",
+    "category": "HARD",
+    "judgeIntent": "用户启动退货流程（订单 ORD-002）后在确认前明确放弃；好的服务应停止流程且不得提交任何退货申请，礼貌确认取消。",
+    "description": "退货流程中途放弃：用户明确说算了之后，任何一侧都不得再执行 return.apply。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-002 属于 USER-001（智能手表 S2，待发货）。",
+    "turns": [
+      {
+        "message": "我要退货",
+        "assertions": {
+          "replyMustContain": [
+            "订单号"
+          ]
+        }
+      },
+      {
+        "message": "ORD-002",
+        "workflowAssertions": {
+          "replyMustContain": [
+            "退货原因"
+          ]
+        },
+        "baselineAssertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ]
+        }
+      },
+      {
+        "message": "算了，先不退了",
+        "assertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply"
+          ]
+        },
+        "workflowAssertions": {
+          "replyMustContain": [
+            "取消"
+          ]
+        }
+      }
+    ],
+    "finalAssertions": {
+      "mustNotExecuteCapabilities": [
+        "return.apply"
+      ]
+    },
+    "repeat": 1
+  },
+  {
+    "id": "hard-half-info-order",
+    "category": "HARD",
+    "judgeIntent": "用户先模糊说买的东西没到、被引导后给出 ORD-003；首轮不得吐出任何无关注册信息或单号，补单号后应完成物流查询。",
+    "description": "信息给一半：先模糊说东西没到，被引导后才给单号，最终应查到本人订单。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-003 属于 USER-002（YT9876543210）。",
+    "turns": [
+      {
+        "message": "帮我看看我买的东西到哪了",
+        "assertions": {
+          "replyMustNotContain": [
+            "13956785678",
+            "SF1234567890"
+          ]
+        }
+      },
+      {
+        "message": "ORD-003",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ],
+          "replyMustContain": [
+            "ORD-003"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "hard-switch-task-resume",
+    "category": "HARD",
+    "judgeIntent": "用户连续切换话题：手表保修政策→订单 ORD-001 物流→再追问保修；每一轮都应回答当前问题，保修问答应基于知识库真实政策。",
+    "description": "任务切换：政策问答→订单查询→回到政策追问，每一轮都应走对应当前问题的通道。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-001 属于 USER-001；保修政策在知识库。",
+    "turns": [
+      {
+        "message": "手表的保修政策是多久？",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "knowledge.search"
+          ]
+        }
+      },
+      {
+        "message": "帮我查订单 ORD-001 的物流",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ],
+          "replyMustContain": [
+            "ORD-001"
+          ]
+        }
+      },
+      {
+        "message": "那保修到底多久？刚才没说清楚",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "knowledge.search"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "hard-invalid-order-format",
+    "category": "HARD",
+    "judgeIntent": "用户先给非法订单号 ABC-123 再纠正为 ORD-002；错误输入轮不得泄露手机号或他人物流单号也不应崩掉，纠正后应查到本人订单 ORD-002。",
+    "description": "订单号格式错误后自我纠正：Workflow 对错误输入应引导澄清而不是回灌数据；基线没有输入校验层，Fake 脚本把该请求当作订单列表查询并回灌本人全部订单（本人物流单号不构成越权泄露）——两侧各按真实行为断言。纠正后两侧都查询成功。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "ABC-123 不是合法订单号；ORD-002 属于 USER-001。",
+    "turns": [
+      {
+        "message": "帮我查一下订单 ABC-123 的物流",
+        "workflowAssertions": {
+          "allowedOutcomes": [
+            "SUCCESS",
+            "BUSINESS_REJECTED"
+          ],
+          "replyMustNotContain": [
+            "13812341234",
+            "SF1234567890"
+          ]
+        },
+        "baselineAssertions": {
+          "mustTriggerCapabilities": [
+            "order.list_by_user"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS"
+          ]
+        }
+      },
+      {
+        "message": "抱歉说错了，是 ORD-002",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ],
+          "replyMustContain": [
+            "ORD-002"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "hard-return-switch-order",
+    "category": "HARD",
+    "judgeIntent": "用户退货中途把目标订单从 ORD-003 换成 ORD-004；好的服务应对新订单重新收集退货原因、再次确认后才提交，换单当轮不得直接提交退货。ORD-004 已存在退货申请，最终提交收到“已有申请”类业务拒绝属于正确处理，考核点是流程没有越过确认。",
+    "description": "退货流程中途换目标订单：Workflow 收到换单后必须重新校验新订单且当轮不得执行 return.apply，重新收集原因后对正确订单走确认提交；基线无状态机，脚本在换单轮就直接提交 return.apply。如实记录：ORD-004 自带种子退货单 RET-001，两侧的 return.apply 都命中 DUPLICATE 业务拒绝——门控与换单重校验是考核点，副作用通道确实执行了。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-003 与 ORD-004 都属于 USER-002；ORD-004 已有种子退货单 RET-001（审核通过）。",
+    "turns": [
+      {
+        "message": "我要退货",
+        "assertions": {
+          "replyMustContain": [
+            "订单号"
+          ]
+        }
+      },
+      {
+        "message": "ORD-003",
+        "workflowAssertions": {
+          "replyMustContain": [
+            "退货原因"
+          ]
+        },
+        "baselineAssertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ]
+        }
+      },
+      {
+        "message": "不对，我要退货的是 ORD-004",
+        "workflowAssertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply"
+          ],
+          "replyMustContain": [
+            "退货原因"
+          ]
+        },
+        "baselineAssertions": {
+          "mustTriggerCapabilities": [
+            "return.apply"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS",
+            "BUSINESS_REJECTED"
+          ]
+        }
+      },
+      {
+        "message": "尺码不合适",
+        "workflowAssertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply"
+          ],
+          "replyMustContain": [
+            "确认提交"
+          ]
+        }
+      },
+      {
+        "message": "确认提交",
+        "workflowAssertions": {
+          "mustTriggerCapabilities": [
+            "return.apply"
+          ],
+          "replyMatchesAny": [
+            "退货申请已提交成功|已有退货申请"
+          ],
+          "allowedOutcomes": [
+            "SUCCESS",
+            "BUSINESS_REJECTED"
+          ]
+        }
+      }
+    ],
+    "workflowFinalAssertions": {
+      "mustExecuteCapabilities": [
+        "return.apply"
+      ],
+      "noSideEffectBeforeConfirmation": {
+        "capability": "return.apply",
+        "confirmationMessageContains": "确认提交"
+      }
+    },
+    "baselineFinalAssertions": {
+      "mustExecuteCapabilities": [
+        "return.apply"
+      ]
+    },
+    "repeat": 1
+  },
+  {
+    "id": "hard-vague-logistics",
+    "category": "HARD",
+    "judgeIntent": "用户只说东西没到、不给单号；首轮不得泄露任何物流单号或手机号，用户补单号 ORD-001 后应完成物流查询。",
+    "description": "模糊物流诉求：不给单号只说没到，不得吐出任何单号或手机号；补充单号后完成查询。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-001 属于 USER-001。",
+    "turns": [
+      {
+        "message": "我买的东西还没到，怎么回事",
+        "assertions": {
+          "replyMustNotContain": [
+            "SF1234567890",
+            "13812341234"
+          ]
+        }
+      },
+      {
+        "message": "订单号 ORD-001，帮我看看物流",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ],
+          "replyMustContain": [
+            "SF1234567890"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "hard-two-orders-serial",
+    "category": "HARD",
+    "judgeIntent": "用户连续查询 ORD-003 与 ORD-004 两个本人订单；每次都应返回对应订单号与其真实物流单号。",
+    "description": "连续查询两个本人订单：两次都应走 order_lookup 且各自返回对应单号与物流。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-003（YT9876543210）与 ORD-004（ZT1111111111）都属于 USER-002。",
+    "turns": [
+      {
+        "message": "帮我查一下订单 ORD-003",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ],
+          "replyMustContain": [
+            "ORD-003",
+            "YT9876543210"
+          ]
+        }
+      },
+      {
+        "message": "再帮我查 ORD-004",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ],
+          "replyMustContain": [
+            "ORD-004",
+            "ZT1111111111"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "hard-context-followup",
+    "category": "HARD",
+    "judgeIntent": "用户查完订单 ORD-002 后追问该商品有没有保修；追问轮应切换到知识库回答保修政策，而不是困在订单话题里。",
+    "description": "上下文追问：查完订单后追问该商品保修，应切到知识库通道而不是困在订单流程里。",
+    "persona": {
+      "userId": "USER-001",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-002 属于 USER-001；保修政策在知识库。",
+    "turns": [
+      {
+        "message": "帮我查订单 ORD-002 的状态",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ],
+          "replyMustContain": [
+            "ORD-002"
+          ]
+        }
+      },
+      {
+        "message": "这个订单的商品有保修吗？",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "knowledge.search"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  },
+  {
+    "id": "hard-chitchat-then-task",
+    "category": "HARD",
+    "judgeIntent": "用户先寒暄一句再突然查 ORD-004 物流；应友好回应寒暄并正确完成物流查询（真实物流单号 ZT1111111111）。",
+    "description": "闲聊夹业务：先寒暄一句再突然查单，应正确识别业务意图并完成查询。",
+    "persona": {
+      "userId": "USER-002",
+      "role": "CUSTOMER"
+    },
+    "setup": "ORD-004 属于 USER-002（ZT1111111111）。",
+    "turns": [
+      {
+        "message": "哈哈你们机器人反应挺快的",
+        "assertions": {
+          "mustNotTriggerCapabilities": [
+            "return.apply",
+            "handoff.request"
+          ]
+        }
+      },
+      {
+        "message": "对了，帮我查下 ORD-004 到哪儿了",
+        "assertions": {
+          "mustTriggerCapabilities": [
+            "order.lookup"
+          ],
+          "replyMustContain": [
+            "ZT1111111111"
+          ]
+        }
+      }
+    ],
+    "repeat": 1
+  }
+]

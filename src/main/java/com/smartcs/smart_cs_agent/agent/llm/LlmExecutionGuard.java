@@ -1,6 +1,7 @@
 package com.smartcs.smart_cs_agent.agent.llm;
 
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
+import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
@@ -134,6 +135,68 @@ public class LlmExecutionGuard {
         }
     }
 
+    /**
+     * 工具感知版本的 LLM 调用：模型可以返回文本，也可以返回 ToolExecutionRequest。
+     *
+     * <p>与 {@link #generate} 共享同一线程池、单次超时和错误码语义，仅验证规则不同：
+     * 一次合法的工具调用轮次要么有非空文本，要么至少携带一个工具执行请求，两者都为空才算空响应。
+     * 基线 Function Calling Agent（eval 模块）经由本方法调用与 Workflow 侧完全相同的模型 Bean，
+     * 保证对照实验中两侧的超时纪律一致。调用方负责把剩余 Turn 预算换算成 budgetNanos 传入。</p>
+     */
+    public ToolAwareInvocationResult generateWithTools(ChatLanguageModel chatModel,
+                                                       List<ChatMessage> messages,
+                                                       List<ToolSpecification> toolSpecifications,
+                                                       long budgetNanos) {
+        Objects.requireNonNull(chatModel, "chatModel cannot be null");
+        Objects.requireNonNull(messages, "messages cannot be null");
+        Objects.requireNonNull(toolSpecifications, "toolSpecifications cannot be null");
+
+        long effectiveBudgetNanos = Math.min(callTimeoutNanos, Math.max(0, budgetNanos));
+        long startedAtNanos = System.nanoTime();
+        if (effectiveBudgetNanos <= 0) {
+            return toolAwareFailure("LLM_TURN_BUDGET_EXCEEDED", startedAtNanos, effectiveBudgetNanos);
+        }
+
+        Future<Response<AiMessage>> future;
+        try {
+            List<ChatMessage> immutableMessages = List.copyOf(messages);
+            List<ToolSpecification> immutableTools = List.copyOf(toolSpecifications);
+            future = executor.submit(() -> chatModel.generate(immutableMessages, immutableTools));
+        } catch (RejectedExecutionException saturated) {
+            return toolAwareFailure("LLM_EXECUTOR_SATURATED", startedAtNanos, effectiveBudgetNanos);
+        }
+
+        try {
+            Response<AiMessage> response = future.get(effectiveBudgetNanos, TimeUnit.NANOSECONDS);
+            if (response == null || response.content() == null) {
+                return toolAwareFailure("LLM_EMPTY_RESPONSE", startedAtNanos, effectiveBudgetNanos);
+            }
+            AiMessage content = response.content();
+            boolean hasText = content.text() != null && !content.text().isBlank();
+            if (!hasText && !content.hasToolExecutionRequests()) {
+                return toolAwareFailure("LLM_EMPTY_RESPONSE", startedAtNanos, effectiveBudgetNanos);
+            }
+            return new ToolAwareInvocationResult(
+                    true,
+                    content,
+                    null,
+                    elapsedMillis(startedAtNanos),
+                    nanosToCeilingMillis(effectiveBudgetNanos)
+            );
+        } catch (TimeoutException timeout) {
+            future.cancel(true);
+            return toolAwareFailure("LLM_CALL_DEADLINE_EXCEEDED", startedAtNanos, effectiveBudgetNanos);
+        } catch (InterruptedException interrupted) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            return toolAwareFailure("LLM_EXECUTION_INTERRUPTED", startedAtNanos, effectiveBudgetNanos);
+        } catch (CancellationException cancelled) {
+            return toolAwareFailure("LLM_EXECUTOR_INTERRUPTED", startedAtNanos, effectiveBudgetNanos);
+        } catch (ExecutionException executionFailure) {
+            return toolAwareFailure("LLM_PROVIDER_ERROR", startedAtNanos, effectiveBudgetNanos);
+        }
+    }
+
     @PreDestroy
     public void shutdown() {
         executor.shutdownNow();
@@ -166,6 +229,18 @@ public class LlmExecutionGuard {
         );
     }
 
+    private ToolAwareInvocationResult toolAwareFailure(String errorCode,
+                                                       long startedAtNanos,
+                                                       long effectiveBudgetNanos) {
+        return new ToolAwareInvocationResult(
+                false,
+                null,
+                errorCode,
+                elapsedMillis(startedAtNanos),
+                nanosToCeilingMillis(Math.max(0, effectiveBudgetNanos))
+        );
+    }
+
     private long elapsedMillis(long startedAtNanos) {
         return Math.max(0, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos));
     }
@@ -188,6 +263,16 @@ public class LlmExecutionGuard {
     public record LlmInvocationResult(
             boolean success,
             String text,
+            String errorCode,
+            long durationMs,
+            long budgetMs
+    ) {
+    }
+
+    /** 工具感知调用的结果：content 为模型原始 AiMessage（含文本或工具执行请求）。 */
+    public record ToolAwareInvocationResult(
+            boolean success,
+            AiMessage content,
             String errorCode,
             long durationMs,
             long budgetMs
