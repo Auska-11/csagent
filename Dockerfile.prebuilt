@@ -1,0 +1,26 @@
+# 预打包路径：JAR 已在开发机构建完成（pom 默认把根目录 skills/ 打进
+# classpath:/skills/，frontend profile 把 React 产物叠加进 static/），
+# 服务器只做运行时镜像，避免国内网络下 node/npm/maven 全量重建。
+#
+# 开发机：sh mvnw -DskipTests package
+# 服务器：docker compose -f docker-compose.yml -f docker-compose.prebuilt.yml up -d --build
+FROM eclipse-temurin:17-jre
+
+WORKDIR /app
+
+# compose 使用 readiness 探针判断应用是否可以接收流量。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV SERVER_PORT=8080
+ENV JAVA_OPTS=""
+
+COPY target/smart-cs-agent-0.0.1-SNAPSHOT.jar app.jar
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=6 \
+    CMD curl --fail --silent http://localhost:8080/actuator/health/readiness > /dev/null || exit 1
+
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

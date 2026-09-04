@@ -3,7 +3,8 @@ services:
     image: mysql:8.4.0
     container_name: smart-cs-mysql
     ports:
-      - "${SMARTCS_MYSQL_PORT:-3307}:3306"
+      # 数据面只绑回环：公网服务器上不暴露 3306；确需外部访问再手动改绑定。
+      - "127.0.0.1:${SMARTCS_MYSQL_PORT:-3307}:3306"
     environment:
       MYSQL_DATABASE: ${SMARTCS_MYSQL_DATABASE:-smart_cs_agent}
       MYSQL_USER: ${SMARTCS_MYSQL_USER:-smartcs}
@@ -24,7 +25,8 @@ services:
     image: qdrant/qdrant:v1.9.7
     container_name: smart-cs-qdrant
     ports:
-      - "6333:6333"
+      # 同 MySQL：Qdrant 只绑回环（RAG_MODE=local 时甚至不依赖它）。
+      - "127.0.0.1:${SMARTCS_QDRANT_PORT:-6333}:6333"
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
@@ -107,6 +109,12 @@ services:
       SMARTCS_JDBC_SOCKET_TIMEOUT_MS: ${SMARTCS_JDBC_SOCKET_TIMEOUT_MS:-10000}
       SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS: ${SMARTCS_JDBC_QUERY_TIMEOUT_SECONDS:-5}
       SMARTCS_JDBC_POOL_MAX_SIZE: ${SMARTCS_JDBC_POOL_MAX_SIZE:-10}
+      # 闲鱼侧车通道：默认关闭；启用时端点才存在，服务令牌须与 sidecar/xianyu/.env
+      # 的 CS_AGENT_TOKEN 一致（≥32 字节，启动期强度校验）。
+      SMARTCS_XIANYU_ENABLED: ${SMARTCS_XIANYU_ENABLED:-false}
+      SMARTCS_XIANYU_SERVICE_TOKEN: ${SMARTCS_XIANYU_SERVICE_TOKEN:-}
+      # 小内存服务器（2C/3.4G）必须给 JVM 封顶；本地大内存可自行覆盖。
+      JAVA_OPTS: ${SMARTCS_JAVA_OPTS:--Xmx768m -Xms256m}
     depends_on:
       mysql:
         condition: service_healthy
@@ -118,6 +126,28 @@ services:
       timeout: 3s
       retries: 6
       start_period: 30s
+    restart: unless-stopped
+
+  # 闲鱼侧车（BRIDGE 模式）：默认不启动，须显式 `--profile xianyu`。
+  # 前提：sidecar/xianyu/.env 已就位（COOKIES_STR/CS_AGENT_TOKEN），
+  # 且 agent 侧 SMARTCS_XIANYU_ENABLED=true + 同一服务令牌。
+  # 本地 Mac 与服务器同时运行侧车会用同一卖家 cookie 互踢，切换见部署手册。
+  smart-cs-sidecar:
+    profiles: ["xianyu"]
+    build:
+      context: ./sidecar/xianyu
+    image: smart-cs-sidecar:latest
+    container_name: smart-cs-sidecar
+    env_file:
+      - ./sidecar/xianyu/.env
+    environment:
+      # 容器网络内经服务名访问 agent，覆盖 .env 里指向本机 127.0.0.1 的配置
+      CS_AGENT_URL: http://smart-cs-agent:8080
+      SIDECAR_MODE: BRIDGE
+      TZ: Asia/Shanghai
+    depends_on:
+      smart-cs-agent:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

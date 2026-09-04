@@ -1,0 +1,7 @@
+# 密钥与本地环境绝不进镜像（.env 由 compose env_file 注入运行容器）
+.env
+.venv
+__pycache__
+*.pyc
+tests
+data

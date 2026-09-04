@@ -1,0 +1,8 @@
+# 让 smart-cs-agent 使用预打包镜像（Dockerfile.prebuilt），
+# 跳过国内服务器上的 node/maven 多阶段构建。
+# 用法：docker compose -f docker-compose.yml -f docker-compose.prebuilt.yml up -d --build
+services:
+  smart-cs-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.prebuilt
