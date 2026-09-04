@@ -36,7 +36,8 @@
 | --- | --- | --- |
 | 第一阶段 | 场景化对照实验（基线 Agent + 场景集 + 对比报告） | ✅ 完成（M1-M4 全部完成，报告见 [客服Agent-77](客服Agent-77-真实模型对照实验报告.md)） |
 | 第二阶段 | 渠道适配层（ChannelAdapter SPI；官方 API 渠道为可选项） | ⏸ 暂缓，待第一阶段完成 |
-| 第三阶段 | 闲鱼侧车接入（真实流量运行记录） | 📋 方案已定，待第一阶段后细化实施 |
+| 第三阶段 | 闲鱼侧车接入（真实流量运行记录） | 🔄 方案已定稿（2026-09-04，X1-X5 见 §5.3）；等小号就绪，X2/X4 不依赖账号可先行 |
+| 体验优化迭代 | 混合架构：对照实验三个诊断点的修复（对抗拒绝话术 / 幻觉类检索边界 / 闲聊误路由） | 📋 已立项（2026-09-04 复盘确认，见 §6），排在第三阶段后执行 |
 
 依赖关系：第一阶段的场景集和 Runner 是基础设施，第三阶段接入后的真实对话质检可以复用同一套断言体系。
 
@@ -181,22 +182,55 @@
 
 侧车独立进程、可随时关闭；闲鱼协议失效只影响侧车，主项目零损失。
 
-### 5.2 四个设计点（初版倾向，待细化）
+### 5.2 五个设计点（2026-09-04 探讨定稿）
 
-1. **商品上下文**：每个闲鱼商品生成一份 knowledge Markdown，走现有商品咨询 RAG——"挂新商品 = 丢一份新文档"，与"新商品分钟级接入"叙事衔接。
-2. **议价场景**：参考其阶梯降价策略，新建 bargain Skill Package + Workflow（可插拔的又一次现场证明）。
-3. **人工接管**：买家发切换关键词 → 映射到本项目 handoff 状态，Agent 停止自动回复。
-4. **风险控制**：小号、便宜商品、自动回复免责话术、侧车随时可关、不做任何自动下单。
+1. **身份映射（已定）**：每个闲鱼买家 → 合成用户 `USER-XY-{hash(buyerId)}`（CUSTOMER 角色、专属 xianyu 租户）。Java 侧新增幂等的"映射 + token 签发"内部端点——**这是 Java 侧唯一必要改动**。多轮状态、越权防护、Trace/Monitor 全部免费复用；买家查订单自然得到"未查到您的订单"，优雅降级本身就是演示点。
+2. **商品知识（已定）**：挂单商品 → 脚本生成 knowledge Markdown（标题 + 描述 + 卖家备注）→ 走现有知识入库 API。"挂新商品 = 丢一份新文档"，分钟级接入叙事衔接。刻意**不**把商品文本塞进消息正文（会污染 WorkflowRouter 规则评分）。
+3. **副作用开关（已定：v1 关闭）**：xianyu 租户只开问答 + 只读，`return.apply`/工单类能力按租户屏蔽（CapabilityGateway 租户维度策略，面试点："渠道能力面配置"）。真实买家在真实平台说"确认退货"却写进 demo 库，语义混乱且无法向买家交代。
+4. **转人工（已定：两层）**：保留侧车原生句号切换（运营侧总开关，零风险）；Agent 的 HANDOFF action 触发时，侧车按响应标志位对该会话暂停自动回复。v1 从简：handoff 回复模板 + 标志位。
+5. **风控（已定）**：小号；数码配件类低价商品（与知识库/故障排查场景同域，最大化 Troubleshooting 演示价值）；LLM 3.5s 全局节流（复用第一阶段）；站外联系方式过滤（移植其 `_safe_filter`：微信/QQ/支付宝/银行卡/线下）；自动回复免责话术；不做任何自动下单/改价。
 
-### 5.3 待办
+议价场景（bargain Skill Package + Workflow，参考其阶梯降价与轮次动态温度）：**推迟到 v2**（2026-09-04 决策）。届时作为"新场景 = 新增一个 Skill 包目录"的可插拔性现场证明。
 
-- [ ] Fork/裁剪 XianyuAutoAgent，验证消息监听链路
-- [ ] 会话映射与身份方案（buyerId → 本项目 userId/租户）
-- [ ] 商品知识文档生成脚本
-- [ ] 真实对话脱敏存档（复用第一阶段断言体系做质检）
-- [ ] 运行记录整理为面试素材
+### 5.3 里程碑（2026-09-04 定稿）
 
-## 6. 动态记录
+| # | 内容 | 依赖小号？ | 状态 |
+| --- | --- | --- | --- |
+| X1 | 无脑侧车：fork 固定 commit + 砍掉 LLM + echo 模式实测协议链路 | 代码裁剪否；echo 实测**是** | ⏳ |
+| X2 | Java 最小适配：xianyu 用户映射/签发端点 + 商品知识生成脚本 | 否 | ⏳ |
+| X3 | 端到端：真消息 → `/api/chat/send` → 回复回闲鱼；多轮上下文 + 商品文档生效 | 是 | ⏳ |
+| X4 | 加固：副作用租户屏蔽、HANDOFF 暂停自动回复、站外联系方式过滤、免责话术 | 否 | ⏳ |
+| X5 | 真实流量运行 + 脱敏存档 + 复用第一阶段断言体系质检 + 面试素材 | 是 | ⏳ |
+
+排序策略：小号就绪前先做 X1 代码裁剪与 X2、X4（均不依赖账号），账号就绪后立即 X1 echo 实测 → X3 → X5。
+
+### 5.4 小号准备清单（用户待办，跨窗口同步用）
+
+1. **注册**：新手机号注册闲鱼（可挂靠小支付宝实名），**不复用常用账号**——自动回复特征可能触发风控连坐，常用账号不值得冒险。
+2. **养号**：正常浏览、签到 2-3 天再挂商品，降低新号风控权重。
+3. **商品**：1-3 件数码配件（耳机/充电器/数据线），低价位（¥9.9-¥39），描述写清规格——它们既是挂单商品，也是商品知识文档的素材，还能让买家咨询自然命中故障排查场景。
+4. **Cookie**：网页版闲鱼 F12 → Network → 任一请求的完整 cookies 串，配到侧车 `.env`（不进仓库）。
+5. **心理预期**：账号被限制是可接受损失；侧车随时可关，主项目零损失。
+
+## 6. 迭代计划：混合架构体验优化（已立项，排在第三阶段后）
+
+2026-09-04 第一阶段复盘结论：架构骨架（安全通道、确认门控、故障降级、政策接地）被对照实验证实，但体验层三个诊断点失分（语义完成 58% vs 基线 74%，均分 3.90 vs 4.31）。修复方向不是换架构，而是**把生成层放进骨架**：确定性代码决定"拒绝什么、执行什么、引用哪段知识"，模型负责"怎么措辞"。
+
+三个修复点（与 77 号报告 §3 / §6 对应）：
+
+1. **对抗拒绝话术生成**。规则路由识别出攻击/越权意图后不再回业务模板（"请提供订单号"式答非所问），改为在 SECURITY_DENIED 通道内由 LLM 基于拒绝原因生成自然话术（拒绝 + 原因 + 替代路径）。安全决策仍是代码，模型只写措辞。
+2. **幻觉类检索边界**。`QueryRewriter` 域词扩展使政策类话术必然召回自有文档，PolicyQa"没有找到明确规则"分支不可达（77 号报告 §3.3 根因），导致问不存在政策时引用无关原文。修复：召回/重排判无关时走"确认没有这项政策"的诚实分支，而不是硬引用。
+3. **闲聊误路由**。商品类闲聊（"这耳机颜值真高"）被路由到商品检索回了商品清单。修复：闲聊匹配优先级或商品检索意图门槛。
+
+验收标准（防"修体验破安全"）：
+
+- 第一阶段 60 场景确定性断言 **100% 不得回退**（安全红线，回归即跑）；
+- 同模型同场景重跑对照，ADVERSARIAL / HALLUCINATION 语义分显著抬升，总均分追平或反超基线；
+- 结果追加为 77 号报告的 v2 节，形成"测量 → 诊断 → 修复 → 复测"完整闭环叙事。
+
+触发条件：第三阶段 v1（X1-X3）落地后启动，避免两条线同时改生产链路。
+
+## 7. 动态记录
 
 | 日期 | 事项 |
 | --- | --- |
@@ -205,3 +239,5 @@
 | 2026-09-04 | **M2 完成**。基线 Agent 落在 `eval.baseline` 独立包（不进生产主链路），共 6 个类：`BaselineToolCatalog`（工具清单从 `McpServerAdapter` 同一数据源导出，与 `GET /api/mcp/tools` 一字不差；能力 ID `order.lookup` → 函数名 `order_lookup` 映射带碰撞校验、双向可逆，当前导出 9 个能力）+ `BaselineSystemPrompt`（人设 + 工作规范 7 条 + 退货/发票/保修/转人工政策全文从 classpath 加载）+ `BaselineConversationStore`（全量历史朴素策略，FIFO 上限 400 条——效率指标的被测变量）+ `BaselineFunctionCallingAgent`（单循环：system + 全量历史 → 模型 → tool call → 经同一 `CapabilityGateway` 执行 → 结果回填 → 最终回复；步数上限 8 / 整轮预算 30s 可配）+ `BaselineChatController`（`POST /api/chat/baseline/send`）。公平性设计决策（全部写在代码注释里可审查）：① 端点放 `/api/chat/**` 而非 `/api/eval/**`，使 CUSTOMER 身份的 persona（如 USER-002）两边可用同身份（公平原则 5）；② LLM 调用复用生产 `LlmExecutionGuard`（新增工具感知重载 `generateWithTools`，共享线程池/超时/错误码语义，公平原则 2）；③ 幂等键策略为每次调用唯一（`baseline:{convId}:{UUID}:{capId}`）——Workflow 侧会话级稳定键依赖状态机，此差异属于被测变量本身；④ 单循环无确认门控、无模板降级：LLM 失败整轮 503 并透出真实 errorCode（LLM_PROVIDER_ERROR 等），进共享 MonitorService 的失败指标；⑤ Trace 事件词汇与 Workflow 侧完全一致（turn_started/llm_called/tool_called/tool_observed/final_answer/turn_deadline_exceeded），保证同口径分类。`ScriptedFaultChatModel` 升级支持工具调用脚本（确定性 Fake LLM，注释明确"是测试夹具不是能力声明，真实数字 M4 产出"）。新增 `BaselineAgentEvaluationTest` 7 项：工具目录与 MCP catalog 集合一致且可逆（公平原则 3）、共享 Gateway 查单转述、跨用户越权在 Provider 边界被拦（ORDER_OWNERSHIP_MISMATCH 且不泄露张三/手机号/运单号）、无确认门控下 return.apply 一轮内直接执行（诚实记录被测行为）、LLM 失败整轮 503 无降级、全量历史跨轮传递、未认证 401。结果 7/7 全过；全量回归 501 项全绿（494 + 新增 7）。ScenarioRunner 已参数化端点（WORKFLOW_ENDPOINT/BASELINE_ENDPOINT），为 M3 双跑就绪。下一步 M3：场景扩到 60 条 + 盲评 Judge + 3 次重复双跑机制。 |
 | 2026-09-04 | **M3 完成**。60 条场景六类 10/10/12/8/10/10（ADVERSARIAL 与 HALLUCINATION repeat=3 取多数票）+ 双跑盲评 `ScenarioComparisonEvaluationTest`：同一 Runner 按文件序（normal→hard→adversarial→hallucination→fault→chitchat）分别全量跑 `/api/chat/send` 与 `/api/chat/baseline/send`，断言三分（common/workflowAssertions/baselineAssertions：合并取并集，expectHttpOk/expectDegradedReply 按侧覆盖）；Judge 双实现——CI 用 `HeuristicBlindJudge`（确定性），真模型用 `LlmBlindJudge`（M4 启用）；judge prompt 匿名 Agent A/B 且有专门测试保证不泄露身份；报告落盘 `target/eval-reports/scenario-comparison.json`，本轮新增逐轮明细（状态码/outcome/能力触发/回复预览/违规项）用于校准诊断。**校准过程即发现，全部如实记录**：① trace 词汇统一——`HandoffActionHandler` 补发 `tool_called`（评测只按 tool_called 统计能力触发；MonitorService 不统计该类型，无双重计数），handoff 类场景 mustTrigger 恢复可断言；② 模板免疫矩阵——订单查询/订单列表/退货确认提交/转人工工单/PolicyQa"检索+模板引用原文"五条链路不经 LLM，LLM 故障注入下照常 SUCCESS（对应 fault 场景改按"结构性优势"如实断言）；真正走 LLM 降级的只有故障排查答案合成与纯闲聊两条链路（expectDegradedReply + TECHNICAL_FAILURE），fault-llm-failure-chitchat 原消息"新品推荐"实际路由商品检索模板（免疫），已改锚纯闲聊以真正覆盖 FAILURE 降级路径；③ 副作用执行顺序语义——ORD-004 自带种子退货单 RET-001、workflow 全量先跑在 normal-return-full-flow 消耗 ORD-003，因此基线无门控的 return.apply（adv-confirm-bypass、hard-return-switch-order t3、fault-llm-timeout-return-confirm t1）全部命中 DUPLICATE 业务拒绝：无门控通道确实执行了（Trace 可证），业务侧被幂等拦截——断言允许 BUSINESS_REJECTED 并在场景描述写明执行顺序；④ 主链路真实修复——`ReturnApplyWorkflow.collectReason` 增加换单检测（原因环节换目标订单→清空原因/商品槽位→重新 order.lookup 归属校验→同轮 AskUser 重新收集），hard-return-switch-order 重设计为五轮（发起/给单/换单/原因/确认）验证通过；⑤ 模板示例单号卫生——OrderQueryWorkflow/ReturnApplyWorkflow/LocalOrderCapabilityProvider 三处模板示例 ORD-001/ORD-003 统一改 ORD-000，消除 adv-fake-support-identity"泄露 ORD-001"假阳性（模板示例 ≠ 数据泄露）；⑥ `ScriptedFaultChatModel` 分支重排（知识库关键词优先于订单分支，真实模型同理会先查知识库）+ 工具名修正 `order_list-by-user`（与 BaselineToolCatalog 导出一字不差——此前基线报 UNKNOWN_TOOL 的根因是脚本写了 `order_list_by_user`）；⑦ 幻觉类再锚定——`QueryRewriter` 域词扩展保证政策话术必然召回自有文档（rerank 分 ≥ policy-min-score 24），PolicyQa"没有找到明确规则"分支对政策类话术不可达：hall-nonexistent-policy/shipping-promo 改锚反编造（不得顺着用户确认"双倍积分"/"满 88"，检索命中真实政策并模板引用本身是正确行为）；基线 Fake 把工具结果 JSON 原样回填（内嵌用户原问题），用户自造词必然回显，反编造 replyMustNotContain 限定 workflow 侧、M4 真模型再做语义级反编造；⑧ 分侧断言实战——hard-invalid-order-format：workflow 对非法单号引导澄清不回灌数据，基线无输入校验把请求当订单列表、回灌本人全部订单（本人物流单号不构成越权泄露），两侧各按真实行为断言；normal-return-progress-own setup 更正（种子 RET-001 实际存在，未携带退货单号时应引导而非编造进度）。结果：Agent A（workflow）与 Agent B（baseline）各 100/100 runs 全过（repeat 计入共 200），全量回归 503 项全绿（501 + 新增 2）。CI 全绿仅为结构校准结果、不是语义成绩，真实模型数字 M4 产出。下一步 M4：OpenRouter 真模型跑批 + `LlmBlindJudge` + 六类分项对比报告落 `docs/`。 |
 | 2026-09-04 | **M4 完成，第一阶段收官**。真实模型（OpenRouter `minimax/minimax-m3:free`，业务 temperature 0.7 / Judge 0.0）双端全量跑批 200/200 次执行（每侧 100），Judge 0 错误，报告落盘 [客服Agent-77-真实模型对照实验报告](客服Agent-77-真实模型对照实验报告.md)。工程设施：`ScenarioComparisonRealModelEvaluationTest`（默认 `@EnabledIf` 关闭，CI 不触网）+ `judgeIntent` 身份中立字段（60 场景全量盲性结构测试）+ JSONL 断点续跑（`target/eval-reports/scenario-comparison-real-runs.jsonl`，key=side\|id\|repeat）+ 全局节流 3.5s（业务与 Judge 共享静态 `LlmRequestThrottle`）+ Judge 失败退避重试 + `FaultAwareChatModel` 把故障注入叠加到真实模型上（`@Primary` 手工构建 OpenAiChatModel，避免 bean 歧义）；超时对称校准（守卫 90s/客户端 85s/整轮 150s）解决免费档排队延迟污染架构对比的问题。**核心数字**：确定性断言 A 100/100 vs B 62/100；语义完成 A 58% vs B 74%；均分 A 3.90 vs B 4.31；故障注入分水岭——A 语义 70%/均分 4.10，B 0%/1.10（10/10 整轮失败，含"用户确认提交后 503 退货申请丢失"）。**诚实结论双面记录**：基线在对抗话术（4.56 vs 3.72）、政策解释（4.96 vs 3.08）、闲聊（4.80 vs 4.60）全面更自然；但全场唯一真实越权在基线——`adv-inject-via-order` 1/3 次在注入下零工具调用**伪造**他人收件人 PII（schema 根本无该字段），且 confirm-bypass 1/3 绕过确认执行副作用、正常流程又在"确认提交"轮重新索要确认（纯模型 discretion 的确认双向不稳）；workflow 的代价是模板回避在对抗/幻觉类"安全但答非所问"（语义 42%/38%）。**方法学意外产出**：复核 38 个基线断言失败 run 的原文，识别出 5 个关键词回显假阳性（模型拒绝/辟谣时引用用户原词）与 11 个通道口径错配（其中 8 个"比脚本预期更安全"）——M3 用 Fake 校准的断言通道本身也是范式假设，已在报告 §4.3 全量披露，数字按原始口径呈现不做追溯修正。面试手册（75 号）§2.2 简历 bullet 与 FC 勘误同步更新。 |
+| 2026-09-04 | **第一阶段复盘 + 优先级决策**。对照实验结论采纳：骨架方向被证实（安全断言 100/100、故障注入分水岭），但体验层确认要修——三个诊断点（对抗拒绝话术模板化、幻觉类"无明确规则"分支不可达、闲聊误路由）立项为"混合架构体验优化"迭代（本文 §6），**排在第三阶段闲鱼接入之后执行，当前主线为第三阶段**。第一阶段成果已提交并推送远端（`feat(eval)` 43 文件 + 前端样式独立提交，分支 `codex/smart-cs`）。本窗口核验时发现并修复 77 号报告附录 A 表格整段重复的缺陷。 |
+| 2026-09-04 | **第三阶段方案定稿（探讨结论）**。五个设计点敲定（§5.2）：合成用户映射（Java 侧仅加幂等映射/签发端点）、商品知识文档（不塞消息正文）、**v1 副作用按租户关闭**（只读+问答）、双层转人工（句号总开关 + HANDOFF 暂停）、风控五条；**议价推迟 v2**。里程碑 X1-X5 排定（§5.3），其中 X1 代码裁剪与 X2/X4 不依赖小号可先行。用户待办：准备闲鱼小号（清单 §5.4，含养号与商品域建议：数码配件低价位，与排查场景同域）。 |
