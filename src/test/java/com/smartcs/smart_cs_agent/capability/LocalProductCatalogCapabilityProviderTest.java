@@ -11,7 +11,9 @@ import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSearchResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSummary;
 import com.smartcs.smart_cs_agent.capability.core.DefaultCapabilityGateway;
 import com.smartcs.smart_cs_agent.capability.local.LocalProductCatalogCapabilityProvider;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuSidecarProperties;
 import com.smartcs.smart_cs_agent.repository.ProductRepository;
+import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -88,7 +90,11 @@ class LocalProductCatalogCapabilityProviderTest {
     }
 
     private LocalProductCatalogCapabilityProvider provider() {
-        return new LocalProductCatalogCapabilityProvider(new ProductRepository());
+        return new LocalProductCatalogCapabilityProvider(
+                new ProductRepository(),
+                new KnowledgeTools(List.of()),
+                new XianyuSidecarProperties()
+        );
     }
 
     private DefaultCapabilityGateway gateway() {

@@ -9,19 +9,24 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityRiskLevel;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSearchResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSummary;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuSidecarProperties;
 import com.smartcs.smart_cs_agent.model.Product;
 import com.smartcs.smart_cs_agent.repository.ProductRepository;
+import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
  * 商品目录的独立本地 Provider。
  *
- * <p>职责：把 ProductRepository 的实体转换为稳定 ProductSummary/ProductSearchResult。</p>
+ * <p>职责：把商品数据源转换为稳定 ProductSummary/ProductSearchResult。数据源按租户选择：
+ * 演示租户读 ProductRepository 种子数据；闲鱼租户读审校入库的商品知识文档
+ * （{@link XianyuKnowledgeProductCatalog}），避免把演示目录的价格报给真实买家。</p>
  *
  * <p>不负责：不判断用户是不是在询价、不读取用户偏好、不组织客服话术。这些属于 Workflow。</p>
  */
@@ -32,10 +37,16 @@ public class LocalProductCatalogCapabilityProvider implements CapabilityProvider
     public static final String PROVIDER_ID = "local-product-catalog";
 
     private final ProductRepository productRepository;
+    private final XianyuSidecarProperties xianyuProperties;
+    private final XianyuKnowledgeProductCatalog xianyuCatalog;
     private final List<CapabilityDefinition> definitions;
 
-    public LocalProductCatalogCapabilityProvider(ProductRepository productRepository) {
+    public LocalProductCatalogCapabilityProvider(ProductRepository productRepository,
+                                                 KnowledgeTools knowledgeTools,
+                                                 XianyuSidecarProperties xianyuProperties) {
         this.productRepository = productRepository;
+        this.xianyuProperties = xianyuProperties;
+        this.xianyuCatalog = new XianyuKnowledgeProductCatalog(knowledgeTools);
         this.definitions = List.of(searchDefinition(), lookupDefinition());
     }
 
@@ -53,10 +64,10 @@ public class LocalProductCatalogCapabilityProvider implements CapabilityProvider
     public CapabilityResult<?> invoke(CapabilityCall call, ExecutionContext context) {
         String capabilityId = CapabilityIds.canonicalize(call.getCapabilityId());
         if (CapabilityIds.PRODUCT_SEARCH.equals(capabilityId)) {
-            return search(call);
+            return search(call, context);
         }
         if (CapabilityIds.PRODUCT_LOOKUP.equals(capabilityId)) {
-            return lookup(call);
+            return lookup(call, context);
         }
         return CapabilityResult.technicalFailure(
                 capabilityId,
@@ -66,11 +77,13 @@ public class LocalProductCatalogCapabilityProvider implements CapabilityProvider
         );
     }
 
-    private CapabilityResult<ProductSearchResult> search(CapabilityCall call) {
+    private CapabilityResult<ProductSearchResult> search(CapabilityCall call, ExecutionContext context) {
         String keyword = textArgument(call, "keyword");
-        List<ProductSummary> products = productRepository.searchByName(keyword).stream()
-                .map(this::toSummary)
-                .toList();
+        List<ProductSummary> products = isXianyuTenant(context)
+                ? xianyuCatalog.search(keyword)
+                : productRepository.searchByName(keyword).stream()
+                        .map(this::toSummary)
+                        .toList();
         return CapabilityResult.success(
                 CapabilityIds.PRODUCT_SEARCH,
                 PROVIDER_ID,
@@ -79,7 +92,7 @@ public class LocalProductCatalogCapabilityProvider implements CapabilityProvider
         );
     }
 
-    private CapabilityResult<?> lookup(CapabilityCall call) {
+    private CapabilityResult<?> lookup(CapabilityCall call, ExecutionContext context) {
         String productName = textArgument(call, "product_name");
         if (productName.isBlank()) {
             return CapabilityResult.businessRejected(
@@ -91,8 +104,10 @@ public class LocalProductCatalogCapabilityProvider implements CapabilityProvider
             );
         }
 
-        List<Product> products = productRepository.searchByName(productName);
-        if (products.isEmpty()) {
+        ProductSummary product = isXianyuTenant(context)
+                ? xianyuCatalog.lookup(productName)
+                : firstRepositoryMatch(productName);
+        if (product == null) {
             return CapabilityResult.businessRejected(
                     CapabilityIds.PRODUCT_LOOKUP,
                     PROVIDER_ID,
@@ -105,8 +120,21 @@ public class LocalProductCatalogCapabilityProvider implements CapabilityProvider
                 CapabilityIds.PRODUCT_LOOKUP,
                 PROVIDER_ID,
                 "Product found",
-                toSummary(products.get(0))
+                product
         );
+    }
+
+    private ProductSummary firstRepositoryMatch(String productName) {
+        List<Product> products = productRepository.searchByName(productName);
+        return products.isEmpty() ? null : toSummary(products.get(0));
+    }
+
+    /** 闲鱼租户名来自 smartcs.xianyu.tenant-id，与买家 JWT 的 tenant_id 同源。 */
+    private boolean isXianyuTenant(ExecutionContext context) {
+        String tenantId = context.getTenantId();
+        return tenantId != null
+                && !tenantId.isBlank()
+                && xianyuProperties.getTenantId().equalsIgnoreCase(tenantId.trim().toLowerCase(Locale.ROOT));
     }
 
     private ProductSummary toSummary(Product product) {

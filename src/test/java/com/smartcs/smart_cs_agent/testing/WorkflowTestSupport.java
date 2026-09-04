@@ -17,6 +17,7 @@ import com.smartcs.smart_cs_agent.capability.local.LocalProductCatalogCapability
 import com.smartcs.smart_cs_agent.capability.local.LocalReturnApplyCapabilityProvider;
 import com.smartcs.smart_cs_agent.capability.local.LocalReturnLookupCapabilityProvider;
 import com.smartcs.smart_cs_agent.capability.local.LocalUserProfileCapabilityProvider;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuSidecarProperties;
 import com.smartcs.smart_cs_agent.domain.returnservice.ReturnApplicationService;
 import com.smartcs.smart_cs_agent.repository.OrderRepository;
 import com.smartcs.smart_cs_agent.repository.ProductRepository;
@@ -118,7 +119,11 @@ public final class WorkflowTestSupport {
         );
         return new DefaultCapabilityGateway(List.of(
                 new LocalOrderCapabilityProvider(orderRepository, productRepository),
-                new LocalProductCatalogCapabilityProvider(productRepository),
+                new LocalProductCatalogCapabilityProvider(
+                        productRepository,
+                        knowledgeTools,
+                        new XianyuSidecarProperties()
+                ),
                 new LocalReturnApplyCapabilityProvider(returnApplicationService),
                 new LocalReturnLookupCapabilityProvider(returnRepository, orderRepository, productRepository),
                 new LocalUserProfileCapabilityProvider(userRepository),
