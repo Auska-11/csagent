@@ -2,7 +2,9 @@
 .idea
 .vscode
 .m2
-target
+# Dockerfile.prebuilt 需要预打包 JAR 进构建上下文：排除 target 其余产物（eval-reports 等），只放行该 JAR
+target/*
+!target/smart-cs-agent-0.0.1-SNAPSHOT.jar
 build
 *.log
 app.log

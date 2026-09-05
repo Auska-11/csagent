@@ -29,6 +29,8 @@ rsync -az --delete \
   ./ "$HOST:$REMOTE_DIR/"
 
 # 预打包 JAR（含 skills/ 与 React UI）单独补传，供 Dockerfile.prebuilt 使用。
+# 首次部署时远端尚无 target/ 目录，rsync 传单文件不会自建父目录，先补建。
+ssh "$HOST" "mkdir -p '$REMOTE_DIR/target'"
 rsync -az "$JAR" "$HOST:$REMOTE_DIR/target/smart-cs-agent-0.0.1-SNAPSHOT.jar"
 
 echo "同步完成 → $HOST:$REMOTE_DIR"

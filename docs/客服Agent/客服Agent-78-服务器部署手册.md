@@ -64,10 +64,10 @@
 
 ```bash
 ssh myserver
-docker compose -f docker-compose.yml -f docker-compose.prebuilt.yml ps   # 三容器 healthy/running
-docker logs smart-cs-agent 2>&1 | grep -E "Started|skill" | tail        # 启动完成 + 8 个技能包
+docker compose -f docker-compose.yml -f docker-compose.prebuilt.yml ps   # 含 --profile xianyu 时四容器 healthy/running
+docker logs smart-cs-agent 2>&1 | grep -E "Started|skill" | tail        # 启动完成 + 10 个技能包
 curl -s localhost:8080/actuator/health                                   # {"status":"UP"}
-docker exec -it smart-cs-mysql mysql -usmartcs -p -e "select order_id from smart_cs_agent.orders;"  # ORD-001..004 已播种
+docker exec -it smart-cs-mysql mysql -usmartcs -p -e "select order_id,status from smart_cs_agent.cs_order;"  # ORD-001..004 已播种（表名 cs_order；中文状态值加 --default-character-set=utf8mb4 看）
 ```
 
 业务冒烟（模板链路，不耗 LLM 额度）：浏览器经 SSH 隧道访问（§6）后用演示身份问「我的订单 ORD-001 到哪了」→ 应回物流单号；或：
@@ -141,3 +141,4 @@ cd /opt/csagent && docker compose -f docker-compose.yml -f docker-compose.prebui
 | 日期 | 事项 |
 | --- | --- |
 | 2026-09-05 | 凌晨完成服务器准备（Docker/加速/预拉镜像）与全部部署物（本表 §1）；手册创建。首次部署与闲鱼切换待基线跑批完成后执行 |
+| 2026-09-05 | **首次部署 + 闲鱼切换一次完成（15:52 起 7×24 运行态）**。流程：Mac 打包（6s，含 skills×10 与 React UI）→ sync-to-server → 双 .env scp + chmod 600 → 服务器侧改造（demo issuer 关、JDBC_URL 注释走容器内网、`openssl rand` 新 JWT 密钥与 hex 强 MySQL 口令——APP 口令双写 `SMARTCS_MYSQL_PASSWORD`+`SMARTCS_JDBC_PASSWORD` 保持一致、`SMARTCS_XIANYU_ENABLED=true`、服务令牌经 stdin 管道由侧车 `CS_AGENT_TOKEN` 换名注入不落终端）→ Mac 侧车 kill（cookie 单点登录让位）→ `--profile xianyu up -d --build`。**两个首跑缺陷当场修掉**：① `.dockerignore` 整目录排除 `target` 使 `Dockerfile.prebuilt` 的 `COPY target/*.jar` 必失败——改 `target/*` + `!target/smart-cs-agent-0.0.1-SNAPSHOT.jar` 放行单个 JAR；② sync 脚本对不存在的远端 `target/` 传单文件报 `change_dir failed`——补 `ssh mkdir -p`。§3 手册错表名 `orders`→`cs_order`、技能包 8→10 一并勘误。验证：四容器 healthy/running（agent 451M/768M 上限、mysql 462M、qdrant 11M、侧车 27M，系统余 1.9G）；`/actuator/health` UP（db/persistence 均 UP）；11 张表 + ORD-001..004/RET-001 播种、utf8mb4 中文完好；侧车 token→/reg→BRIDGE 在线（卖家 2223022576689），45 分钟窗口零超时零异常。**遗留**：买家真机消息验证需用户小号发消息（无法自主完成）；Web UI 需 SSH 隧道（`ssh -N -L 8080:localhost:8080 myserver`） |
