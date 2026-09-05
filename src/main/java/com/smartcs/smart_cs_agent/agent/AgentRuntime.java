@@ -82,6 +82,9 @@ public class AgentRuntime {
      */
     private final OutboundSafetyFilter outboundSafetyFilter;
 
+    /** 入站对抗拦截：路由之前拒绝系统提示词索取、站外交易诱导、身份冒充数据索取与全量导出。 */
+    private final AdversarialInputPolicy adversarialInputPolicy;
+
     /** 兼容纯 Java 测试的默认构造方式。 */
     public AgentRuntime(SkillManager skillManager, ActionHandlerRegistry actionHandlerRegistry) {
         this(
@@ -105,16 +108,20 @@ public class AgentRuntime {
                         int maxIterations,
                         long turnTimeoutMs) {
         this(skillManager, actionHandlerRegistry, maxIterations, turnTimeoutMs,
-                OutboundSafetyFilter.withDefaults());
+                OutboundSafetyFilter.withDefaults(), AdversarialInputPolicy.disabled());
     }
 
-    /** Spring 生产构造函数；步骤和整轮时间两种预算都可配置，但都不能关闭。 */
+    /**
+     * Spring 生产构造函数；步骤和整轮时间两种预算都可配置，但都不能关闭。
+     * 安全组件（出站过滤 + 入站闸门）必须显式注入，缺失即启动失败。
+     */
     @Autowired
     public AgentRuntime(SkillManager skillManager,
                         ActionHandlerRegistry actionHandlerRegistry,
                         @Value("${smartcs.agent.max-iterations:10}") int maxIterations,
                         @Value("${smartcs.agent.turn-timeout-ms:30000}") long turnTimeoutMs,
-                        OutboundSafetyFilter outboundSafetyFilter) {
+                        OutboundSafetyFilter outboundSafetyFilter,
+                        AdversarialInputPolicy adversarialInputPolicy) {
         this.skillManager = Objects.requireNonNull(skillManager, "skillManager cannot be null");
         this.actionHandlerRegistry = Objects.requireNonNull(
                 actionHandlerRegistry,
@@ -131,6 +138,10 @@ public class AgentRuntime {
         this.outboundSafetyFilter = Objects.requireNonNull(
                 outboundSafetyFilter,
                 "outboundSafetyFilter cannot be null"
+        );
+        this.adversarialInputPolicy = Objects.requireNonNull(
+                adversarialInputPolicy,
+                "adversarialInputPolicy cannot be null"
         );
     }
 
@@ -152,6 +163,13 @@ public class AgentRuntime {
         context.startTurnBudget(turnTimeoutMs);
         ConversationState state = context.getState();
         recordTurnStarted(context, state);
+
+        // 入站对抗闸门先于一切路由与能力执行：命中即整轮固定话术拒绝，不进入任何 Workflow。
+        AdversarialInputPolicy.Denial denial =
+                adversarialInputPolicy.evaluate(context.getMessage());
+        if (denial != null) {
+            return finishSecurityDeniedTurn(context, denial);
+        }
 
         // Multi-Agent 路由目前用于专家域 Trace；真正可执行选择由 WorkflowRouter 完成。
         AgentRouteResult agentRoute = skillManager.routeAgent(context.getMessage());
@@ -343,6 +361,48 @@ public class AgentRuntime {
             throw new IllegalStateException("Unexpected terminal Action flow: " + result.getFlow());
         }
 
+        context.markDone(answer);
+        return answer;
+    }
+
+    /**
+     * 入站对抗闸门的整轮收尾。
+     *
+     * <p>语义与 {@link #finishTurn} 对齐（出站过滤 → final_answer → 会话记忆 → 记忆压缩 →
+     * markDone），但有两个刻意差异：</p>
+     * <ul>
+     *     <li>不经过任何 Workflow，也就不改变 Workflow 生命周期状态——若闸门拦截的是
+     *     活跃 Workflow 等待中的一轮输入（例如用户在退货流程中途发送站外交易诱导），
+     *     该 Workflow 保持可恢复，用户回到正题后下一轮照常继续；</li>
+     *     <li>Trace 使用 TurnOutcomeClassifier 已识别的 {@code guardrail_rejected} 事件
+     *     （errorCode=ADVERSARIAL_INPUT_DENIED），监控侧自然归入 GUARDRAIL_REJECTED，
+     *     不需要新增分类规则。话术是固定模板，不调用 LLM，故障注入下行为不变。</li>
+     * </ul>
+     */
+    private String finishSecurityDeniedTurn(TurnContext context,
+                                            AdversarialInputPolicy.Denial denial) {
+        ConversationState state = context.getState();
+        context.addTrace("guardrail_rejected", "入站对抗闸门命中，本轮直接拒绝且不调用任何能力", Map.of(
+                "errorCode", "ADVERSARIAL_INPUT_DENIED",
+                "rule", denial.ruleId(),
+                "reason", denial.description()
+        ));
+
+        String answer = denial.refusal();
+        OutboundSafetyFilter.Outcome outboundOutcome = outboundSafetyFilter.apply(answer);
+        if (outboundOutcome.filtered()) {
+            answer = outboundOutcome.text();
+            context.addTrace(
+                    "outbound_filtered",
+                    "安全拒绝话术命中站外联系方式过滤，已整条替换为安全提示",
+                    Map.of("matchedPatterns", outboundOutcome.matchedPatterns())
+            );
+        }
+
+        context.addTrace("final_answer", "安全闸拒绝后返回固定话术", Map.of("answer", answer));
+        int summaryVersionBefore = state.getSummaryVersion();
+        state.addAssistantMessage(answer);
+        recordMemoryCompressionIfNeeded(context, summaryVersionBefore, state);
         context.markDone(answer);
         return answer;
     }

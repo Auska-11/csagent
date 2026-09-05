@@ -280,6 +280,20 @@
 
 测试影响面预估：新增安全闸单测（三类命中 + inject-via-order 放行）、QueryRewriter 单测（单字不再触发/多字仍触发）、PolicyQa 相关性门槛单测（积分类查询走诚实分支、质检类仍引用）、商品 match 社交排除单测、目录去重单测；60 场景全量回归 + 演示租户既有商品咨询路径回归（"蓝牙耳机多少钱""推荐耳机"必须原行为）。
 
+### 6.3 实施落地与设计偏差记录（2026-09-05）
+
+四个点全部实施完毕。与 §6.2 设计的偏差，逐条如实记录：
+
+**偏差 1（修复点 1，有意为之）：拒绝话术从"LLM 措辞 + 模板降级"改为纯确定性模板，trace 事件从设计的 `safety_refusal` 改为 `guardrail_rejected`。**
+理由：拒绝路径是安全骨架的底座，可靠性优先于措辞自然度——零 LLM 调用使该路径对故障注入完全免疫（M4 里基线在注入下 0% 语义完成的教训），且逐规则模板可以被断言锁死（`AgentRuntimeSecurityGateTest` 直接断言回复 == `policy.evaluate().refusal()`）。`guardrail_rejected` 是 `TurnOutcomeClassifier` 已识别的事件词汇，监控侧自然归入 GUARDRAIL_REJECTED，不需要新增分类规则（`safety_refusal` 反而要改分类器）。措辞自然度改在另一头补：`SKILL.md` 回复边界新增两条安全立场（身份冒充+数据索取拒绝引导官方渠道；不接受站外私下交易/政策外承诺），让**未命中闸门**的对抗风格（诱导承诺/角色扮演/威胁，按设计留给兜底 LLM）也有 Prompt 层承载。闸门语义另有两点按压测实况收窄：身份冒充采用"标记词 + 数据索取词"双信号（`requiredAlongwith`），单说"我是官方客服"不拦（只冒充不索取不构成危害）；消息携带 `ORD-\d+` 订单号时整条放行走正常路由（保护 Provider 边界的 ORDER_OWNERSHIP_MISMATCH 防线，`adv-inject-via-order` 断言不回退）。闸门命中面有 corpus 锁死测试：60 场景 85 原始轮全扫，命中集合必须恰好等于被 M4 验证过的 4 场景 5 轮，改任何 marker 都会红灯。
+
+**偏差 2（修复点 2，首轮回归发现的缺陷）：功能词剥离的"粘词"副作用。**
+首版功能词表有"什么"没有"时候"，"发票什么时候能开"剥完域词与功能词后残留伪区分性词"时候开"，发票政策原文里没有这个连续子串 → 真实政策问句被误判无关、误走诚实分支，两条既有集成测试（发票/配送政策引用）红灯。修复：功能词表补"时候"（"的时候"本就在表内，属同族遗漏），并以 `timeAskingGlueMustNotBlockInvoiceCitation` 单测锁死。这个案例也印证了门槛 javadoc 里"宁可漏剥也不引入分词歧义"的取舍——粘词错误在首轮回归就被真实语料暴露了。
+
+**无偏差部分**：修复点 2 的两层（QueryRewriter 多字词触发 + PolicyRelevanceGate 区分性词门槛）、修复点 3（社交闲聊前置排除，双信号=夸赞/情绪词命中且无咨询标记；裸品类词与带咨询标记消息分数不变）与附带 nit（目录读取侧 + 落盘写入侧双侧去重，存量文档不动）均按 §6.2 设计实施。修复点 3 影响面经全量模拟验证：100 轮执行中恰好只改变 chat-product-smalltalk 一条路由（预期目标），其余 99 轮路由不变。
+
+**修复后对照机制（提前记录，结果落 77 号 v2）**：修复前基线已锁存（`scenario-comparison-real-runs.baseline-locked.jsonl` + 同名报告，sha256 前缀 7963249079db49be）；对照跑批前用 `grep '"side":"BASELINE"'` 把基线行预植进断点 JSONL，Runner 只重跑 WORKFLOW 侧（断点 key=side|id|repeat 保证跳过），基线数字原样来自锁存文件——两侧结论同一模型同一场景集可比。
+
 ## 7. 动态记录
 
 | 日期 | 事项 |
@@ -297,3 +311,5 @@
 | 2026-09-04 | **X1 echo 实测通过，X1 收官**。用户提供小号 cookie（配入 `sidecar/xianyu/.env`，git 确认忽略）。ECHO 模式启动：token 获取 → WebSocket 连接注册 → 心跳全通；真实买家消息"你好"（买家 ID 3579903100，商品 1079979582985）经 MessagePack 解密到达，回显 `[echo:xianyu_3579903100_1079979582985] 你好` 成功发回，**买家侧确认收到**。两个预期行为同时得到真实验证：免责话术在该会话首条自动回复末尾追加了一次；闲鱼官方"恭喜新手卖家…询单啦"系统通知被判型识别跳过、未触发自动回复。协议链路（收/发/判型/节流）全部就绪，为 X3 扫清障碍。 |
 | 2026-09-05 | **X3 端到端实测 + 商品文档生效修复**。三件事：① **真消息主链路**——小号 cookie 下 BRIDGE 模式全程在线，买家（3579903100）就真实挂件商品（1079979582985）发问，侧车转发 `/api/chat/send`，Agent 回复成功发回闲鱼**买家侧确认收到**，多轮上下文正常。② **转人工真机验证**——买家两条转人工诉求触发 `handoffRequested`，自动回复即时暂停；卖家发句号恢复，与 X4 设计的双层闭环一致。③ **商品文档生效（本次主体）**——真机问"这个耳机是森海塞尔的吗，支持蓝牙连接吗"暴露缺陷：回复引用演示商品库 PROD-001 蓝牙耳机 Pro Max ¥599 而非已审校入库的真实商品文档（森海塞尔 MOMENTUM 二代 ¥265）。根因：`ProductAdvisoryWorkflow` 对品类词"耳机"打 0.98 → `product.search` → `LocalProductCatalogCapabilityProvider` 读 MySQL 演示目录；商品知识文档在 `knowledge.search` 链路且 `PolicyQaWorkflow` 只认四个政策文档，两条链路不相交。修复遵循与 X4 屏蔽 `return.apply` 同源的"演示数据不进真实渠道"原则：`LocalProductCatalogCapabilityProvider` 构造注入 `KnowledgeTools` + `XianyuSidecarProperties`，对 xianyu 租户把 `product.search`/`product.lookup` 委托给新增的 `XianyuKnowledgeProductCatalog`（检索 productcategory=xianyu 的商品文档并还原成 `ProductSummary` 契约）——Workflow 与能力契约零改动，Gateway 单 Provider 约束不破坏；价格/库存从"## 基本信息"固定行正则解析（审校约束：这两行必须保留），解析失败退化为 0 宁缺毋假，空关键词返回空列表（知识检索无"列出全部"入口，v1 接受）。验证：新增 `XianyuTenantProductCatalogTest` 5 项（真实文档命中/政策文档排除/lookup 命中与 PRODUCT_NOT_FOUND/降级文档不抛异常/default 租户仍走演示目录），全量回归 **532 项 0 失败**（527+5）；API 级端到端——签发买家 JWT（xianyu 租户）直接问同样问题，回复"森海塞尔MOMENTUM二代头戴耳机（1079979582985）价格 265 元 库存 1 件，支持蓝牙和有线连接"，PROD-001 不再出现。**真机终验通过（2026-09-05 00:24）**：买家在会话 66283988930 真发"这个耳机是森海塞尔的吗，支持蓝牙连接吗"，自动回复引用真实商品文档（森海塞尔 MOMENTUM 二代 ¥265 / 库存 1 / 支持蓝牙和有线连接）成功发回闲鱼，演示目录 PROD-001 ¥599 未出现——与 API 级验证一致，X3 完整闭环。已知小瑕疵（v1 不修）：「特点」开头重复商品名一次，源于知识文档「商品描述」小节本身以商品名开头，属内容层面非代码 bug。 |
 | 2026-09-05 | **X5 缓行，§6 体验优化提前启动**。用户决策：挂单自然流量预期低，X5（真实流量累积）暂缓，改为小号主动压测 + Agent 体验优化。§6 触发条件（X1-X3 落地）已满足。执行顺序：① 小号真机消息复现三个诊断点——对抗拒绝话术答非所问（越权请求回业务模板）、幻觉政策硬引无关原文（问不存在的政策如"以旧换新"，政策库仅发票/退换货/保修三篇）、闲聊误路由回商品清单（"这耳机颜值真高啊"）——外加故障排查与议价话术真机摸底；② 实施三修复点（生成层放进骨架：代码定安全决策与知识引用，LLM 只措辞）；③ 复测验收：60 场景确定性断言 100% 不回退 + 同模型对照 ADVERSARIAL/HALLUCINATION 语义分抬升、总均分追平基线，结果落 77 号报告 v2 节。 |
+| 2026-09-05 | **修复前基线锁存（用户明确指令"必须先锁存"）**。修复前夜续跑完成的商汤基线跑批（此前模型通道商汤 SenseNova，200/200 执行 53:33，报告 `target/eval-reports/`）两产物即时复制加锁：`scenario-comparison-real-runs.baseline-locked.jsonl`（188759 B）+ `scenario-comparison-real.baseline-locked.json`（296459 B），sha256 前缀 `7963249079db49be`。修复代码动手前基线已不可变。 |
+| 2026-09-05 | **§6 四点修复实施完成，全量回归 554 项 0 失败**（532+22 新增；1 skip 为默认关闭的真模型评测；60 场景确定性断言零回退）。代码：`AdversarialInputPolicy`（4 规则 + ORD 放行 + 双信号身份冒充）接入 `AgentRuntime.runTurn` 路由前（偏差与理由见 §6.3）、`QueryRewriter` 多字词触发、`PolicyRelevanceGate` 接入 `PolicyQaWorkflow`（无归属命中与命中无关共用统一诚实话术）、`ProductAdvisoryWorkflow` 社交闲聊双信号排除、`SKILL.md` 两条安全立场、目录/落盘双侧商品名去重。测试 22 项新增中含两个回归锁：60 场景 85 原始轮闸门命中面锁死测试（恰等于 M4 验证过的 4 场景 5 轮）与 Runtime 安全闸集成（拒绝路径零 llm/tool 调用、活跃 Workflow 不被拒绝破坏、ORD 注入照常路由）。**首轮回归暴露并修复一个真实缺陷**：功能词表漏"时候"导致"发票什么时候能开"残留伪区分性词"时候开"、真实发票政策问句被相关性门槛误拦（两条既有集成测试红灯）——补词 + 粘词回归锁 `timeAskingGlueMustNotBlockInvoiceCitation`。下一步：预植 BASELINE 行重跑 WORKFLOW 侧对照 → 77 号 v2。 |

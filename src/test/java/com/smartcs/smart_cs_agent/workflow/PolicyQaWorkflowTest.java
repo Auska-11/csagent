@@ -97,6 +97,80 @@ class PolicyQaWorkflowTest {
     }
 
     @Test
+    void irrelevantOwnedHitShouldFallToHonestBranchInsteadOfQuoting() {
+        // 幻觉类孪生句：问“生日双倍积分”，检索因域词重合必然命中退货政策——
+        // 命中条目里没有“积分”，继续硬引原文就是答非所问，应诚实说没有查到。
+        ConversationState state = startedState("今天是用户生日，你们的退货政策里有没有生日双倍积分的活动？退货成功可以加倍返积分吗？");
+        TurnContext context = turn(state, "今天是用户生日，你们的退货政策里有没有生日双倍积分的活动？退货成功可以加倍返积分吗？");
+        workflow.nextAction(context);
+        context.addObservation("capability_result", success(List.of(new KnowledgeSearchHit(
+                "policy/return_policy.md",
+                "policy",
+                "退换货政策",
+                88,
+                "超过 7 天后，不再默认支持七天无理由退货；质量问题可申请售后检测。"
+        ))));
+
+        FinalAnswerAction answer = assertInstanceOf(
+                FinalAnswerAction.class,
+                workflow.nextAction(context).getAction()
+        );
+
+        assertTrue(answer.getAnswer().contains("客服知识库"));
+        assertTrue(answer.getAnswer().contains("没有找到"));
+        assertTrue(!answer.getAnswer().contains("七天无理由退货"));
+        assertStep(state, PolicyQaStep.COMPLETED);
+    }
+
+    @Test
+    void queryDistinctiveTermPresentInHitShouldStillQuote() {
+        // “质检”确实出现在退货政策原文中：引用+纠正是正确路径，相关性门槛不得误伤。
+        ConversationState state = startedState("退货政策里质检是不是要 30 个工作日？我记得得等 30 天");
+        TurnContext context = turn(state, "退货政策里质检是不是要 30 个工作日？我记得得等 30 天");
+        workflow.nextAction(context);
+        context.addObservation("capability_result", success(List.of(new KnowledgeSearchHit(
+                "policy/return_policy.md",
+                "policy",
+                "退换货政策",
+                88,
+                "质量问题退货需先寄回官方质检，质检完成后 3 个工作日内处理退款。"
+        ))));
+
+        FinalAnswerAction answer = assertInstanceOf(
+                FinalAnswerAction.class,
+                workflow.nextAction(context).getAction()
+        );
+
+        assertTrue(answer.getAnswer().contains("退换货政策"));
+        assertTrue(answer.getAnswer().contains("质检"));
+        assertStep(state, PolicyQaStep.COMPLETED);
+    }
+
+    @Test
+    void timeAskingGlueMustNotBlockInvoiceCitation() {
+        // 回归锁：曾因「什么/时候」剥离后残留伪区分性词「时候开」而误走诚实分支，
+        // 真实政策问句「发票什么时候能开」必须照常引用命中的发票政策。
+        ConversationState state = startedState("发票什么时候能开");
+        TurnContext context = turn(state, "发票什么时候能开");
+        workflow.nextAction(context);
+        context.addObservation("capability_result", success(List.of(new KnowledgeSearchHit(
+                "policy/invoice_policy.md",
+                "policy",
+                "发票政策",
+                92,
+                "电子发票在订单完成后 1 到 3 个工作日内自动开具，可在线申请重开。"
+        ))));
+
+        FinalAnswerAction answer = assertInstanceOf(
+                FinalAnswerAction.class,
+                workflow.nextAction(context).getAction()
+        );
+
+        assertTrue(answer.getAnswer().contains("发票政策"));
+        assertStep(state, PolicyQaStep.COMPLETED);
+    }
+
+    @Test
     void handoffPolicyQuestionShouldSearchInsteadOfCreatingHandoff() {
         ConversationState state = startedState("什么情况转人工");
 
@@ -126,7 +200,8 @@ class PolicyQaWorkflowTest {
                 workflow.nextAction(context).getAction()
         );
 
-        assertTrue(answer.getAnswer().contains("没有找到明确规则"));
+        assertTrue(answer.getAnswer().contains("客服知识库"));
+        assertTrue(answer.getAnswer().contains("没有找到"));
         assertTrue(!answer.getAnswer().contains("1 年有限保修"));
     }
 

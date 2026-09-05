@@ -58,8 +58,14 @@ public class PolicyQaWorkflow implements AgentWorkflow {
             178
     );
 
+    /** 查过知识库但没有可负责的命中时的统一诚实话术；"无归属命中"与"命中但与问题无关"两条路径共用。 */
+    private static final String HONEST_NO_RULE_ANSWER =
+            "我查了客服知识库，暂时没有找到与这个问题相关的明确规则。为避免误导就不猜测了。"
+                    + "你可以换个说法再问，或通过 App 内人工客服进一步确认。";
+
     private final CustomerServiceIntentRules intentRules = new CustomerServiceIntentRules();
     private final CustomerServiceSlotExtractor slotExtractor = new CustomerServiceSlotExtractor();
+    private final PolicyRelevanceGate relevanceGate = new PolicyRelevanceGate();
     private final GlobalInterruptPolicy interruptPolicy;
 
     public PolicyQaWorkflow(GlobalInterruptPolicy interruptPolicy) {
@@ -174,8 +180,14 @@ public class PolicyQaWorkflow implements AgentWorkflow {
         state.transitionTo(PolicyQaStep.COMPLETED);
         if (hit == null || hit.getSnippet().isBlank()) {
             return WorkflowDecision.next(
-                    new FinalAnswerAction("客服知识库暂时没有找到明确规则。请补充问题细节，或联系人工客服确认。"),
+                    new FinalAnswerAction(HONEST_NO_RULE_ANSWER),
                     "知识检索没有命中本 Workflow 负责的可靠政策"
+            );
+        }
+        if (!relevanceGate.isRelevant(state.getQuery(), hit.getTitle(), hit.getSnippet())) {
+            return WorkflowDecision.next(
+                    new FinalAnswerAction(HONEST_NO_RULE_ANSWER),
+                    "命中的政策条目与问题的区分性内容不相关，按查证过、确实没有处理"
             );
         }
 

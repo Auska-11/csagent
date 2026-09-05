@@ -91,7 +91,7 @@ class XianyuKnowledgeProductCatalog {
                 name,
                 firstNumber(combined, PRICE_PATTERN),
                 firstNumber(combined, STOCK_PATTERN),
-                description(hits)
+                description(hits, name)
         );
     }
 
@@ -119,17 +119,40 @@ class XianyuKnowledgeProductCatalog {
         }
     }
 
-    private String description(List<KnowledgeSearchResult> hits) {
+    /**
+     * 描述候选去掉与商品名相同的开头再返回：快照的 desc 常以标题开头（"森海塞尔MOMENTUM二代
+     * 头戴耳机森海塞尔MOMENTUM 2代…"），formatProducts 在外层又打印一次名称，逐字重复观感差。
+     * 只剥<strong>完全相同</strong>的前缀；标题中途出现或仅部分重合时不动。
+     */
+    private String description(List<KnowledgeSearchResult> hits, String productName) {
         for (KnowledgeSearchResult hit : hits) {
             if (hit.getTitle().contains("/ 商品描述")) {
-                return hit.getSnippet();
+                return stripLeadingName(hit.getSnippet(), productName);
             }
         }
         for (KnowledgeSearchResult hit : hits) {
             if (!hit.getTitle().contains("/ 基本信息")) {
-                return hit.getSnippet();
+                return stripLeadingName(hit.getSnippet(), productName);
             }
         }
-        return hits.get(0).getSnippet();
+        return stripLeadingName(hits.get(0).getSnippet(), productName);
+    }
+
+    /** 剥离描述开头与商品名完全相同的部分；名称为空或开头不匹配时原样返回。 */
+    private String stripLeadingName(String description, String productName) {
+        if (productName == null || productName.isBlank()) {
+            return description;
+        }
+        String prefix = productName.strip();
+        String text = description == null ? "" : description;
+        if (!text.startsWith(prefix)) {
+            return text;
+        }
+        String stripped = text.substring(prefix.length());
+        if (stripped.isBlank()) {
+            // 描述只有名称本身，保留原文避免出现空描述。
+            return text;
+        }
+        return stripped.strip();
     }
 }

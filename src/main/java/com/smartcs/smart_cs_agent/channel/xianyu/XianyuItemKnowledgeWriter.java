@@ -85,7 +85,11 @@ public class XianyuItemKnowledgeWriter {
                 .append("- 价格：").append(priceRange).append("\n")
                 .append("- 库存：").append(totalStock).append("\n\n");
         if (!desc.isBlank()) {
-            markdown.append("## 商品描述\n\n").append(desc.strip()).append("\n\n");
+            // 闲鱼 desc 常以标题开头；商品目录展示时外层还会打印名称，落盘前剥掉避免逐字重复。
+            String body = stripLeadingTitle(desc, title);
+            if (!body.isBlank()) {
+                markdown.append("## 商品描述\n\n").append(body).append("\n\n");
+            }
         }
         List<String> skuLines = renderSkus(snapshot);
         if (!skuLines.isEmpty()) {
@@ -93,6 +97,18 @@ public class XianyuItemKnowledgeWriter {
             skuLines.forEach(line -> markdown.append("- ").append(line).append("\n"));
         }
         return markdown.toString();
+    }
+
+    /** 剥掉 desc 开头与标题完全相同的部分及紧随的标点；不匹配时原样返回（客服Agent-76 §6.2）。 */
+    private static String stripLeadingTitle(String desc, String title) {
+        String text = desc == null ? "" : desc.strip();
+        if (title == null || title.isBlank()) {
+            return text;
+        }
+        if (!text.startsWith(title.strip())) {
+            return text;
+        }
+        return text.substring(title.strip().length()).replaceFirst("^[\\s，。：:、,.;；\\-—]+", "").strip();
     }
 
     private List<String> renderSkus(JsonNode snapshot) {

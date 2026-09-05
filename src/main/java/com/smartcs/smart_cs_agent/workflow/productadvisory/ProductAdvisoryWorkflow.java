@@ -27,6 +27,7 @@ import com.smartcs.smart_cs_agent.workflow.core.HandoffSummarySupport;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -94,6 +95,11 @@ public class ProductAdvisoryWorkflow implements AgentWorkflow {
         }
         if (containsAny(message, "订单", "物流", "快递", "发货", "order", "tracking")) {
             return WorkflowMatchResult.noMatch("订单和物流问题不属于商品咨询");
+        }
+        // 社交闲聊排除：只夸不问（"这耳机颜值真高"）时 noMatch，落回通用兜底自然接话；
+        // 带任何咨询标记（多少钱/吗/？…）或裸品类词不受此分支影响（客服Agent-76 §6.2 修复点 3）。
+        if (isSocialSmalltalk(message)) {
+            return WorkflowMatchResult.noMatch("夸赞/感叹类闲聊不属于商品咨询");
         }
 
         String keyword = slotExtractor.extractProductKeyword(message);
@@ -298,6 +304,33 @@ public class ProductAdvisoryWorkflow implements AgentWorkflow {
         return observation != null && observation.getData() instanceof CapabilityObservation result
                 ? result
                 : null;
+    }
+
+    /** 社交闲聊信号：夸赞、感叹、情绪表达。单独出现且无咨询标记时说明用户不是在查商品。 */
+    private static final List<String> SOCIAL_MARKERS = List.of(
+            "颜值", "好看", "漂亮", "真不错", "不错", "真棒", "喜欢", "哈哈", "点赞", "心情",
+            "加油", "反应挺快", "服务真", "贴心", "可爱", "高级感", "质感"
+    );
+
+    /** 咨询信号：出现任意一个就说明用户在问商品事实，即使同时带社交词也不算闲聊。 */
+    private static final List<String> ADVISORY_MARKERS = List.of(
+            "多少钱", "价格", "有货", "库存", "推荐", "参数", "特点", "适合", "怎么选",
+            "哪个", "区别", "对比", "介绍", "能", "可以", "有吗", "卖吗", "多少", "几块",
+            "吗", "？", "?"
+    );
+
+    /**
+     * 判定“只夸不问”的社交闲聊：消息带社交信号且完全没有任何咨询标记。
+     *
+     * <p>裸品类词（用户只发“耳机”）不会走到这里——它没有社交信号；带“吗/多少钱”等的
+     * 真咨询也不会——咨询标记优先。两者维持原有分数不变。</p>
+     */
+    private boolean isSocialSmalltalk(String message) {
+        boolean social = SOCIAL_MARKERS.stream().anyMatch(message::contains);
+        if (!social) {
+            return false;
+        }
+        return ADVISORY_MARKERS.stream().noneMatch(message::contains);
     }
 
     private String safeText(String value, String fallback) {

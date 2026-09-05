@@ -161,6 +161,53 @@ class XianyuTenantProductCatalogTest {
         assertEquals("蓝牙耳机 Pro Max", products.getProducts().get(0).getName());
     }
 
+    @Test
+    void duplicatedTitlePrefixInDescriptionMustBeStripped() {
+        // 压测 #1 病症：已审校文档的"商品描述"正文以标题开头，列表外层又打印名称，
+        // 回复里逐字重复（"森海塞尔MOMENTUM二代头戴耳机森海塞尔MOMENTUM 2代…"）。
+        // 存量文档不改，读取侧剥离重复前缀兜底。
+        String duplicated = """
+                # 森海塞尔MOMENTUM二代头戴耳机
+
+                关键词：森海塞尔MOMENTUM二代头戴耳机、1079979582985
+
+                ## 基本信息
+
+                - 商品 ID：1079979582985
+                - 价格：¥265.0
+                - 库存：1
+
+                ## 商品描述
+
+                森海塞尔MOMENTUM二代头戴耳机森海塞尔MOMENTUM 2代头戴式蓝牙耳机，支持蓝牙和有线连接。
+                """;
+        KnowledgeDocument duplicatedDoc = new KnowledgeDocument(
+                "product/1079979582985.md",
+                "product",
+                "森海塞尔MOMENTUM二代头戴耳机",
+                duplicated,
+                List.of("森海塞尔MOMENTUM二代头戴耳机", "1079979582985"),
+                KnowledgeType.POLICY,
+                XianyuKnowledgeProductCatalog.PRODUCT_CATEGORY,
+                "",
+                "xianyu-item-snapshot",
+                "1",
+                null
+        );
+        LocalProductCatalogCapabilityProvider provider = provider(duplicatedDoc);
+
+        CapabilityResult<?> result = provider.invoke(
+                new CapabilityCall(CapabilityIds.PRODUCT_SEARCH, java.util.Map.of("keyword", "耳机")),
+                xianyuContext()
+        );
+
+        ProductSummary item = ((ProductSearchResult) result.getData()).getProducts().get(0);
+        assertEquals("森海塞尔MOMENTUM二代头戴耳机", item.getName());
+        assertTrue(item.getDescription().startsWith("森海塞尔MOMENTUM 2代"),
+                "描述应剥掉与名称相同的开头：" + item.getDescription());
+        assertTrue(!item.getDescription().startsWith("森海塞尔MOMENTUM二代头戴耳机森海塞尔"));
+    }
+
     private KnowledgeDocument xianyuItemDoc() {
         return new KnowledgeDocument(
                 "product/1079979582985.md",

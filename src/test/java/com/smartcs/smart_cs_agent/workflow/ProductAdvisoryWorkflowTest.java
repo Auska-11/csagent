@@ -171,6 +171,41 @@ class ProductAdvisoryWorkflowTest {
         assertStep(state, ProductAdvisoryStep.CANCELLED);
     }
 
+    @Test
+    void socialSmalltalkShouldNotMatchWhileRealAdvisoryKeepsScore() {
+        // 压测"这耳机颜值真高"孪生句：只夸不问 → 不再被品类词 0.98 抢走，落回通用兜底。
+        assertEquals(
+                0.0,
+                workflow.match(new RoutingContext(
+                        new ChatRequest("conv-product", "USER-001", "你们这个蓝牙耳机颜值是真的高"),
+                        new ConversationState("你们这个蓝牙耳机颜值是真的高", "USER-001")
+                )).getScore()
+        );
+
+        // 带咨询标记（吗/多少钱）或裸品类词的真商品咨询维持原分数不变。
+        assertEquals(
+                0.98,
+                workflow.match(new RoutingContext(
+                        new ChatRequest("conv-product", "USER-001", "这个耳机是森海塞尔的吗，支持蓝牙连接吗"),
+                        new ConversationState("", "USER-001")
+                )).getScore()
+        );
+        assertEquals(
+                0.98,
+                workflow.match(new RoutingContext(
+                        new ChatRequest("conv-product", "USER-001", "耳机"),
+                        new ConversationState("", "USER-001")
+                )).getScore()
+        );
+        assertEquals(
+                0.98,
+                workflow.match(new RoutingContext(
+                        new ChatRequest("conv-product", "USER-001", "这个蓝牙耳机真好看，多少钱"),
+                        new ConversationState("", "USER-001")
+                )).getScore()
+        );
+    }
+
     private ConversationState startedState(String message, String userId) {
         ConversationState state = new ConversationState(message, userId);
         state.startOrResumeWorkflow(ProductAdvisoryWorkflow.ID, ProductAdvisoryWorkflow.VERSION);
