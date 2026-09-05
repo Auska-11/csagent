@@ -250,6 +250,7 @@
 - Java 8081：`curl http://127.0.0.1:8081/actuator/health` 应 200；重启脚本 `/tmp/smartcs-start.sh`（SERVER_PORT=8081；SMARTCS_JDBC_URL 主机端口重写 mysql:3306 → 127.0.0.1:3307；依赖 classpath `/tmp/cp.txt`，丢失则 `sh mvnw dependency:build-classpath -Dmdep.outputFile=/tmp/cp.txt`；SMARTCS_XIANYU_ENABLED=true + 服务令牌 `/tmp/xianyu-service-token.txt`，丢失可从 `sidecar/xianyu/.env` 的 CS_AGENT_TOKEN 恢复）
 - MySQL：docker 容器 smart-cs-mysql，宿主机端口 3307
 - 侧车 BRIDGE：`cd sidecar/xianyu && ./.venv/bin/python main.py`（自动加载自身 .env：CS_AGENT_URL=http://127.0.0.1:8081、CS_AGENT_TOKEN、COOKIES_STR、SIDECAR_MODE）
+- Cookie 生命周期（2026-09-05 实测）：COOKIES_STR 有效期约 21 小时。过期症状 = 日志连续 `FAIL_SYS_SESSION_EXPIRED::Session过期` → `hasLogin` 重登失败 → 进程 sys.exit(1) 并提示更新 COOKIES_STR。恢复 = 运行者登录闲鱼网页版（消息页过滑块）→ F12 复制最新完整 Cookie → **只粘贴到 `sidecar/xianyu/.env`（已 gitignore），不进对话/不入库** → 重启侧车
 - 全量测试：`sh mvnw test`（mvnw 无执行权限，不能用 ./mvnw）
 - 提交基线：8d45705（X1-X4 收官 + §6 启动决策）
 
