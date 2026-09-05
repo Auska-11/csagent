@@ -2,7 +2,10 @@
 .idea
 .vscode
 .m2
-# Dockerfile.prebuilt 需要预打包 JAR 进构建上下文：排除 target 其余产物（eval-reports 等），只放行该 JAR
+# Dockerfile.prebuilt needs the prebuilt JAR in the build context: exclude the
+# rest of target/ (eval-reports etc.), then re-allow only that JAR.
+# NOTE: keep every line ASCII - Docker Desktop 24 BuildKit rejects non-ASCII
+# ignore rules (see DockerDeploymentConfigurationTest).
 target/*
 !target/smart-cs-agent-0.0.1-SNAPSHOT.jar
 build

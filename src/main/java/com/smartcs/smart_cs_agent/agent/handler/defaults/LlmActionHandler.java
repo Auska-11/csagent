@@ -9,6 +9,7 @@ import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandler;
 import com.smartcs.smart_cs_agent.agent.handler.api.ActionHandlingContext;
 import com.smartcs.smart_cs_agent.agent.handler.core.HandlerTraceSupport;
 import com.smartcs.smart_cs_agent.agent.llm.LlmExecutionGuard;
+import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
 import com.smartcs.smart_cs_agent.skill.SkillManager;
 import com.smartcs.smart_cs_agent.skill.api.ResolvedSkillPrompt;
 import dev.langchain4j.data.message.AiMessage;
@@ -177,8 +178,26 @@ public class LlmActionHandler implements ActionHandler<LLMAction> {
             case "return.apply" -> "退货申请处理结果如下：\n" + message;
             case "return.lookup" -> "我已为您查询到退货进度：\n" + message;
             case "user.lookup" -> "我已为您查询到用户信息：\n" + message;
-            case "knowledge.search" -> "我根据客服知识库查到以下信息：\n" + message;
+            // 知识检索的 message 是给 LLM 的证据文本（Prompt 指令 + 相关度/召回通道等调试字段），
+            // 不能直接发给买家（2026-09-05 压测 #3 实测踩过）；降级时改用命中标题+片段重新组织。
+            case "knowledge.search" -> knowledgeFallbackAnswer(result);
             default -> "我已处理完成：\n" + message;
         };
+    }
+
+    /** knowledge.search 的买家降级话术：只保留命中标题与片段，无 Prompt 指令、无检索元数据。 */
+    private String knowledgeFallbackAnswer(CapabilityObservation result) {
+        if (!(result.getData() instanceof List<?> rows) || rows.isEmpty()) {
+            return "抱歉，刚才整理资料时出了点问题，暂时无法给出准确答复。"
+                    + "您可以稍后再问一次，或发送“我要找人工客服”，我会为您转接人工处理。";
+        }
+        StringBuilder builder = new StringBuilder("我根据客服知识库查到以下信息，请参考：\n");
+        for (Object row : rows) {
+            if (row instanceof KnowledgeSearchHit hit) {
+                builder.append("\n【").append(hit.getTitle()).append("】\n")
+                        .append(hit.getSnippet()).append('\n');
+            }
+        }
+        return builder.toString().trim();
     }
 }

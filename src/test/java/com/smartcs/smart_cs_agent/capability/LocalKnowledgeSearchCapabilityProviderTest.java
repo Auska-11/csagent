@@ -10,6 +10,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityRiskLevel;
 import com.smartcs.smart_cs_agent.capability.api.contracts.KnowledgeSearchHit;
 import com.smartcs.smart_cs_agent.capability.core.DefaultCapabilityGateway;
 import com.smartcs.smart_cs_agent.capability.local.LocalKnowledgeSearchCapabilityProvider;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuSidecarProperties;
 import com.smartcs.smart_cs_agent.tools.KnowledgeDocument;
 import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
 import org.junit.jupiter.api.Test;
@@ -82,7 +83,7 @@ class LocalKnowledgeSearchCapabilityProviderTest {
                 "超过 7 天后，不再默认支持七天无理由退货。质量问题可以继续申请售后检测。",
                 List.of("退货", "七天", "超过七天", "质量问题")
         );
-        return new LocalKnowledgeSearchCapabilityProvider(new KnowledgeTools(List.of(returnPolicy)));
+        return new LocalKnowledgeSearchCapabilityProvider(new KnowledgeTools(List.of(returnPolicy)), new XianyuSidecarProperties());
     }
 
     private DefaultCapabilityGateway gateway() {

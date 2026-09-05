@@ -127,7 +127,7 @@ public final class WorkflowTestSupport {
                 new LocalReturnApplyCapabilityProvider(returnApplicationService),
                 new LocalReturnLookupCapabilityProvider(returnRepository, orderRepository, productRepository),
                 new LocalUserProfileCapabilityProvider(userRepository),
-                new LocalKnowledgeSearchCapabilityProvider(knowledgeTools),
+                new LocalKnowledgeSearchCapabilityProvider(knowledgeTools, new XianyuSidecarProperties()),
                 new LocalHandoffCapabilityProvider(handoffTools)
         ));
     }

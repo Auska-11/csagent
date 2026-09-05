@@ -74,6 +74,12 @@ public class KnowledgeTools {
         return searchService.searchWithDiagnostics(new KnowledgeSearchRequest(query, topK, profile));
     }
 
+    /**
+     * 检索结果的 LLM 证据文本：提示词骨架 + {@code toPromptText()}（含相关度/召回通道等调试字段）。
+     * 只供 Prompt 与调试消费；买家直接可见的降级话术在
+     * {@code LlmActionHandler#knowledgeFallbackAnswer} 用命中标题+片段另行组织
+     * （2026-09-05 压测 #3 实测：老降级路径把这段文本原样甩给过真实买家）。
+     */
     public String formatSearchResult(String query, List<KnowledgeSearchResult> results) {
         if (query == null || query.isBlank()) {
             return "用户没有提供明确问题，请补充要咨询的政策或商品故障现象。";
