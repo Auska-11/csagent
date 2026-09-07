@@ -68,6 +68,29 @@ class WorkflowRouterTest {
     }
 
     @Test
+    void shouldCancelAndRescoreWhenActiveWorkflowDeclinesMessage() {
+        AgentWorkflow waiting = new StubWorkflow("troubleshooting", 185, 0.0, true);
+        StubWorkflow generic = new StubWorkflow("generic", 10, 1.0);
+        WorkflowRouter router = router(List.of(waiting, generic), "generic", 0.25);
+
+        ConversationState state = new ConversationState("耳机连不上", "USER-001");
+        state.startOrResumeWorkflow("troubleshooting", "1.0.0");
+        state.markWorkflowWaiting();
+        state.startNewTurn("能便宜点吗");
+
+        WorkflowRouteResult result = router.route(
+                new ChatRequest("conv-decline", "USER-001", "能便宜点吗"),
+                state
+        );
+
+        // 活跃 Workflow 拒接消息：取消后按首评逻辑重新路由，旧私有状态一并清空。
+        assertFalse(result.isResumed());
+        assertEquals("generic", result.getSelectedWorkflow().descriptor().getId());
+        assertEquals("generic", state.getActiveWorkflowId());
+        assertTrue(state.getWorkflowStateSnapshot("troubleshooting").isEmpty());
+    }
+
+    @Test
     void shouldUseConfiguredFallbackWhenAllScoresAreBelowThreshold() {
         StubWorkflow generic = new StubWorkflow("generic", 10, 0.10);
         StubWorkflow other = new StubWorkflow("other", 100, 0.20);
@@ -130,15 +153,29 @@ class WorkflowRouterTest {
         private final WorkflowDescriptor descriptor;
         private final double score;
         private final AtomicInteger matchCalls;
+        private final boolean declinesResume;
 
         private StubWorkflow(String id, int priority, double score) {
             this(id, priority, score, new AtomicInteger());
         }
 
+        private StubWorkflow(String id, int priority, double score, boolean declinesResume) {
+            this(id, priority, score, new AtomicInteger(), declinesResume);
+        }
+
         private StubWorkflow(String id, int priority, double score, AtomicInteger matchCalls) {
+            this(id, priority, score, matchCalls, false);
+        }
+
+        private StubWorkflow(String id,
+                             int priority,
+                             double score,
+                             AtomicInteger matchCalls,
+                             boolean declinesResume) {
             this.descriptor = new WorkflowDescriptor(id, "1.0.0", "stub", priority);
             this.score = score;
             this.matchCalls = matchCalls;
+            this.declinesResume = declinesResume;
         }
 
         @Override
@@ -150,6 +187,11 @@ class WorkflowRouterTest {
         public WorkflowMatchResult match(RoutingContext context) {
             matchCalls.incrementAndGet();
             return new WorkflowMatchResult(score, "stub score");
+        }
+
+        @Override
+        public boolean acceptsMessage(RoutingContext context) {
+            return !declinesResume;
         }
 
         @Override

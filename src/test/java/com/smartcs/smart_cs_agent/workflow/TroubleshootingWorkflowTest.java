@@ -22,6 +22,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TroubleshootingWorkflowTest {
@@ -133,12 +134,73 @@ class TroubleshootingWorkflowTest {
         assertTrue(match("数据线只能充电不能传文件") > 0.99);
     }
 
+    @Test
+    void waitingWorkflowMustDeclineBargainingSoRouterCanRescore() {
+        ConversationState waiting = enterWaiting("耳机连不上");
+
+        // 压测 #4：悬挂的排查流程不能吞掉砍价/商务问题，拒接后 Router 重新路由。
+        assertFalse(workflow.acceptsMessage(routing(waiting, "能便宜点吗")));
+        assertFalse(workflow.acceptsMessage(routing(waiting, "265能出吗，包邮吗")));
+        assertFalse(workflow.acceptsMessage(routing(waiting, "蓝牙耳机保修多久")));
+        // 带品类词但诉求明确的商务问题同样拒接，不能拼成“补充信息”。
+        assertFalse(workflow.acceptsMessage(routing(waiting, "这耳机能便宜点吗")));
+    }
+
+    @Test
+    void waitingWorkflowMustKeepAcceptingSupplementsAndInterrupts() {
+        ConversationState waiting = enterWaiting("耳机连不上");
+
+        assertTrue(workflow.acceptsMessage(routing(waiting, "Pro Max，白灯一直闪")));
+        assertTrue(workflow.acceptsMessage(routing(waiting, "森海塞尔MOMENTUM，还是连不上")));
+        assertTrue(workflow.acceptsMessage(routing(waiting, "指示灯是红灯")));
+        // 新的故障话题命中 match()，仍由本流程接手。
+        assertTrue(workflow.acceptsMessage(routing(waiting, "手表怎么重置")));
+        // 取消/转人工是全局打断，交给本流程清理私有状态。
+        assertTrue(workflow.acceptsMessage(routing(waiting, "我要转人工")));
+        assertTrue(workflow.acceptsMessage(routing(waiting, "取消")));
+    }
+
+    @Test
+    void acceptsMessageMustStayStickyWhenNotWaitingForDetails() {
+        ConversationState state = turn("耳机连不上").getState();
+        state.startOrResumeWorkflow(TroubleshootingWorkflow.ID, TroubleshootingWorkflow.VERSION);
+
+        // 未悬挂等补充信息时保持默认粘性，不因为消息像商务问题就主动放权。
+        assertTrue(workflow.acceptsMessage(routing(state, "能便宜点吗")));
+    }
+
+    @Test
+    void declineAndSupplementAppendMustSurvivePersistenceRoundTrip() {
+        ConversationState waiting = enterWaiting("耳机连不上");
+        // JDBC 持久化按标量文本保存 workflow 状态，跨轮恢复后布尔值变成字符串 "true"。
+        ConversationState restored = ConversationState.restore(waiting.toPersistenceSnapshot());
+        restored.startNewTurn("Pro Max，白灯一直闪");
+
+        assertTrue(workflow.acceptsMessage(routing(restored, "Pro Max，白灯一直闪")));
+        assertFalse(workflow.acceptsMessage(routing(restored, "能便宜点吗")));
+
+        CapabilityAction search = assertInstanceOf(
+                CapabilityAction.class,
+                workflow.nextAction(new TurnContext(
+                        new ChatRequest("conv-trouble", "USER-001", "Pro Max，白灯一直闪"),
+                        restored
+                )).getAction()
+        );
+        String fullQuery = String.valueOf(search.getArguments().get("query"));
+        assertTrue(fullQuery.contains("耳机连不上"), "恢复后仍应拼接原始查询：" + fullQuery);
+        assertTrue(fullQuery.contains("Pro Max，白灯一直闪"));
+    }
+
     private double match(String message) {
         ConversationState state = new ConversationState(message, "USER-001");
         return workflow.match(new RoutingContext(
                 new ChatRequest("conv-trouble", "USER-001", message),
                 state
         )).getScore();
+    }
+
+    private RoutingContext routing(ConversationState state, String message) {
+        return new RoutingContext(new ChatRequest("conv-trouble", "USER-001", message), state);
     }
 
     private TurnContext turn(String message) {

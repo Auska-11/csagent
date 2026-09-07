@@ -17,6 +17,8 @@ import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -30,6 +32,8 @@ import java.util.Map;
  */
 @Component
 public class LlmActionHandler implements ActionHandler<LLMAction> {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(LlmActionHandler.class);
 
     private final SkillManager skillManager;
     private final ChatLanguageModel chatModel;
@@ -113,6 +117,15 @@ public class LlmActionHandler implements ActionHandler<LLMAction> {
             failedData.put("budgetMs", invocation.budgetMs());
             failedData.put("errorCode", invocation.errorCode());
             context.addTrace("llm_failed", "大模型调用失败，使用降级回复", failedData);
+            // 闲鱼侧车成功场景会丢弃响应体，trace 里的 errorCode 不可回溯；日志是线上模型故障
+            // （如瞬时限流）唯一的常驻证据，必须落 WARN。
+            LOGGER.warn(
+                    "LLM 调用失败并降级 purpose={} errorCode={} durationMs={} budgetMs={}",
+                    purpose,
+                    invocation.errorCode(),
+                    invocation.durationMs(),
+                    invocation.budgetMs()
+            );
             result = buildFallbackResult(action, context);
         }
 

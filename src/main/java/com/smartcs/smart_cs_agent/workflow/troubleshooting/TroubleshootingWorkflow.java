@@ -7,6 +7,7 @@ import com.smartcs.smart_cs_agent.agent.action.FinalAnswerAction;
 import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
 import com.smartcs.smart_cs_agent.agent.action.LLMAction;
 import com.smartcs.smart_cs_agent.agent.context.CapabilityObservation;
+import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.Observation;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityIds;
@@ -80,6 +81,59 @@ public class TroubleshootingWorkflow implements AgentWorkflow {
             return new WorkflowMatchResult(0.995, "命中商品使用或故障排查表达");
         }
         return WorkflowMatchResult.noMatch("未命中明确的商品故障或使用问题");
+    }
+
+    /**
+     * WAITING_DETAILS 悬挂期间拒接与排查无关的新消息（真机压测 #4：买家问“能便宜点吗”，
+     * 却被拼进旧故障查询，又收到一遍“请补充型号”）。命中排查表达、像在补充品类/型号/现象、
+     * 或属于全局打断时仍然接手；拒接后 Router 会取消本 Workflow 并重新路由。
+     */
+    @Override
+    public boolean acceptsMessage(RoutingContext context) {
+        if (!waitingForDetails(context.getState())) {
+            return true;
+        }
+        if (interruptPolicy.evaluate(context.getMessage()).getType() != GlobalInterruptType.NONE) {
+            return true;
+        }
+        if (match(context).getScore() > 0) {
+            return true;
+        }
+        return looksLikeTroubleshootingSupplement(context.getMessage());
+    }
+
+    /**
+     * 持久化快照只保存标量文本（WorkflowStateSnapshot 约定），跨轮恢复后 WAITING_DETAILS
+     * 是字符串 "true" 而不是 Boolean.TRUE，不能直接用 Boolean.TRUE.equals 判断。
+     */
+    private boolean waitingForDetails(ConversationState state) {
+        Object waiting = state.getWorkflowState(ID, WAITING_DETAILS);
+        return Boolean.TRUE.equals(waiting) || "true".equalsIgnoreCase(String.valueOf(waiting));
+    }
+
+    /** AskUser 追问的是品类、型号、指示灯状态和具体现象；带这些信号的短消息按补充信息处理。 */
+    private boolean looksLikeTroubleshootingSupplement(String message) {
+        String text = normalize(message);
+        if (text.isBlank()) {
+            return false;
+        }
+        // 明确的商务/售后诉求不是故障补充，拒接后交给对应 Workflow 处理。
+        if (containsAny(
+                text,
+                "便宜", "多少钱", "价格", "砍价", "议价", "包邮", "发货", "快递", "运费",
+                "退货", "退款", "保修", "质保", "以旧换新", "换货"
+        )) {
+            return false;
+        }
+        return containsAny(
+                text,
+                "耳机", "耳麦", "左右耳", "手表", "腕表", "充电器", "充电头", "数据线", "线材",
+                "型号", "pro max", "s2", "momentum",
+                "指示灯", "红灯", "绿灯", "白灯", "蓝灯", "灯闪", "不亮", "一直闪",
+                "没声音", "没声", "杂音", "一边响", "单边", "单侧", "断连", "断开",
+                "连不上", "连接不上", "配不上", "配对", "重置", "充不进", "不充电", "掉电",
+                "续航", "发热", "烫", "进水", "摔", "麦克风", "通知", "不同步", "识别"
+        );
     }
 
     @Override
@@ -156,9 +210,8 @@ public class TroubleshootingWorkflow implements AgentWorkflow {
     }
 
     private String buildQuery(TurnContext context) {
-        Object waiting = context.getState().getWorkflowState(ID, WAITING_DETAILS);
         Object lastSearch = context.getState().getWorkflowState(ID, LAST_SEARCH_QUERY);
-        if (Boolean.TRUE.equals(waiting) && lastSearch != null) {
+        if (waitingForDetails(context.getState()) && lastSearch != null) {
             return appendSupplement(lastSearch.toString(), context.getMessage());
         }
         return context.getMessage() == null ? "" : context.getMessage();
