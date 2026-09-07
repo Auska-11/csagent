@@ -159,8 +159,12 @@ public class AgentRuntime {
      * 执行一轮对话，直到 Handler 要求等待用户、任务完成或超过最大循环步数。
      */
     public String runTurn(TurnContext context) {
-        // 每次进入 Runtime 都重新开始本轮预算。ConversationState 可以跨轮恢复，时间预算不能跨轮继承。
-        context.startTurnBudget(turnTimeoutMs);
+        // 时间预算不能跨轮继承：每个新 TurnContext 默认从这里启动。
+        // 但主链路 CustomerServiceAgent 在等会话锁之前就已启动预算（排队时间同样计入），
+        // 这里必须沿用那份预算，不能重置成“拿到锁后再计满 30 秒”。
+        if (!context.hasTurnBudget()) {
+            context.startTurnBudget(turnTimeoutMs);
+        }
         ConversationState state = context.getState();
         recordTurnStarted(context, state);
 

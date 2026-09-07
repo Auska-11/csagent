@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.agent.context.ConversationBusyException;
 import com.smartcs.smart_cs_agent.handoff.admin.PendingHandoffAdminCursorException;
 import com.smartcs.smart_cs_agent.handoff.admin.PendingHandoffAdminRequestException;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffConflictException;
@@ -98,6 +99,23 @@ public class GlobalExceptionHandler {
                 .body(new ApiErrorResponse(
                         "SESSION_VERSION_CONFLICT",
                         "Conversation changed concurrently, please retry"
+                ));
+    }
+
+    /**
+     * 同一会话正在处理上一条消息、本次请求在预算内没等到锁时返回 409。
+     *
+     * <p>此时还没有执行任何业务、没有产生副作用，调用方稍后重试即可；
+     * 不能让请求无限排队，也不能把它伪装成 500。</p>
+     */
+    @ExceptionHandler(ConversationBusyException.class)
+    public ResponseEntity<ApiErrorResponse> handleConversationBusy(
+            ConversationBusyException exception) {
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(new ApiErrorResponse(
+                        "CONVERSATION_BUSY",
+                        "Conversation is currently processing another message, please retry later"
                 ));
     }
 

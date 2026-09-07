@@ -121,6 +121,34 @@ class LocalOrderCapabilityProviderTest {
         assertRejected(result, "AUTHENTICATION_REQUIRED");
     }
 
+    @Test
+    void shouldRejectCrossTenantAccessEvenWithSameUserId() {
+        // 两个租户出现相同 userId 时，只按 userId 过滤会让双方看到彼此的订单；
+        // tenant-b 的订单对 default 租户的 USER-001 必须不可见、不可查。
+        OrderRepository orders = new OrderRepository();
+        orders.save(new com.smartcs.smart_cs_agent.model.Order(
+                "tenant-b", "ORD-T001", "USER-001", "PROD-001", "已签收", "TB-TRACK-001"
+        ));
+        LocalOrderCapabilityProvider provider = new LocalOrderCapabilityProvider(orders, new ProductRepository());
+        DefaultCapabilityGateway gateway = new DefaultCapabilityGateway(List.of(provider));
+
+        CapabilityResult<?> lookup = gateway.invoke(
+                new CapabilityCall(CapabilityIds.ORDER_LOOKUP, Map.of("order_id", "ORD-T001")),
+                authenticated("USER-001")
+        );
+        CapabilityResult<?> list = gateway.invoke(
+                new CapabilityCall(CapabilityIds.ORDER_LIST_BY_USER, Map.of()),
+                authenticated("USER-001")
+        );
+
+        assertRejected(lookup, "ORDER_OWNERSHIP_MISMATCH");
+        assertNull(lookup.getData());
+        OrderListResult visibleOrders = (OrderListResult) list.getData();
+        assertTrue(list.isSuccess());
+        assertEquals(2, visibleOrders.getCount());
+        assertTrue(visibleOrders.getOrders().stream().noneMatch(order -> "ORD-T001".equals(order.getOrderId())));
+    }
+
     private LocalOrderCapabilityProvider provider() {
         return new LocalOrderCapabilityProvider(new OrderRepository(), new ProductRepository());
     }
@@ -130,10 +158,11 @@ class LocalOrderCapabilityProviderTest {
     }
 
     private ExecutionContext authenticated(String userId) {
+        // 演示种子订单属于默认租户；principal 与上下文的租户保持一致，模拟真实 JWT 链路。
         return new ExecutionContext(
                 "trace-order",
-                AuthenticatedPrincipal.authenticated("tenant-a", userId, Set.of("CUSTOMER")),
-                "tenant-a",
+                AuthenticatedPrincipal.authenticated(userId, Set.of("CUSTOMER")),
+                "default",
                 "conv-order",
                 "",
                 Instant.now().plusSeconds(10)

@@ -58,4 +58,32 @@ class DockerDeploymentConfigurationTest {
         // 宿主机端口必须可覆盖；容器内端口保持 8080，健康探针因此不需要跟着变化。
         assertTrue(compose.contains("${SMARTCS_AGENT_PORT:-8080}:8080"));
     }
+
+    /**
+     * 部署默认值不得开放演示管理员身份。
+     *
+     * <p>Demo 签发端点公开返回带 ADMIN 角色的 Token。如果部署默认开启它、或 JWT 密钥回落到
+     * 仓库公开的开发默认值，公网部署的 RBAC 就形同虚设：缺密钥必须让 compose 启动失败，
+     * 开演示必须显式叠加 docker-compose.demo.yml。</p>
+     */
+    @Test
+    void composeShouldNotEnableDemoIssuerOrDefaultJwtSecretByDeployment() throws IOException {
+        String compose = Files.readString(Path.of("docker-compose.yml"));
+
+        assertTrue(compose.contains(
+                "SMARTCS_SECURITY_DEMO_ISSUER_ENABLED: ${SMARTCS_SECURITY_DEMO_ISSUER_ENABLED:-false}"));
+        // 必填变量（:? 语法）且没有开发默认密钥回落。
+        assertTrue(compose.contains("SMARTCS_SECURITY_JWT_SECRET: ${SMARTCS_SECURITY_JWT_SECRET:?"));
+        assertTrue(!compose.contains("dev-only-smart-cs-agent-change-this-secret-32bytes"));
+    }
+
+    /** 演示开关只能通过显式的 demo 覆盖层打开，覆盖层本身不得引入密钥默认值。 */
+    @Test
+    void demoOverlayShouldExplicitlyEnableDemoIssuerWithoutSecretDefault() throws IOException {
+        String demoOverlay = Files.readString(Path.of("docker-compose.demo.yml"));
+
+        assertTrue(demoOverlay.contains("SMARTCS_SECURITY_DEMO_ISSUER_ENABLED: \"true\""));
+        assertTrue(demoOverlay.contains("smart-cs-agent"));
+        assertTrue(!demoOverlay.contains("JWT_SECRET"));
+    }
 }

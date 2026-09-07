@@ -39,7 +39,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>本测试不产出对比结论数字（Fake LLM 下两端回复高度模板化）；对比报告与结论
  * 由 M4 真实模型跑批生成，本测试落盘的 scenario-comparison 报告用于验证管道与结构。</p>
  */
-@SpringBootTest(properties = "smartcs.llm.execution.call-timeout-ms=600")
+@SpringBootTest(properties = {
+        "smartcs.llm.execution.call-timeout-ms=600",
+        "smartcs.security.demo-issuer-enabled=true",
+        "smartcs.security.jwt-secret=test-only-smart-cs-jwt-secret-32-bytes-ok"
+})
 @AutoConfigureMockMvc
 class ScenarioComparisonEvaluationTest {
 

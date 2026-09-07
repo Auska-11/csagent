@@ -1,0 +1,14 @@
+# 本地学习工作台演示覆盖层。
+#
+# 用法：docker compose -f docker-compose.yml -f docker-compose.demo.yml up
+# 作用：打开 Demo Token 签发（POST /api/auth/demo/tokens 返回演示用户短期 JWT）。
+#
+# 边界：
+# - 只用于本地或可信内网演示。该端点公开返回包含 ADMIN 角色的 Token，
+#   直接用于公网部署时 RBAC 不构成有效访问保护。
+# - 签名密钥仍由基础文件的必填项提供（>=32 字节私有随机值，见 docker-compose.yml）；
+#   如果沿用仓库公开的开发默认密钥，应用会在启动期直接失败。
+services:
+  smart-cs-agent:
+    environment:
+      SMARTCS_SECURITY_DEMO_ISSUER_ENABLED: "true"

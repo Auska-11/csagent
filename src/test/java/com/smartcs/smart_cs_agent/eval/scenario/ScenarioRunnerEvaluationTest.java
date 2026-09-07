@@ -31,7 +31,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Guard 会在 600ms 后判定 LLM_CALL_DEADLINE_EXCEEDED 并走模板降级，
  * 遗留的守护线程 sleep 不阻塞测试。</p>
  */
-@SpringBootTest(properties = "smartcs.llm.execution.call-timeout-ms=600")
+@SpringBootTest(properties = {
+        "smartcs.llm.execution.call-timeout-ms=600",
+        "smartcs.security.demo-issuer-enabled=true",
+        "smartcs.security.jwt-secret=test-only-smart-cs-jwt-secret-32-bytes-ok"
+})
 @AutoConfigureMockMvc
 class ScenarioRunnerEvaluationTest {
 

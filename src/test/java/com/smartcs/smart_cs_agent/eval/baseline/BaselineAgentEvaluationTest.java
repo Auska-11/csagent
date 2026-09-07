@@ -38,7 +38,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Trace 词汇与 Workflow 侧一致（同口径分类）、单循环无确认门控/无模板降级
  * （LLM 失败整轮 503）。真实模型的对照数字由 M4 跑批产出，不在本类范围。</p>
  */
-@SpringBootTest(properties = "smartcs.llm.execution.call-timeout-ms=600")
+@SpringBootTest(properties = {
+        "smartcs.llm.execution.call-timeout-ms=600",
+        "smartcs.security.demo-issuer-enabled=true",
+        "smartcs.security.jwt-secret=test-only-smart-cs-jwt-secret-32-bytes-ok"
+})
 @AutoConfigureMockMvc
 class BaselineAgentEvaluationTest {
 

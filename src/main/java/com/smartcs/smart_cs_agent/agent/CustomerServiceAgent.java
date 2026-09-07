@@ -6,7 +6,11 @@ import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.agent.context.WorkflowStatus;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * 客服 Agent
@@ -39,6 +43,15 @@ public class CustomerServiceAgent {
     private final ConversationStore conversationStore;
 
     /**
+     * 一轮对话的 wall-clock 预算（毫秒）。
+     *
+     * <p>预算从进入 {@link #chatWithTrace} 就开始计时，排队等会话锁的时间同样消耗预算；
+     * 不能等拿到锁之后才由 Runtime 重新计满 30 秒，否则同一会话连续提交慢请求时，
+     * 单个请求的总耗时可能远超预算。</p>
+     */
+    private final long turnTimeoutMs;
+
+    /**
      * 构造函数注入
      *
      * 【Spring 依赖注入】
@@ -47,11 +60,23 @@ public class CustomerServiceAgent {
      *
      * @param runtime 执行引擎
      * @param conversationStore 会话状态存储
+     * @param turnTimeoutMs 单轮对话总预算（含排队等待）
      */
+    @Autowired
     public CustomerServiceAgent(AgentRuntime runtime,
-                                ConversationStore conversationStore) {
+                                ConversationStore conversationStore,
+                                @Value("${smartcs.agent.turn-timeout-ms:30000}") long turnTimeoutMs) {
         this.runtime = runtime;
         this.conversationStore = conversationStore;
+        if (turnTimeoutMs <= 0) {
+            throw new IllegalArgumentException("smartcs.agent.turn-timeout-ms must be positive");
+        }
+        this.turnTimeoutMs = turnTimeoutMs;
+    }
+
+    /** 兼容旧测试：不显式传预算时使用与生产配置相同的默认 30 秒。 */
+    public CustomerServiceAgent(AgentRuntime runtime, ConversationStore conversationStore) {
+        this(runtime, conversationStore, 30_000);
     }
 
     /**
@@ -122,10 +147,16 @@ public class CustomerServiceAgent {
     public ChatResponse chatWithTrace(ChatRequest request) {
         // 一整轮都放在完整 ConversationKey 对应的串行锁中。
         // 这不仅保护 Map 读取，还保护 Workflow 状态转换和有副作用 Capability 的调用。
-        return conversationStore.executeSerially(request, state -> {
+        // 预算从这里就开始计时：排队等锁 + 执行共享同一份 wall-clock 预算；
+        // 排队超出预算时 ConversationStore 直接抛 ConversationBusyException 快速失败。
+        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(turnTimeoutMs);
+        return conversationStore.executeSerially(request, deadlineNanos, (state, remainingBudgetMs) -> {
             // ChatRequest 负责当前输入，ConversationState 负责跨轮状态，
             // TurnContext 负责本轮观察结果和最终回复。
             TurnContext context = new TurnContext(request, state);
+            // 把"排队之后剩余的预算"预置进本轮上下文（ConversationStore 保证 ≥1ms），
+            // AgentRuntime 看到预算已启动就不会再用默认值重新计满 30 秒。
+            context.startTurnBudget(remainingBudgetMs);
 
             String reply = runtime.runTurn(context);
             // HANDED_OFF 是本轮终态（下一轮会重新路由并覆盖状态），此刻读取即“本轮是否转人工”，

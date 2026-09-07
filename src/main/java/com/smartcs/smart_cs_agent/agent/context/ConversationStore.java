@@ -9,8 +9,9 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 
 /**
@@ -50,15 +51,26 @@ public class ConversationStore {
     private final int summaryMemoryMaxLength;
 
     /**
-     * 每个完整 ConversationKey 一把独立锁。
+     * 会话串行锁使用固定容量条纹。
      *
      * <p>不能只依赖 ConcurrentHashMap：它只能保证 Map 自身操作安全，不能保证
      * “读取状态 -> 执行多步 Workflow -> 保存状态”这一整段业务事务不被另一个请求插入。</p>
      *
-     * <p>锁和状态必须使用同一种 key。如果状态按复合键隔离，锁却仍然只按 conversationId，
-     * 不同用户碰巧使用同名会话时就会无故互相阻塞。</p>
+     * <p>旧实现为每个 ConversationKey 在无界 Map 里创建一把独立锁，且永远不回收——
+     * 每个新会话都会泄漏一把锁。固定 256 条纹让锁数量与并发度解耦：不同会话通常仍可并行，
+     * 极少数共享同一条纹的会话只会产生假性排队，不影响正确性（同一会话永远落在同一条纹）。</p>
      */
-    private final Map<ConversationKey, ReentrantLock> conversationLocks = new ConcurrentHashMap<>();
+    private static final int LOCK_STRIPE_COUNT = 256;
+
+    /**
+     * 非主链路入口（save/clear/兼容版 executeSerially）等待会话锁的硬上限。
+     *
+     * <p>主链路 chatWithTrace 传入自己的 deadline，排队时间计入整轮请求预算；
+     * 这里只保证其余入口也不会无限期挂住请求线程。</p>
+     */
+    private static final long DEFAULT_LOCK_WAIT_MS = 30_000;
+
+    private final ReentrantLock[] lockStripes;
 
     /** Spring 生产构造函数，会注入当前配置选中的 SessionStore 实现。 */
     @Autowired
@@ -78,6 +90,10 @@ public class ConversationStore {
         this.sessionStore = sessionStore;
         this.workflowStateMigrationRegistry = workflowStateMigrationRegistry;
         this.summaryMemoryMaxLength = memorySafetyProperties.getSummaryMaxLength();
+        this.lockStripes = new ReentrantLock[LOCK_STRIPE_COUNT];
+        for (int i = 0; i < LOCK_STRIPE_COUNT; i++) {
+            lockStripes[i] = new ReentrantLock();
+        }
     }
 
     /** 兼容显式传入迁移注册表的非 Spring 测试。 */
@@ -131,14 +147,13 @@ public class ConversationStore {
             throw new IllegalArgumentException("Conversation state owner does not match storage key");
         }
 
-        ReentrantLock lock = conversationLocks.computeIfAbsent(key, ignored -> new ReentrantLock());
-        lock.lock();
+        ReentrantLock lock = acquireLock(key, TimeUnit.MILLISECONDS.toNanos(DEFAULT_LOCK_WAIT_MS));
         try {
             long expectedVersion = sessionStore.load(key).map(SessionRecord::version).orElse(0L);
             sessionStore.save(
-                    key,
-                    expectedVersion,
-                    workflowStateMigrationRegistry.snapshotForPersistence(state)
+                key,
+                expectedVersion,
+                workflowStateMigrationRegistry.snapshotForPersistence(state)
             );
         } finally {
             lock.unlock();
@@ -148,10 +163,29 @@ public class ConversationStore {
     /**
      * 在会话级串行锁内执行完整的一轮处理。
      *
-     * <p>不同 ConversationKey 使用不同锁，仍然可以并行；只有同一 owner 的同一会话会排队。
+     * <p>不同 ConversationKey 通常使用不同条纹，仍然可以并行；只有同一 owner 的同一会话会排队。
      * operation 成功后使用读取时的版本做 CAS 保存，调用方不需要手工管理版本。</p>
      */
     public <T> T executeSerially(ChatRequest request, Function<ConversationState, T> operation) {
+        return executeSerially(
+                request,
+                System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(DEFAULT_LOCK_WAIT_MS),
+                (state, remainingBudgetMs) -> operation.apply(state)
+        );
+    }
+
+    /**
+     * 在会话级串行锁内执行完整的一轮处理，排队等待受 deadlineNanos 约束。
+     *
+     * <p>这是 Agent 主链路入口：预算在进入本方法前就开始计时，等待锁的时间同样消耗预算；
+     * 拿到锁后把“剩余毫秒数”交给 operation，调用方（AgentRuntime）应把它作为本轮预算上限，
+     * 保证 排队 + 执行 的总时长被同一份 wall-clock 预算封顶，而不是 排队 + 各自 30 秒。</p>
+     *
+     * <p>排队超出 deadline 时抛出 {@link ConversationBusyException} 快速失败，不执行任何业务。</p>
+     */
+    public <T> T executeSerially(ChatRequest request,
+                                 long deadlineNanos,
+                                 BiFunction<ConversationState, Long, T> operation) {
         if (request == null) {
             throw new IllegalArgumentException("request cannot be null");
         }
@@ -160,16 +194,15 @@ public class ConversationStore {
         }
 
         ConversationKey key = ConversationKey.from(request);
-        ReentrantLock lock = conversationLocks.computeIfAbsent(key, ignored -> new ReentrantLock());
-        lock.lock();
+        ReentrantLock lock = acquireLock(key, deadlineNanos - System.nanoTime());
         try {
             LoadedConversation loaded = loadForTurn(key, request);
             ConversationState state = loaded.state();
-            T result = operation.apply(state);
+            T result = operation.apply(state, remainingBudgetMs(deadlineNanos));
             sessionStore.save(
-                    key,
-                    loaded.version(),
-                    workflowStateMigrationRegistry.snapshotForPersistence(state)
+                key,
+                loaded.version(),
+                workflowStateMigrationRegistry.snapshotForPersistence(state)
             );
             return result;
         } finally {
@@ -206,16 +239,40 @@ public class ConversationStore {
 
         // clear 也要进入同一把锁。如果一轮 Workflow 正在执行，clear 会等它保存完成后再删除；
         // 否则可能出现“用户刚清空，旧请求又在 finally 前把状态保存回来”的竞态。
-        ReentrantLock lock = conversationLocks.computeIfAbsent(key, ignored -> new ReentrantLock());
-        lock.lock();
+        ReentrantLock lock = acquireLock(key, TimeUnit.MILLISECONDS.toNanos(DEFAULT_LOCK_WAIT_MS));
         try {
             SessionRecord record = sessionStore.load(key).orElse(null);
             return record != null && sessionStore.delete(key, record.version());
         } finally {
             lock.unlock();
-            // 不在这里移除 lock：可能还有请求已经拿到了这把锁并正在等待。
-            // 少量轻量 ReentrantLock 留在内存中比制造两把并发锁更安全。
         }
+    }
+
+    /**
+     * 在 deadline 前尝试获取会话所在条纹的锁，超时抛出 {@link ConversationBusyException}。
+     *
+     * <p>使用 tryLock 而不是无限 lock()：同一会话连续提交慢请求时，后来的请求会在预算内
+     * 快速失败并明确告知重试，而不是无限排队把 30 秒预算变成“排队 30N + 执行 30 秒”。</p>
+     */
+    private ReentrantLock acquireLock(ConversationKey key, long waitNanos) {
+        ReentrantLock lock = lockStripes[Math.floorMod(key.hashCode(), LOCK_STRIPE_COUNT)];
+        if (waitNanos <= 0) {
+            // 预算已耗尽：即使锁空闲也不能开始执行，否则会以“假装还有 1ms”的预算跑完整轮 LLM。
+            throw new ConversationBusyException(key);
+        }
+        try {
+            if (!lock.tryLock(waitNanos, TimeUnit.NANOSECONDS)) {
+                throw new ConversationBusyException(key);
+            }
+            return lock;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new ConversationBusyException(key);
+        }
+    }
+
+    private long remainingBudgetMs(long deadlineNanos) {
+        return Math.max(1, TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime()));
     }
 
     private LoadedConversation loadForTurn(ConversationKey key, ChatRequest request) {

@@ -1,13 +1,15 @@
 package com.smartcs.smart_cs_agent.repository;
 
 import com.smartcs.smart_cs_agent.model.Order;
+import com.smartcs.smart_cs_agent.persistence.DdlMigrationRunner;
 import com.smartcs.smart_cs_agent.persistence.MyBatisMapperExecutor;
 import com.smartcs.smart_cs_agent.persistence.mybatis.mapper.OrderMapper;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -17,7 +19,7 @@ import java.util.stream.Collectors;
 public class OrderRepository {
 
     // 模拟订单表：orderId -> Order 对象
-    private final Map<String, Order> orderTable = new HashMap<>();
+    private final Map<String, Order> orderTable = new ConcurrentHashMap<>();
 
     private final OrderMapper mapper;
     private final MyBatisMapperExecutor mapperExecutor;
@@ -52,6 +54,8 @@ public class OrderRepository {
 
     private void initJdbcTable() {
         mapperExecutor.run(mapper::createTable);
+        // 旧表补 tenant_id 列；列已存在时 MySQL 报 Duplicate column name，属预期的幂等结果。
+        DdlMigrationRunner.run(mapperExecutor, mapper::ensureTenantColumn, "Duplicate column name");
 
         // 第一版使用 upsert 写入演示数据，保证重复启动不会插入重复订单。
         seedJdbc(new Order("ORD-001", "USER-001", "PROD-001", "已发货", "SF1234567890"));
@@ -83,14 +87,20 @@ public class OrderRepository {
     }
 
     /**
-     * 根据用户ID查询所有订单
+     * 按租户 + 用户查询订单。
+     *
+     * <p>订单归属必须同时匹配 tenantId 和 userId：如果未来两个租户出现相同用户 ID，
+     * 只按 userId 过滤会让双方看到彼此的订单。</p>
      */
-    public List<Order> findByUserId(String userId) {
+    public List<Order> findByTenantIdAndUserId(String tenantId, String userId) {
+        String normalizedTenant = tenantId == null || tenantId.isBlank()
+                ? Order.DEFAULT_TENANT_ID
+                : tenantId.trim();
         if (isJdbcMode()) {
-            return mapperExecutor.execute(() -> mapper.findByUserId(userId));
+            return mapperExecutor.execute(() -> mapper.findByTenantIdAndUserId(normalizedTenant, userId));
         }
         return orderTable.values().stream()
-            .filter(o -> o.getUserId().equals(userId))
+            .filter(o -> normalizedTenant.equals(o.getTenantId()) && o.getUserId().equals(userId))
             .collect(Collectors.toList());
     }
 

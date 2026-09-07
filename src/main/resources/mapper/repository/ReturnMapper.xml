@@ -16,9 +16,22 @@
             return_id VARCHAR(64) PRIMARY KEY,
             order_id VARCHAR(64) NOT NULL,
             reason TEXT,
-            status VARCHAR(64) NOT NULL
+            status VARCHAR(64) NOT NULL,
+            UNIQUE KEY uk_cs_return_order_id (order_id)
         )
     </update>
+
+    <!-- 业务规则“一个订单最多一笔退货申请”由数据库唯一索引兜底：即使应用层查重存在竞态，
+         同一订单的两笔并发申请也只有一笔能写入。 -->
+    <update id="ensureOrderUniqueKey">
+        ALTER TABLE cs_return_record ADD UNIQUE KEY uk_cs_return_order_id (order_id)
+    </update>
+
+    <!-- 创建语义：唯一键冲突必须上抛，不能像 upsert 一样把先创建的记录静默改掉。 -->
+    <insert id="insert">
+        INSERT INTO cs_return_record(return_id, order_id, reason, status)
+        VALUES (#{returnId}, #{orderId}, #{reason}, #{status})
+    </insert>
 
     <insert id="upsert">
         INSERT INTO cs_return_record(return_id, order_id, reason, status)
@@ -41,9 +54,5 @@
         WHERE order_id = #{orderId}
         ORDER BY return_id
         LIMIT 1
-    </select>
-
-    <select id="count" resultType="long">
-        SELECT COUNT(*) FROM cs_return_record
     </select>
 </mapper>

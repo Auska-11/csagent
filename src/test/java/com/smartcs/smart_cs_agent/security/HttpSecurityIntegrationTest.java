@@ -27,7 +27,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** 真实 SecurityFilterChain、JWT 签名校验和端点角色矩阵集成测试。 */
-@SpringBootTest
+// demo issuer 默认已关闭；本类覆盖“显式开启 + 私有测试密钥”的演示工作台形态。
+@SpringBootTest(properties = {
+        "smartcs.security.demo-issuer-enabled=true",
+        "smartcs.security.jwt-secret=test-only-smart-cs-jwt-secret-32-bytes-ok"
+})
 @AutoConfigureMockMvc
 class HttpSecurityIntegrationTest {
 

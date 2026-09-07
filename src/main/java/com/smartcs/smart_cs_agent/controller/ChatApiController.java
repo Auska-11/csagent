@@ -3,6 +3,7 @@ package com.smartcs.smart_cs_agent.controller;
 import com.smartcs.smart_cs_agent.agent.CustomerServiceAgent;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
+import com.smartcs.smart_cs_agent.agent.context.ConversationBusyException;
 import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ConversationMemorySnapshot;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
@@ -152,6 +153,9 @@ public class ChatApiController {
     private String failureCode(RuntimeException exception) {
         if (exception instanceof SessionVersionConflictException) {
             return "SESSION_VERSION_CONFLICT";
+        }
+        if (exception instanceof ConversationBusyException) {
+            return "CONVERSATION_BUSY";
         }
         return "CHAT_TURN_EXECUTION_FAILED";
     }

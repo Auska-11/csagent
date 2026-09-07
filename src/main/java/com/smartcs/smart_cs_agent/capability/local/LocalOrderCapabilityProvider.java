@@ -98,7 +98,9 @@ public class LocalOrderCapabilityProvider implements CapabilityProvider {
         }
 
         String authenticatedUserId = context.getPrincipal().getUserId();
-        if (!authenticatedUserId.equals(order.getUserId())) {
+        // 归属校验同时匹配租户和用户：订单号不是访问凭证，不同租户的同名用户也不能互相查单。
+        if (!authenticatedUserId.equals(order.getUserId())
+                || !tenantOf(context).equals(order.getTenantId())) {
             // 归属失败时 data 必须为 null，不能在错误响应里泄露商品、状态或物流号。
             return CapabilityResult.businessRejected(
                     CapabilityIds.ORDER_LOOKUP,
@@ -119,7 +121,8 @@ public class LocalOrderCapabilityProvider implements CapabilityProvider {
 
     private CapabilityResult<OrderListResult> listForAuthenticatedUser(ExecutionContext context) {
         String authenticatedUserId = context.getPrincipal().getUserId();
-        List<OrderSummary> orders = orderRepository.findByUserId(authenticatedUserId).stream()
+        List<OrderSummary> orders = orderRepository
+                .findByTenantIdAndUserId(tenantOf(context), authenticatedUserId).stream()
                 .map(this::toSummary)
                 .toList();
         return CapabilityResult.success(
@@ -145,6 +148,15 @@ public class LocalOrderCapabilityProvider implements CapabilityProvider {
     private String textArgument(CapabilityCall call, String key) {
         Object value = call.getArguments().get(key);
         return value == null ? "" : value.toString().trim();
+    }
+
+    /**
+     * 租户以服务端认证 Principal 为准：它是 JWT 校验后的可信字段，不能读取可能被误传的
+     * 请求元数据。未携带租户的 legacy/test 上下文按演示默认租户处理。
+     */
+    private String tenantOf(ExecutionContext context) {
+        String tenantId = context.getPrincipal().getTenantId();
+        return tenantId == null || tenantId.isBlank() ? Order.DEFAULT_TENANT_ID : tenantId.trim();
     }
 
     private CapabilityDefinition lookupDefinition() {

@@ -48,12 +48,14 @@ smartcs:
       max-threads: ${SMARTCS_LLM_EXECUTION_MAX_THREADS:8}
       queue-capacity: ${SMARTCS_LLM_EXECUTION_QUEUE_CAPACITY:32}
   security:
-    # 本地工作台通过 demo issuer 获取短期 JWT；生产环境必须设为 false，并由真实身份系统签发。
-    demo-issuer-enabled: ${SMARTCS_SECURITY_DEMO_ISSUER_ENABLED:true}
+    # Demo issuer 默认关闭：它会公开返回带 ADMIN 角色的短期 Token，只能作为本地演示配置显式开启
+    #（docker-compose.demo.yml 或 SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=true，且必须同时配置私有 JWT 密钥）。
+    demo-issuer-enabled: ${SMARTCS_SECURITY_DEMO_ISSUER_ENABLED:false}
     issuer: ${SMARTCS_SECURITY_ISSUER:smart-cs-agent}
     audience: ${SMARTCS_SECURITY_AUDIENCE:smart-cs-api}
     default-tenant-id: ${SMARTCS_SECURITY_DEFAULT_TENANT_ID:default}
-    # HS256 至少需要 32 字节。这里的默认值只用于本地，部署时必须替换。
+    # HS256 至少需要 32 字节。默认值只服务于本地裸跑 JAR 且不开 demo 签发的场景；
+    # compose 部署强制显式提供密钥；开启 demo 签发时使用该公开默认值会直接启动失败。
     jwt-secret: ${SMARTCS_SECURITY_JWT_SECRET:dev-only-smart-cs-agent-change-this-secret-32bytes}
     token-ttl-seconds: ${SMARTCS_SECURITY_TOKEN_TTL_SECONDS:28800}
     clock-skew-seconds: ${SMARTCS_SECURITY_CLOCK_SKEW_SECONDS:30}

@@ -34,7 +34,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>Controller MVC 测试里的 Service 是 Mock，只能证明 URL 和 JSON 映射正确。本测试改用真实 JWT、
  * SecurityFilterChain、Admin Service 和 Memory Store，验证一次人工决定确实同时改变主记录并留下审计。</p>
  */
-@SpringBootTest(properties = "smartcs.test.context=pending-handoff-admin-integration")
+@SpringBootTest(properties = {
+        "smartcs.test.context=pending-handoff-admin-integration",
+        "smartcs.security.demo-issuer-enabled=true",
+        "smartcs.security.jwt-secret=test-only-smart-cs-jwt-secret-32-bytes-ok"
+})
 @AutoConfigureMockMvc
 class PendingHandoffAdminIntegrationTest {
 

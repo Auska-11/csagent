@@ -205,23 +205,23 @@ Cache-Control: no-store
 
 页面把 token 保存在 JavaScript 内存状态中，不写入 localStorage，也不放在 URL 或请求体里。
 
-生产环境必须配置：
+生产环境不需要再手动关闭 Demo：三处默认值都已改为关闭（`SecurityProperties` 代码默认、`application.yml` 的 `${SMARTCS_SECURITY_DEMO_ISSUER_ENABLED:false}`、`docker-compose.yml` 的 `:-false`），
+且 `docker-compose.yml` 将 `SMARTCS_SECURITY_JWT_SECRET` 声明为必填变量——缺失时容器直接拒绝启动，不再回退到仓库公开的开发密钥。
+此外 `SecurityProperties` 启动期守卫会拒绝“Demo 签发开启 + 仓库公开开发密钥”的组合（`IllegalStateException` 启动失败），
+因此把公开签发接口带到公网的前提是显式提供私有随机密钥。
 
-```text
-SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=false
-SMARTCS_SECURITY_JWT_SECRET=<至少 32 字节随机密钥>
-```
+本地演示需要显式开启：叠加 `docker-compose.demo.yml`（只覆盖 `SMARTCS_SECURITY_DEMO_ISSUER_ENABLED: "true"`，不提供任何密钥默认值）或设置同名环境变量。
 
 关闭后 Demo 地址返回 404，而不是暴露“这里有一个被关闭的本地登录器”。
 
 ## 10. 配置项
 
 ```text
-SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=true
+SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=false
 SMARTCS_SECURITY_ISSUER=smart-cs-agent
 SMARTCS_SECURITY_AUDIENCE=smart-cs-api
 SMARTCS_SECURITY_DEFAULT_TENANT_ID=default
-SMARTCS_SECURITY_JWT_SECRET=replace-with-at-least-32-random-bytes
+SMARTCS_SECURITY_JWT_SECRET=<必填：至少 32 字节私有随机密钥，compose 缺失即拒绝启动>
 SMARTCS_SECURITY_TOKEN_TTL_SECONDS=28800
 SMARTCS_SECURITY_CLOCK_SKEW_SECONDS=30
 SMARTCS_MCP_REMOTE_TOKEN=<远程服务签发的 MCP_CLIENT JWT>

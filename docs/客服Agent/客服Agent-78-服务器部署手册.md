@@ -47,8 +47,8 @@
    ssh myserver 'chmod 600 /opt/csagent/.env'
    ```
    然后在服务器上编辑 `/opt/csagent/.env`：
-   - `SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=false`（公网形态先关，见 §6 决策）；
-   - `SMARTCS_SECURITY_JWT_SECRET=` 改为 `openssl rand -base64 48` 新值（旧 token 全部失效，无影响）；
+   - `SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=false`（公网形态先关，见 §6 决策；2026-09-07 起 compose 默认即 false，不设也关闭）；
+   - `SMARTCS_SECURITY_JWT_SECRET=` 改为 `openssl rand -base64 48` 新值（旧 token 全部失效，无影响）。**2026-09-07 起为硬性要求**：compose 将其声明为必填变量，`.env` 缺失时 `up -d` 直接报错拒绝启动，不再回退开发密钥；“Demo 签发开 + 仓库公开开发密钥”组合应用侧也会启动失败；
    - 删除/注释 `SMARTCS_JDBC_URL` 行——容器内走 compose 默认 `jdbc:mysql://mysql:3306/...`（.env 里那行是 Mac 宿主机形态 `127.0.0.1:3307`，带 `&`，注意别用 shell source 编辑）；
    - MySQL 口令：**空库路径**可改强口令（`SMARTCS_MYSQL_PASSWORD`/`ROOT_PASSWORD` 仅首次初始化数据卷时生效）；**迁移路径**必须保持与 Mac 一致（账号在 dump 里）；
    - `SMARTCS_XIANYU_*` 先不动（默认关闭），切换闲鱼时再开（§4）。
@@ -143,3 +143,4 @@ cd /opt/csagent && docker compose -f docker-compose.yml -f docker-compose.prebui
 | 2026-09-05 | 凌晨完成服务器准备（Docker/加速/预拉镜像）与全部部署物（本表 §1）；手册创建。首次部署与闲鱼切换待基线跑批完成后执行 |
 | 2026-09-05 | **首次部署 + 闲鱼切换一次完成（15:52 起 7×24 运行态）**。流程：Mac 打包（6s，含 skills×10 与 React UI）→ sync-to-server → 双 .env scp + chmod 600 → 服务器侧改造（demo issuer 关、JDBC_URL 注释走容器内网、`openssl rand` 新 JWT 密钥与 hex 强 MySQL 口令——APP 口令双写 `SMARTCS_MYSQL_PASSWORD`+`SMARTCS_JDBC_PASSWORD` 保持一致、`SMARTCS_XIANYU_ENABLED=true`、服务令牌经 stdin 管道由侧车 `CS_AGENT_TOKEN` 换名注入不落终端）→ Mac 侧车 kill（cookie 单点登录让位）→ `--profile xianyu up -d --build`。**两个首跑缺陷当场修掉**：① `.dockerignore` 整目录排除 `target` 使 `Dockerfile.prebuilt` 的 `COPY target/*.jar` 必失败——改 `target/*` + `!target/smart-cs-agent-0.0.1-SNAPSHOT.jar` 放行单个 JAR；② sync 脚本对不存在的远端 `target/` 传单文件报 `change_dir failed`——补 `ssh mkdir -p`。§3 手册错表名 `orders`→`cs_order`、技能包 8→10 一并勘误。验证：四容器 healthy/running（agent 451M/768M 上限、mysql 462M、qdrant 11M、侧车 27M，系统余 1.9G）；`/actuator/health` UP（db/persistence 均 UP）；11 张表 + ORD-001..004/RET-001 播种、utf8mb4 中文完好；侧车 token→/reg→BRIDGE 在线（卖家 2223022576689），45 分钟窗口零超时零异常。**遗留**：买家真机消息验证需用户小号发消息（无法自主完成）；Web UI 需 SSH 隧道（`ssh -N -L 8080:localhost:8080 myserver`） |
 | 2026-09-06 | **买家真机消息验证通过（00:17，部署后 8.5h）**。小号买家（3579903100）在商品 1079979582985 会话发「你好」：侧车 0.7s 内完成 Java 会话注册（`USER-XY-a7f5a18f`，商品知识草稿首次落盘 `data/xianyu-items/1079979582985.md`），5s 内回复「您好！我是小智…」发回闲鱼，首条免责话术按设计追加；会话已入 `cs_agent_session`（jdbc 持久化生效）。**运行观察**：8.5h 内仅 1 次 WebSocket 断连（00:15 Session 过期重试环 7s 自愈），其余为每小时 token 刷新后的例行重注册；内存 agent 480M/侧车 40M 稳定。**已知边界**：容器内 cookie 经 env 注入而非 .env 文件，token 刷新后的新 cookie 无法写回（`update_env_cookies` 警告）——进程内存内自持可运行，但**容器重建仍用初始 cookie**，若未来重启报 Session 过期需重抓 cookie 更新 `.env` 后 `up -d`。 |
+| 2026-09-07 | **安全与并发四项修复落地（详见 doc-76 当批记录）**：① 退货单号改“毫秒时间戳+进程内序列”base36，`ReturnRepository.create()` 插入语义 + `uk_cs_return_order_id` 唯一键幂等迁移（跨订单并发双成功、同订单第二笔被 DB 查重拒绝）；② 会话锁改 256 条纹固定数组，排队等待计入 `chatWithTrace` 入口起的 30s 预算，超时快速失败 `409 CONVERSATION_BUSY`；③ tenantId 贯穿订单/退货业务表（可信 Principal 租户，跨租户拒绝测试）；④ **Demo issuer 三处默认改关 + compose 必填 `SMARTCS_SECURITY_JWT_SECRET` + 启动期“Demo+开发密钥”守卫**，本地演示叠加 `docker-compose.demo.yml`。服务器 `.env` 在 09-05 已含私有密钥与 `DEMO_ISSUER_ENABLED=false`，本次升级无需改 `.env`，`up -d` 行为不变。 |

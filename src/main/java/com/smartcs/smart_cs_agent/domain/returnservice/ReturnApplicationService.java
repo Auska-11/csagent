@@ -11,7 +11,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 退货申请领域服务：副作用规则的最后一道防线。
@@ -22,12 +21,20 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class ReturnApplicationService {
 
+    /**
+     * 订单锁使用固定容量条纹：不同订单尽量并行，锁对象数量与订单数解耦。
+     *
+     * <p>旧实现按 orderId 在无界 Map 里 computeIfAbsent 锁对象，订单数增长会留下永不回收的
+     * 条目；固定 64 条纹只可能造成少量不同订单之间的假性互斥，不影响正确性——
+     * 同一订单永远落在同一条纹上，“查重 + 写入”仍是原子执行。</p>
+     */
+    private static final int ORDER_LOCK_STRIPES = 64;
+
     private final ReturnRepository returnRepository;
     private final OrderRepository orderRepository;
     private final ProductRepository productRepository;
 
-    /** 不同订单可并行，同一订单的“查重 + 写入”必须原子执行。 */
-    private final Map<String, Object> orderLocks = new ConcurrentHashMap<>();
+    private final Object[] orderLockStripes;
 
     public ReturnApplicationService(ReturnRepository returnRepository,
                                     OrderRepository orderRepository,
@@ -35,6 +42,10 @@ public class ReturnApplicationService {
         this.returnRepository = returnRepository;
         this.orderRepository = orderRepository;
         this.productRepository = productRepository;
+        this.orderLockStripes = new Object[ORDER_LOCK_STRIPES];
+        for (int i = 0; i < ORDER_LOCK_STRIPES; i++) {
+            orderLockStripes[i] = new Object();
+        }
     }
 
     public ReturnApplicationResult apply(String orderId, String reason, ExecutionContext context) {
@@ -54,8 +65,7 @@ public class ReturnApplicationService {
             );
         }
 
-        Object lock = orderLocks.computeIfAbsent(normalizedOrderId, ignored -> new Object());
-        synchronized (lock) {
+        synchronized (lockFor(normalizedOrderId)) {
             Order order = orderRepository.findByOrderId(normalizedOrderId);
             if (order == null) {
                 return ReturnApplicationResult.rejected(
@@ -64,7 +74,9 @@ public class ReturnApplicationService {
                 );
             }
 
-            if (!context.getPrincipal().getUserId().equals(order.getUserId())) {
+            // 归属校验同时匹配租户和用户：不同租户出现相同用户 ID 时，双方不能互相申请退货。
+            if (!principalTenant(context).equals(order.getTenantId())
+                    || !context.getPrincipal().getUserId().equals(order.getUserId())) {
                 return ReturnApplicationResult.rejected(
                         "ORDER_OWNERSHIP_MISMATCH",
                         "该订单不属于当前认证用户，无法申请退货。"
@@ -96,7 +108,16 @@ public class ReturnApplicationService {
                     reason.trim(),
                     "Under Review"
             );
-            returnRepository.save(record);
+            // 插入语义：单号主键或 order_id 唯一索引冲突都说明并发下已有人抢先创建，
+            // 这里按业务重复拒绝，绝不覆盖已有记录。
+            if (!returnRepository.create(record)) {
+                ReturnRecord winner = returnRepository.findByOrderId(normalizedOrderId);
+                return ReturnApplicationResult.rejected(
+                        "DUPLICATE_RETURN_APPLICATION",
+                        "订单 " + normalizedOrderId + " 已有退货申请，退货单号："
+                                + (winner == null ? returnId : winner.getReturnId())
+                );
+            }
 
             String expectedReviewTime = "1-2 business days";
             String message = "Return application submitted:\n"
@@ -112,6 +133,19 @@ public class ReturnApplicationService {
                     expectedReviewTime
             );
         }
+    }
+
+    private Object lockFor(String orderId) {
+        return orderLockStripes[Math.floorMod(orderId.hashCode(), ORDER_LOCK_STRIPES)];
+    }
+
+    /**
+     * 租户以服务端认证 Principal 为准（JWT 校验后的可信字段）；未携带租户的
+     * legacy/test 上下文按演示默认租户处理。
+     */
+    private String principalTenant(ExecutionContext context) {
+        String tenantId = context.getPrincipal().getTenantId();
+        return tenantId == null || tenantId.isBlank() ? Order.DEFAULT_TENANT_ID : tenantId.trim();
     }
 
     private String normalizeOrderId(String orderId) {

@@ -116,6 +116,25 @@ class LocalReturnLookupCapabilityProviderTest {
         assertRejected(result, "AUTHENTICATION_REQUIRED");
     }
 
+    @Test
+    void shouldRejectCrossTenantReturnLookupEvenWithSameUserId() {
+        // RET-001 的订单 ORD-004 属于默认租户的 USER-002；tenant-b 下同名 USER-002 不能查到它。
+        Fixture fixture = fixture();
+        ExecutionContext crossTenant = new ExecutionContext(
+                "trace-return-lookup",
+                AuthenticatedPrincipal.authenticated("tenant-b", "USER-002", Set.of("CUSTOMER")),
+                "tenant-b",
+                "conv-return-lookup",
+                "",
+                Instant.now().plusSeconds(10)
+        );
+
+        CapabilityResult<?> result = fixture.gateway.invoke(call("RET-001"), crossTenant);
+
+        assertRejected(result, "RETURN_OWNERSHIP_MISMATCH");
+        assertNull(result.getData());
+    }
+
     private Fixture fixture() {
         ReturnRepository returns = new ReturnRepository();
         LocalReturnLookupCapabilityProvider provider = new LocalReturnLookupCapabilityProvider(
@@ -134,10 +153,11 @@ class LocalReturnLookupCapabilityProviderTest {
     }
 
     private ExecutionContext authenticated(String userId) {
+        // 演示种子订单属于默认租户；principal 与上下文的租户保持一致，模拟真实 JWT 链路。
         return new ExecutionContext(
                 "trace-return-lookup",
                 AuthenticatedPrincipal.authenticated(userId, Set.of("CUSTOMER")),
-                "tenant-a",
+                "default",
                 "conv-return-lookup",
                 "",
                 Instant.now().plusSeconds(10)

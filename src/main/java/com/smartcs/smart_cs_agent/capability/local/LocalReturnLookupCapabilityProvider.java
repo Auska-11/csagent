@@ -127,7 +127,7 @@ public class LocalReturnLookupCapabilityProvider implements CapabilityProvider {
         }
 
         String principalUserId = context.getPrincipal().getUserId();
-        if (!principalUserId.equals(order.getUserId())) {
+        if (!principalUserId.equals(order.getUserId()) || !tenantOf(context).equals(order.getTenantId())) {
             return CapabilityResult.businessRejected(
                     CapabilityIds.RETURN_LOOKUP,
                     PROVIDER_ID,
@@ -156,5 +156,14 @@ public class LocalReturnLookupCapabilityProvider implements CapabilityProvider {
     private String textArgument(CapabilityCall call, String key) {
         Object value = call.getArguments().get(key);
         return value == null ? "" : value.toString().trim();
+    }
+
+    /**
+     * 租户以服务端认证 Principal 为准：它是 JWT 校验后的可信字段，不能读取可能被误传的
+     * 请求元数据。未携带租户的 legacy/test 上下文按演示默认租户处理。
+     */
+    private String tenantOf(ExecutionContext context) {
+        String tenantId = context.getPrincipal().getTenantId();
+        return tenantId == null || tenantId.isBlank() ? Order.DEFAULT_TENANT_ID : tenantId.trim();
     }
 }

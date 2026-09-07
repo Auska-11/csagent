@@ -423,7 +423,7 @@ Trace 在 `TraceEvent` 构造时统一调用 `TraceDataSanitizer`，对 Map、Li
 
 ### 高频追问 1：为什么有 JWT 还要资源归属校验？
 
-> JWT 只能说明“你是谁”以及 Token 中声明的租户，不能说明“这个订单一定属于你”。如果用户猜到他人的订单号，Provider 仍必须按可信 Principal 校验用户归属，这属于对象级授权。当前订单和退货业务数据还没有完成完整的 tenantId 字段隔离，这也是生产化边界。
+> JWT 只能说明“你是谁”以及 Token 中声明的租户，不能说明“这个订单一定属于你”。如果用户猜到他人的订单号，Provider 仍必须按可信 Principal 校验用户归属，这属于对象级授权。订单与退货业务数据已经带 tenantId 字段（以服务端校验后的 Principal 租户为准，含跨租户拒绝测试）；但这是单库内按 tenant_id 列过滤的演示级隔离，没有按租户的独立库/Schema、租户开通与管理流程，简历不应写成“实现完整多租户数据隔离”。
 
 ### 高频追问 2：Skill 白名单有什么用？
 
@@ -446,8 +446,8 @@ Trace 在 `TraceEvent` 构造时统一调用 `TraceDataSanitizer`，对 Map、Li
 - MCP 用户身份委托尚未完整实现，身份型远程 Capability 会失败关闭。
 - Skill 白名单只在 Agent 的 `CapabilityActionHandler` 链路生效；直接 MCP `tools/call` 没有 Skill 上下文，依赖 MCP 角色、委托限制、Gateway 和 Provider 校验。
 - Agent 白名单只有在 Workflow 成功绑定 Skill Package 时生效；当前所有生产 Workflow 都已绑定，但框架尚未反向强制该不变量，漏配 Package 时会放行，生产应改成启动失败或执行失败关闭。
-- tenantId 已进入会话、执行上下文、幂等和人工转接等边界，但订单、退货等业务仓库尚未完成全量租户字段隔离。
-- 默认配置包含本地 Demo Token issuer 和开发用 HS256 密钥；部署时必须关闭 Demo issuer、替换密钥并接入正式身份系统，当前也没有 JWKS 轮换和 Token 主动撤销体系。
+- tenantId 已贯穿会话、执行上下文、幂等、人工转接以及订单/退货业务表（可信 Principal 租户 + 跨租户拒绝测试）；但仍是单库 tenant_id 列过滤的演示级模型，没有按租户独立存储与租户管理流程，不构成完整多租户数据隔离。
+- Demo Token issuer 现已默认关闭：代码、application.yml 与 docker-compose.yml 三处默认 false，compose 将 SMARTCS_SECURITY_JWT_SECRET 设为必填项，且“Demo 签发 + 仓库公开开发密钥”组合会启动失败。本地演示需显式叠加 docker-compose.demo.yml 或环境变量开启；仍无 JWKS 轮换和 Token 主动撤销体系，正式身份系统待接入。
 
 ## 8. 亮点四：Trace-Monitor-Feedback-Eval 质量闭环
 

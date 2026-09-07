@@ -74,7 +74,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * #   -Dsmartcs.eval.real-comparison.only=normal-policy-return-window
  * </pre>
  */
-@SpringBootTest
+@SpringBootTest(properties = {
+        "smartcs.security.demo-issuer-enabled=true",
+        "smartcs.security.jwt-secret=test-only-smart-cs-jwt-secret-32-bytes-ok"
+})
 @AutoConfigureMockMvc
 @EnabledIf(value = "realComparisonEnabled", disabledReason = "默认关闭：真实模型跑批需要网络与 OPENAI_* 配置（76 号计划 M4 手动路径）")
 class ScenarioComparisonRealModelEvaluationTest {

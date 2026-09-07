@@ -76,8 +76,9 @@ flowchart TD
 POST /api/auth/demo/tokens
 ```
 
-响应带 `Cache-Control: no-store`。生产必须设置 `SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=false`，并由真实
-身份系统签发 JWT。除首页、Demo 签发入口和健康探针外，下面的请求都需要：
+响应带 `Cache-Control: no-store`。Demo 签发器默认关闭（该端点返回 404）；本地工作台需显式设置
+`SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=true` 与私有 JWT 密钥开启，生产由真实身份系统签发 JWT。
+除首页、Demo 签发入口和健康探针外，下面的请求都需要：
 
 ```http
 Authorization: Bearer <JWT>
@@ -324,14 +325,18 @@ $env:OPENAI_BASE_URL="your-openai-compatible-base-url"
 $env:OPENAI_MODEL_NAME="your-model-name"
 ```
 
-本地默认会开启 Demo JWT 签发器。部署到共享或生产环境时至少设置：
+Demo JWT 签发器默认关闭，部署配置不再携带开发密钥。本地要用调试工作台时显式开启（必须换成私有随机密钥，
+“Demo 开启 + 仓库公开开发密钥”会直接启动失败）：
 
 ```powershell
-$env:SMARTCS_SECURITY_DEMO_ISSUER_ENABLED="false"
+$env:SMARTCS_SECURITY_DEMO_ISSUER_ENABLED="true"
 $env:SMARTCS_SECURITY_ISSUER="your-identity-provider"
 $env:SMARTCS_SECURITY_AUDIENCE="smart-cs-api"
-$env:SMARTCS_SECURITY_JWT_SECRET="replace-with-at-least-32-random-bytes"
+$env:SMARTCS_SECURITY_JWT_SECRET="<openssl rand -base64 48 生成的私有随机值>"
 ```
+
+Docker 部署时 `SMARTCS_SECURITY_JWT_SECRET` 为必填项（缺失拒绝启动）；本地演示也可叠加
+`docker-compose.demo.yml` 只开启 Demo 签发。
 
 当前 HS256 方案是单体学习基线；跨服务生产架构建议改为独立 IdP 的 RS256/ES256，并让业务服务只
 持有验证公钥。完整角色矩阵与 MCP 服务身份边界见
@@ -519,7 +524,7 @@ OPENAI_MAX_RETRIES=1
 SMARTCS_AGENT_TURN_TIMEOUT_MS=30000
 SMARTCS_LLM_EXECUTION_CALL_TIMEOUT_MS=12000
 SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=true
-SMARTCS_SECURITY_JWT_SECRET=replace-with-at-least-32-random-bytes
+SMARTCS_SECURITY_JWT_SECRET=<本地私有随机值，openssl rand -base64 48；仓库公开的开发密钥配 Demo 会拒绝启动>
 SMARTCS_AGENT_PORT=8080
 ```
 
