@@ -240,6 +240,19 @@
           )
     </update>
 
+    <!-- 同步路径收到协议性拒绝时使用：没有租约，只能按当前状态收敛。
+         终态（CONFIRMED/MANUALLY_CLOSED）不允许降级，其余状态直接转入人工复核，
+         使记录退出 findDueKeys 的自动恢复扫描。 -->
+    <update id="markNeedsManualReviewByKey">
+        UPDATE cs_pending_handoff
+        SET status = 'NEEDS_MANUAL_REVIEW', failure_type = #{failureType},
+            attempt_count = attempt_count + 1, next_attempt_at = #{nextAttemptAt},
+            version = version + 1, updated_at = #{now}
+        WHERE tenant_id = #{tenantId}
+          AND idempotency_key = #{idempotencyKey}
+          AND status NOT IN ('CONFIRMED', 'MANUALLY_CLOSED')
+    </update>
+
     <select id="findPending" resultMap="pendingRow">
         SELECT outbox_id, tenant_id, idempotency_key, request_fingerprint_hash,
                user_id, conversation_id, reason, summary_text,

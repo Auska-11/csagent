@@ -9,6 +9,8 @@ import com.smartcs.smart_cs_agent.agent.context.ConversationMemorySnapshot;
 import com.smartcs.smart_cs_agent.agent.context.ConversationState;
 import com.smartcs.smart_cs_agent.agent.context.ConversationStore;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuConversationPausedException;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuManualModeService;
 import com.smartcs.smart_cs_agent.memory.UserMemorySnapshot;
 import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
@@ -33,16 +35,28 @@ public class ChatApiController {
     private final MonitorService monitorService;
     private final ConversationStore conversationStore;
     private final UserMemoryStore userMemoryStore;
+    /** 闲鱼人工模式服务；旧测试构造器传 null 时跳过暂停拦截（不影响商城行为）。 */
+    private final XianyuManualModeService manualModeService;
 
     @Autowired
     public ChatApiController(CustomerServiceAgent agent,
                              MonitorService monitorService,
                              ConversationStore conversationStore,
-                             UserMemoryStore userMemoryStore) {
+                             UserMemoryStore userMemoryStore,
+                             XianyuManualModeService manualModeService) {
         this.agent = agent;
         this.monitorService = monitorService;
         this.conversationStore = conversationStore;
         this.userMemoryStore = userMemoryStore;
+        this.manualModeService = manualModeService;
+    }
+
+    /** 生产装配兼容：未显式注入人工模式服务时仍可构建（等价于关闭暂停拦截）。 */
+    public ChatApiController(CustomerServiceAgent agent,
+                             MonitorService monitorService,
+                             ConversationStore conversationStore,
+                             UserMemoryStore userMemoryStore) {
+        this(agent, monitorService, conversationStore, userMemoryStore, null);
     }
 
     /**
@@ -91,6 +105,12 @@ public class ChatApiController {
                 principal
         );
 
+        // 闲鱼人工模式：卖家接管期间机器人不抢答。这里必须在 Agent 之前拦截——
+        // 一旦放行，Runtime 会覆盖 Workflow 状态并生成新的自动回复。
+        if (manualModeService != null && manualModeService.isBotPaused(chatRequest)) {
+            throw new XianyuConversationPausedException(chatRequest.getConversationId());
+        }
+
         // 从进入 Agent 到拿到完整响应的时间才是真正的 Turn 耗时，不能只把工具和 LLM 耗时相加。
         long startedAtNanos = System.nanoTime();
         ChatResponse response;
@@ -108,6 +128,18 @@ public class ChatApiController {
             recordFailedTurn(chatRequest, TurnOutcome.TECHNICAL_FAILURE, failureCode(exception), startedAtNanos);
             // 记录指标后仍抛出原异常，GlobalExceptionHandler 的 HTTP 状态和安全错误文案保持不变。
             throw exception;
+        }
+
+        // 闲鱼会话转人工（含 SELLER_CONFIRM 暂停）即刻持久化人工模式，不依赖侧车再调
+        // manual-mode 端点，消除“响应说已暂停、下一条买家消息仍被机器人抢答”的竞态。
+        if (response.isHandoffRequested() && manualModeService != null) {
+            try {
+                manualModeService.markManualAfterHandoff(chatRequest);
+            } catch (RuntimeException exception) {
+                // 标志写入失败不改变本轮回复；侧车看到 handoffRequested=true 仍可显式暂停。
+                LOGGER.warn("闲鱼转人工后写人工模式标志失败: {}",
+                        chatRequest.getConversationId(), exception);
+            }
         }
 
         // Monitor 不参与 Agent 决策，只在响应生成后消费 Trace 做统计。

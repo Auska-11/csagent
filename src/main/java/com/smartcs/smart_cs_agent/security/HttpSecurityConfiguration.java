@@ -42,13 +42,15 @@ public class HttpSecurityConfiguration {
 
     /**
      * BearerTokenAuthenticationFilter 只要看到 "Authorization: Bearer ..." 就会尝试 JWT 解码，
-     * 即使端点是 permitAll 也会在解码失败时直接回 401。闲鱼侧车携带的是静态服务令牌
-     * （由 XianyuSidecarController 恒定时间比对），不是 JWT，所以该路径必须从 JWT 解析中排除。
+     * 即使端点是 permitAll 也会在解码失败时直接回 401。闲鱼侧车与 SLA 结果回调携带的是静态
+     * 服务令牌（由 Controller 恒定时间比对），不是 JWT，所以这些路径必须从 JWT 解析中排除。
      */
     @Bean
     public BearerTokenResolver smartCsBearerTokenResolver() {
         DefaultBearerTokenResolver delegate = new DefaultBearerTokenResolver();
-        return request -> "/api/xianyu/sessions".equals(request.getRequestURI())
+        return request -> request.getRequestURI() != null
+                && (request.getRequestURI().startsWith("/api/xianyu/")
+                        || request.getRequestURI().startsWith("/api/integrations/"))
                 ? null
                 : delegate.resolve(request);
     }
@@ -125,14 +127,26 @@ public class HttpSecurityConfiguration {
                         ).permitAll()
                         // 闲鱼侧车会话端点：调用方是持有静态服务令牌的本机进程而非终端用户，
                         // 无法走 Bearer JWT 过滤链；Controller 内做恒定时间令牌比对，未启用时按 404 处理。
-                        .requestMatchers(HttpMethod.POST, "/api/xianyu/sessions").permitAll()
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/xianyu/sessions",
+                                "/api/xianyu/items/{itemId}/facts",
+                                "/api/xianyu/conversations/manual-mode",
+                                "/api/xianyu/conversations/seller-messages"
+                        ).permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/xianyu/items/{itemId}/facts", "/api/xianyu/conversations/manual-mode").permitAll()
+                        // SLA 平台结果回调：调用方是持有独立静态令牌的 SLA 服务端，
+                        // Controller 内做恒定时间比对与租户绑定校验，未启用时按 404 处理。
+                        .requestMatchers(HttpMethod.POST, "/api/integrations/v1/sla-results").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/monitor/feedback")
                         .hasAnyRole(SecurityRoles.CUSTOMER, SecurityRoles.ADMIN)
                         .requestMatchers("/api/chat/**")
                         .hasAnyRole(SecurityRoles.CUSTOMER, SecurityRoles.ADMIN)
                         .requestMatchers(
                                 "/api/admin/pending-handoffs",
-                                "/api/admin/pending-handoffs/**"
+                                "/api/admin/pending-handoffs/**",
+                                "/api/admin/sla-results",
+                                "/api/admin/sla-results/**"
                         ).hasRole(SecurityRoles.ADMIN)
                         .requestMatchers("/api/monitor/**", "/api/eval/**", "/api/tools/**", "/api/demo/**")
                         .hasRole(SecurityRoles.ADMIN)

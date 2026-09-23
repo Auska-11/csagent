@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.tools;
 
+import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
 import com.smartcs.smart_cs_agent.handoff.outbox.InMemoryPendingHandoffStore;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffClaim;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffCommand;
@@ -113,9 +114,62 @@ class HandoffToolsTest {
         );
 
         assertEquals(
-                "After-sales ticket client is required in after-sales HTTP mode",
+                "After-sales ticket client is required in remote ticket mode",
                 error.getMessage()
         );
+        assertEquals(0, pendingStore.size());
+    }
+
+    @Test
+    void shouldPassTrustedConversationIdToSlaV1Client() {
+        HandoffProperties properties = new HandoffProperties();
+        properties.setMode("sla-v1");
+        FakeAfterSalesTicketClient client = new FakeAfterSalesTicketClient(
+                new AfterSalesTicketCreateResult("AS-321", "PENDING", "2026-09-08T02:00:00Z")
+        );
+        InMemoryPendingHandoffStore pendingStore = new InMemoryPendingHandoffStore();
+        HandoffTools tools = new HandoffTools(properties, client, pendingStore);
+
+        HandoffTicketData ticket = tools.createHandoffTicketForTenant(
+                TENANT,
+                "USER-XY-001",
+                "xianyu_12345_67890",
+                HandoffAction.REASON_PRODUCT_VERIFICATION,
+                "买家要求核实耳机蓝牙功能",
+                null
+        );
+
+        // sla-v1 模式必须把可信 conversationId 交给客户端：SLA 建单坐标只能从这里推导。
+        assertEquals("xianyu_12345_67890", client.lastConversationId);
+        assertEquals(TENANT, client.lastTenantId);
+        assertEquals("AS-321", ticket.getTicketId());
+
+        PendingHandoffRecord confirmed = pendingStore
+                .findByKey(new PendingHandoffKey(TENANT, client.lastRequest.idempotencyKey()))
+                .orElseThrow();
+        assertEquals(PendingHandoffStatus.CONFIRMED, confirmed.status());
+    }
+
+    @Test
+    void shouldNotFallbackToMemoryWhenClientIsMissingInSlaV1Mode() {
+        HandoffProperties properties = new HandoffProperties();
+        properties.setMode("sla-v1");
+        InMemoryPendingHandoffStore pendingStore = new InMemoryPendingHandoffStore();
+        HandoffTools tools = new HandoffTools(properties, null, pendingStore);
+
+        HandoffTicketCreationException error = assertThrows(
+                HandoffTicketCreationException.class,
+                () -> tools.createHandoffTicketForTenant(
+                        TENANT,
+                        "USER-XY-001",
+                        "xianyu_12345_67890",
+                        HandoffAction.REASON_PRODUCT_VERIFICATION,
+                        "SLA 未就绪也不能伪造本地成功",
+                        "operation-sla-missing"
+                )
+        );
+
+        assertEquals("After-sales ticket client is required in remote ticket mode", error.getMessage());
         assertEquals(0, pendingStore.size());
     }
 
@@ -220,6 +274,12 @@ class HandoffToolsTest {
             }
 
             @Override
+            public PendingHandoffRecord markNeedsManualReviewByKey(PendingHandoffKey key,
+                                                                   String failureType) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
             public void releaseClaim(PendingHandoffClaim claim) {
             }
 
@@ -301,12 +361,109 @@ class HandoffToolsTest {
         assertEquals(2, pendingStore.size());
     }
 
+    @Test
+    void shouldRouteOnlyProductVerificationToSlaV1Client() {
+        // 契约第一阶段 SLA 只有 PRODUCT_CHECK 一种事项类型：普通转人工/投诉在 sla-v1
+        // 模式必须退回本地工单，只有商品核实才允许远端建单。
+        HandoffProperties properties = new HandoffProperties();
+        properties.setMode("sla-v1");
+        FakeAfterSalesTicketClient client = new FakeAfterSalesTicketClient(
+                new AfterSalesTicketCreateResult("WI-777", "PENDING", "2026-09-08T00:00:00Z")
+        );
+        InMemoryPendingHandoffStore pendingStore = new InMemoryPendingHandoffStore();
+        HandoffTools tools = new HandoffTools(properties, client, pendingStore);
+
+        HandoffTicketData ordinary = tools.createHandoffTicketForTenant(
+                TENANT,
+                "USER-XY-001",
+                "xianyu_111_222",
+                "COMPLAINT",
+                "用户投诉耳机质量，需要人工处理",
+                null
+        );
+
+        assertTrue(ordinary.getTicketId().startsWith("HD-"),
+                "普通投诉退回本地工单: " + ordinary.getTicketId());
+        assertEquals("WAITING_HUMAN_AGENT", ordinary.getStatus());
+        assertEquals(0, client.callCount, "普通转人工不得调用 SLA 建单");
+        assertEquals(0, pendingStore.size(), "本地工单不产生待确认远端记录");
+
+        HandoffTicketData verification = tools.createHandoffTicketForTenant(
+                TENANT,
+                "USER-XY-001",
+                "xianyu_111_222",
+                HandoffAction.REASON_PRODUCT_VERIFICATION,
+                "买家询问蓝牙功能是否正常，商品标记未测试",
+                null
+        );
+
+        assertEquals("WI-777", verification.getTicketId(), "商品核实走 SLA v1 远端建单");
+        assertEquals(1, client.callCount);
+        assertEquals(1, pendingStore.size());
+        assertEquals(PendingHandoffStatus.CONFIRMED, pendingStore
+                .findByKey(new PendingHandoffKey(TENANT, client.lastRequest.idempotencyKey()))
+                .orElseThrow()
+                .status());
+    }
+
+    @Test
+    void shouldExcludeDefinitiveRejectionFromAutomaticRetryScan() {
+        // 需求四分类收口：400/403/409 类明确拒绝直接进人工复核并退出自动重试扫描；
+        // 对照组可重试失败（超时/5xx 语义）保持 RESULT_UNKNOWN 可被恢复执行器领取。
+        HandoffProperties properties = new HandoffProperties();
+        properties.setMode("sla-v1");
+        FakeAfterSalesTicketClient client = new FakeAfterSalesTicketClient(null);
+        InMemoryPendingHandoffStore pendingStore = new InMemoryPendingHandoffStore();
+        HandoffTools tools = new HandoffTools(properties, client, pendingStore);
+
+        client.reject = true;
+        assertThrows(
+                HandoffTicketCreationRejectedException.class,
+                () -> tools.createHandoffTicketForTenant(
+                        TENANT,
+                        "USER-XY-001",
+                        "xianyu_111_222",
+                        HandoffAction.REASON_PRODUCT_VERIFICATION,
+                        "买家询问蓝牙功能是否正常",
+                        null
+                )
+        );
+
+        PendingHandoffRecord rejected = pendingStore
+                .findByKey(new PendingHandoffKey(TENANT, client.lastRequest.idempotencyKey()))
+                .orElseThrow();
+        assertEquals(PendingHandoffStatus.NEEDS_MANUAL_REVIEW, rejected.status(),
+                "明确拒绝必须直接进人工复核");
+        assertTrue(pendingStore.findDue(Long.MAX_VALUE, 10).isEmpty(),
+                "拒绝记录不得进入自动建单重试扫描（即使时间无穷大）");
+
+        client.reject = false;
+        client.fail = true;
+        assertThrows(
+                HandoffTicketCreationException.class,
+                () -> tools.createHandoffTicketForTenant(
+                        TENANT,
+                        "USER-XY-001",
+                        "xianyu_333_444",
+                        HandoffAction.REASON_PRODUCT_VERIFICATION,
+                        "买家询问降噪功能是否正常",
+                        null
+                )
+        );
+
+        assertEquals(1, pendingStore.findDue(Long.MAX_VALUE, 10).size(),
+                "可重试失败保持 RESULT_UNKNOWN，仍可被恢复执行器领取");
+        assertEquals(2, client.callCount, "两次都真实调用了远端");
+    }
+
     private static class FakeAfterSalesTicketClient implements AfterSalesTicketClient {
 
         private final AfterSalesTicketCreateResult result;
         private AfterSalesTicketCreateRequest lastRequest;
         private String lastTenantId;
+        private String lastConversationId;
         private boolean fail;
+        private boolean reject;
         private int callCount;
 
         private FakeAfterSalesTicketClient(AfterSalesTicketCreateResult result) {
@@ -319,10 +476,22 @@ class HandoffToolsTest {
             callCount++;
             this.lastTenantId = tenantId;
             this.lastRequest = request;
+            if (reject) {
+                throw new HandoffTicketCreationRejectedException(
+                        "SLA v1 rejected work item creation: 409 VERSION_CONTENT_CONFLICT");
+            }
             if (fail) {
                 throw new IllegalStateException("remote platform unavailable");
             }
             return result;
+        }
+
+        @Override
+        public AfterSalesTicketCreateResult createTicket(String tenantId,
+                                                          String conversationId,
+                                                          AfterSalesTicketCreateRequest request) {
+            this.lastConversationId = conversationId;
+            return createTicket(tenantId, request);
         }
     }
 }

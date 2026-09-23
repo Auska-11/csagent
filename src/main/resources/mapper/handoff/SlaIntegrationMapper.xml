@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smartcs.smart_cs_agent.persistence.mybatis.mapper.SlaIntegrationMapper">
+    <resultMap id="associationRow" type="com.smartcs.smart_cs_agent.persistence.mybatis.row.SlaAssociationRow">
+        <constructor>
+            <arg column="tenant_id" javaType="java.lang.String"/>
+            <arg column="idempotency_key" javaType="java.lang.String"/>
+            <arg column="request_id" javaType="java.lang.String"/>
+            <arg column="channel" javaType="java.lang.String"/>
+            <arg column="seller_account_id" javaType="java.lang.String"/>
+            <arg column="item_id" javaType="java.lang.String"/>
+            <arg column="conversation_id" javaType="java.lang.String"/>
+            <arg column="buyer_id" javaType="java.lang.String"/>
+            <arg column="work_item_id" javaType="java.lang.Long"/>
+            <arg column="created_at" javaType="_long"/>
+            <arg column="updated_at" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="inboxRow" type="com.smartcs.smart_cs_agent.persistence.mybatis.row.SlaInboxRow">
+        <constructor>
+            <arg column="event_id" javaType="java.lang.String"/>
+            <arg column="request_id" javaType="java.lang.String"/>
+            <arg column="payload_hash" javaType="java.lang.String"/>
+            <arg column="disposition" javaType="java.lang.String"/>
+            <arg column="received_at" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="resultRow" type="com.smartcs.smart_cs_agent.persistence.mybatis.row.SlaResultRow">
+        <constructor>
+            <arg column="request_id" javaType="java.lang.String"/>
+            <arg column="work_item_id" javaType="_long"/>
+            <arg column="version" javaType="_int"/>
+            <arg column="scope" javaType="java.lang.String"/>
+            <arg column="outcome" javaType="java.lang.String"/>
+            <arg column="content" javaType="java.lang.String"/>
+            <arg column="recorded_by" javaType="java.lang.String"/>
+            <arg column="recorded_at" javaType="java.lang.String"/>
+            <arg column="updated_at" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <update id="createAssociationTable">
+        CREATE TABLE IF NOT EXISTS cs_sla_work_item_request (
+            tenant_id VARCHAR(64) NOT NULL,
+            idempotency_key VARCHAR(255) NOT NULL,
+            request_id VARCHAR(128) NOT NULL,
+            channel VARCHAR(32) NOT NULL,
+            seller_account_id VARCHAR(128) NOT NULL,
+            item_id VARCHAR(128) NOT NULL,
+            conversation_id VARCHAR(128) NOT NULL,
+            buyer_id VARCHAR(128) NOT NULL,
+            work_item_id BIGINT NULL,
+            created_at BIGINT NOT NULL,
+            updated_at BIGINT NOT NULL,
+            PRIMARY KEY (tenant_id, idempotency_key),
+            UNIQUE KEY uk_cs_sla_work_item_request_id (request_id)
+        )
+    </update>
+
+    <update id="createInboxTable">
+        CREATE TABLE IF NOT EXISTS cs_sla_result_inbox (
+            event_id VARCHAR(128) NOT NULL,
+            request_id VARCHAR(128) NOT NULL,
+            payload_hash CHAR(64) NOT NULL,
+            disposition VARCHAR(16) NOT NULL,
+            received_at BIGINT NOT NULL,
+            PRIMARY KEY (event_id),
+            INDEX idx_cs_sla_result_inbox_request (request_id)
+        )
+    </update>
+
+    <update id="createResultTable">
+        CREATE TABLE IF NOT EXISTS cs_sla_work_item_result (
+            request_id VARCHAR(128) NOT NULL,
+            work_item_id BIGINT NOT NULL,
+            version INT NOT NULL,
+            scope VARCHAR(32) NOT NULL,
+            outcome VARCHAR(32) NOT NULL,
+            content VARCHAR(2000) NOT NULL,
+            recorded_by VARCHAR(128) NOT NULL,
+            recorded_at VARCHAR(64) NOT NULL,
+            updated_at BIGINT NOT NULL,
+            PRIMARY KEY (request_id)
+        )
+    </update>
+
+    <insert id="insertAssociation">
+        INSERT INTO cs_sla_work_item_request(
+            tenant_id, idempotency_key, request_id, channel,
+            seller_account_id, item_id, conversation_id, buyer_id,
+            work_item_id, created_at, updated_at
+        ) VALUES (
+            #{tenantId}, #{idempotencyKey}, #{requestId}, #{channel},
+            #{sellerAccountId}, #{itemId}, #{conversationId}, #{buyerId},
+            NULL, #{now}, #{now}
+        )
+    </insert>
+
+    <select id="findAssociationByRequestId" resultMap="associationRow">
+        SELECT tenant_id, idempotency_key, request_id, channel, seller_account_id,
+               item_id, conversation_id, buyer_id, work_item_id, created_at, updated_at
+        FROM cs_sla_work_item_request
+        WHERE request_id = #{requestId}
+    </select>
+
+    <select id="findAssociationByRequestIdForUpdate" resultMap="associationRow">
+        SELECT tenant_id, idempotency_key, request_id, channel, seller_account_id,
+               item_id, conversation_id, buyer_id, work_item_id, created_at, updated_at
+        FROM cs_sla_work_item_request
+        WHERE request_id = #{requestId}
+        FOR UPDATE
+    </select>
+
+    <select id="findAssociationByIdempotencyKey" resultMap="associationRow">
+        SELECT tenant_id, idempotency_key, request_id, channel, seller_account_id,
+               item_id, conversation_id, buyer_id, work_item_id, created_at, updated_at
+        FROM cs_sla_work_item_request
+        WHERE tenant_id = #{tenantId}
+          AND idempotency_key = #{idempotencyKey}
+    </select>
+
+    <!-- 会话维度的最新核实关联：同一会话可能有多个 requestId（幂等键包含 operation），
+         消费方只取最近一次。request_id 作为最终并列断路器，保证 MySQL/H2 排序稳定。 -->
+    <select id="findLatestAssociationByConversation" resultMap="associationRow">
+        SELECT tenant_id, idempotency_key, request_id, channel, seller_account_id,
+               item_id, conversation_id, buyer_id, work_item_id, created_at, updated_at
+        FROM cs_sla_work_item_request
+        WHERE tenant_id = #{tenantId}
+          AND conversation_id = #{conversationId}
+        ORDER BY created_at DESC, updated_at DESC, request_id DESC
+        LIMIT 1
+    </select>
+
+    <update id="updateAssociationWorkItemId">
+        UPDATE cs_sla_work_item_request
+        SET work_item_id = #{workItemId}, updated_at = #{now}
+        WHERE request_id = #{requestId}
+          AND work_item_id IS NULL
+    </update>
+
+    <insert id="insertInbox">
+        INSERT INTO cs_sla_result_inbox(
+            event_id, request_id, payload_hash, disposition, received_at
+        ) VALUES (
+            #{eventId}, #{requestId}, #{payloadHash}, #{disposition}, #{receivedAt}
+        )
+    </insert>
+
+    <select id="findInbox" resultMap="inboxRow">
+        SELECT event_id, request_id, payload_hash, disposition, received_at
+        FROM cs_sla_result_inbox
+        WHERE event_id = #{eventId}
+    </select>
+
+    <insert id="insertResult">
+        INSERT INTO cs_sla_work_item_result(
+            request_id, work_item_id, version, scope, outcome,
+            content, recorded_by, recorded_at, updated_at
+        ) VALUES (
+            #{payload.requestId}, #{payload.workItemId}, #{payload.result.version},
+            #{payload.result.scope}, #{payload.result.outcome}, #{payload.result.content},
+            #{payload.result.recordedBy}, #{payload.result.recordedAt}, #{updatedAt}
+        )
+    </insert>
+
+    <update id="updateResult">
+        UPDATE cs_sla_work_item_result
+        SET work_item_id = #{payload.workItemId},
+            version = #{payload.result.version},
+            scope = #{payload.result.scope},
+            outcome = #{payload.result.outcome},
+            content = #{payload.result.content},
+            recorded_by = #{payload.result.recordedBy},
+            recorded_at = #{payload.result.recordedAt},
+            updated_at = #{updatedAt}
+        WHERE request_id = #{payload.requestId}
+    </update>
+
+    <select id="findResult" resultMap="resultRow">
+        SELECT request_id, work_item_id, version, scope, outcome,
+               content, recorded_by, recorded_at, updated_at
+        FROM cs_sla_work_item_result
+        WHERE request_id = #{requestId}
+    </select>
+
+    <select id="findResultForUpdate" resultMap="resultRow">
+        SELECT request_id, work_item_id, version, scope, outcome,
+               content, recorded_by, recorded_at, updated_at
+        FROM cs_sla_work_item_result
+        WHERE request_id = #{requestId}
+        FOR UPDATE
+    </select>
+</mapper>

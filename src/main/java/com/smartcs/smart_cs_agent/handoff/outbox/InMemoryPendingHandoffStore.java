@@ -29,6 +29,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 本地演示和单元测试使用的 Outbox。
@@ -280,6 +281,38 @@ public class InMemoryPendingHandoffStore implements PendingHandoffStore,
         } finally {
             releaseClaim(claim);
         }
+    }
+
+    @Override
+    public PendingHandoffRecord markNeedsManualReviewByKey(PendingHandoffKey key,
+                                                           String failureType) {
+        Objects.requireNonNull(key, "key cannot be null");
+        AtomicReference<PendingHandoffRecord> outcome = new AtomicReference<>();
+        // compute 保证“读状态→判终态→写复核”相对并发恢复线程原子；调用方没有租约，
+        // 因此不能走 replace(expectedVersion)，只能收敛到最新版本。
+        records.compute(key, (ignored, existing) -> {
+            if (existing == null) {
+                throw new IllegalArgumentException("Pending handoff record does not exist");
+            }
+            PendingHandoffRecord current = existing.record();
+            if (current.status() == PendingHandoffStatus.CONFIRMED
+                    || current.status() == PendingHandoffStatus.MANUALLY_CLOSED) {
+                // 成功与人工关闭都是终态：迟到的拒绝分类不能把它们拉回复核。
+                outcome.set(current);
+                return existing;
+            }
+            PendingHandoffRecord updated = copyWithState(
+                    current,
+                    PendingHandoffStatus.NEEDS_MANUAL_REVIEW,
+                    safeFailureType(failureType),
+                    null,
+                    current.attemptCount() + 1,
+                    Long.MAX_VALUE
+            );
+            outcome.set(updated);
+            return new StoredEntry(existing.fingerprint(), updated, existing.auditHistory());
+        });
+        return outcome.get();
     }
 
     @Override

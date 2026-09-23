@@ -46,6 +46,15 @@ public interface PendingHandoffStore {
     PendingHandoffRecord markNeedsManualReview(PendingHandoffClaim claim,
                                                String failureType);
 
+    /**
+     * 无租约版的人工复核转入，供同步请求路径在收到明确拒绝（400/403/409 等）时调用。
+     *
+     * <p>终态记录（CONFIRMED/MANUALLY_CLOSED）不会被降级；其余状态收敛为
+     * NEEDS_MANUAL_REVIEW，从而被自动恢复队列永久移除。</p>
+     */
+    PendingHandoffRecord markNeedsManualReviewByKey(PendingHandoffKey key,
+                                                    String failureType);
+
     /** Worker 已成功确认或主动放弃本次处理时释放自己的租约。 */
     void releaseClaim(PendingHandoffClaim claim);
 

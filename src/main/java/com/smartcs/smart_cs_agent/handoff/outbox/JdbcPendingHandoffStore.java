@@ -292,6 +292,24 @@ public class JdbcPendingHandoffStore implements PendingHandoffStore,
     }
 
     @Override
+    public PendingHandoffRecord markNeedsManualReviewByKey(PendingHandoffKey key,
+                                                           String failureType) {
+        Objects.requireNonNull(key, "key cannot be null");
+        db(() -> mapper.markNeedsManualReviewByKey(
+                key.tenantId(),
+                key.idempotencyKey(),
+                safeFailureType(failureType),
+                Long.MAX_VALUE,
+                System.currentTimeMillis()
+        ));
+        return loadStored(key)
+                .map(StoredPendingHandoff::record)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Pending handoff record does not exist"
+                ));
+    }
+
+    @Override
     public void releaseClaim(PendingHandoffClaim claim) {
         if (claim != null) {
             releaseClaimRow(claim.record().key(), claim.ownerToken());

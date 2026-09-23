@@ -7,11 +7,33 @@ import requests
 from loguru import logger
 from utils.xianyu_utils import generate_sign
 
+# 阿里 SM 风控（RGV587_ERROR::SM）按 TLS 指纹拦截：Python requests 的握手特征会被直接拒绝
+# （cookie 完全有效也一样），真 Chrome 放行。curl_cffi 以 Chrome 指纹发请求可稳定通过；
+# 未安装时回退 requests，本地离线测试不触网，行为不变。
+try:
+    from curl_cffi import requests as impersonated_requests
+except ImportError:  # pragma: no cover - 本地未安装 curl_cffi 时仍可导入运行
+    impersonated_requests = None
+
+
+def _cookie_pairs(cookie_jar):
+    """requests 迭代产出 Cookie 对象；curl_cffi 的 Cookies 迭代产出 cookie 名，
+    同名跨域时 get() 还会抛 CookieConflict。统一从底层 stdlib CookieJar 取
+    Cookie 对象（curl_cffi 的 Cookies.jar 正是它），两个库都产出 (name, value)。"""
+    inner_jar = getattr(cookie_jar, "jar", cookie_jar)
+    for cookie in inner_jar:
+        yield cookie.name, cookie.value
+
 
 class XianyuApis:
     def __init__(self):
         self.url = 'https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.pc.login.token/1.0/'
-        self.session = requests.Session()
+        if impersonated_requests is not None:
+            self.session = impersonated_requests.Session(
+                impersonate=os.getenv("XIANYU_IMPERSONATE", "chrome")
+            )
+        else:
+            self.session = requests.Session()
         self.session.headers.update({
             'accept': 'application/json',
             'accept-language': 'zh-CN,zh;q=0.9',
@@ -31,33 +53,27 @@ class XianyuApis:
         
     def clear_duplicate_cookies(self):
         """清理重复的cookies"""
-        # 创建一个新的CookieJar
-        new_jar = requests.cookies.RequestsCookieJar()
-        
-        # 记录已经添加过的cookie名称
-        added_cookies = set()
-        
-        # 按照cookies列表的逆序遍历（最新的通常在后面）
-        cookie_list = list(self.session.cookies)
-        cookie_list.reverse()
-        
-        for cookie in cookie_list:
-            # 如果这个cookie名称还没有添加过，就添加到新jar中
-            if cookie.name not in added_cookies:
-                new_jar.set_cookie(cookie)
-                added_cookies.add(cookie.name)
-                
-        # 替换session的cookies
-        self.session.cookies = new_jar
-        
+        # requests 与 curl_cffi 的 CookieJar 迭代协议不同，统一经 _cookie_pairs 取值；
+        # 原逻辑逆序遍历取同名首个，等价于 dict(pairs) 的正序后写覆盖
+        # （两者都保留迭代序中最后出现的同名值）。
+        deduped = dict(_cookie_pairs(self.session.cookies))
+
+        # 清空后统一以 .goofish.com 域重设：h5api.m.goofish.com 与
+        # passport.goofish.com 都是其子域，两处请求都能带上。
+        self.session.cookies.clear()
+        for name, value in deduped.items():
+            self.session.cookies.set(name, value, domain=".goofish.com")
+
         # 更新完cookies后，更新.env文件
         self.update_env_cookies()
-        
+
     def update_env_cookies(self):
         """更新.env文件中的COOKIES_STR"""
         try:
             # 获取当前cookies的字符串形式
-            cookie_str = '; '.join([f"{cookie.name}={cookie.value}" for cookie in self.session.cookies])
+            cookie_str = '; '.join(
+                f"{name}={value}" for name, value in _cookie_pairs(self.session.cookies)
+            )
             
             # 读取.env文件
             env_path = os.path.join(os.getcwd(), '.env')

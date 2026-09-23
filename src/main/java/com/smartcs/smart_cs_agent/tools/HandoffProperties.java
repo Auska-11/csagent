@@ -9,9 +9,11 @@ import java.util.Locale;
  * 人工转接配置。
  *
  * 【为什么单独做配置类？】
- * 因为人工转接有两种运行方式：
+ * 因为人工转接有多种运行方式：
  * 1. memory：默认模式，只生成本地模拟工单，适合单独启动 Agent 项目和跑测试。
- * 2. after-sales-http：联调模式，调用售后工单平台创建真实工单。
+ * 2. after-sales-http：旧联调模式，调用售后工单平台 POST /api/tickets（保持兼容）。
+ * 3. sla-v1：新契约模式，走服务账号登录 + POST /api/integrations/v1/work-items 幂等建单，
+ *    并启用 /api/integrations/v1/sla-results 结果回调接收（回调端点还要求配置回调令牌）。
  *
  * 这样可以避免“为了联调必须启动另一个项目”，本项目的本地开发和 CI 会更稳定。
  */
@@ -19,7 +21,7 @@ import java.util.Locale;
 @ConfigurationProperties(prefix = "smartcs.handoff")
 public class HandoffProperties {
 
-    /** memory 或 after-sales-http */
+    /** memory / after-sales-http / sla-v1 */
     private String mode = "memory";
 
     /** 售后工单平台相关配置 */
@@ -27,6 +29,15 @@ public class HandoffProperties {
 
     public boolean isAfterSalesHttpMode() {
         return "after-sales-http".equalsIgnoreCase(mode);
+    }
+
+    public boolean isSlaV1Mode() {
+        return "sla-v1".equalsIgnoreCase(mode);
+    }
+
+    /** 任何需要真实远端工单副作用（Outbox 必须生效）的模式。 */
+    public boolean isRemoteTicketMode() {
+        return isAfterSalesHttpMode() || isSlaV1Mode();
     }
 
     public String getMode() {

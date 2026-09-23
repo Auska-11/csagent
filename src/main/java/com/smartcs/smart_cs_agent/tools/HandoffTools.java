@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.tools;
 
+import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
 import com.smartcs.smart_cs_agent.handoff.outbox.InMemoryPendingHandoffStore;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffCommand;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffPreparation;
@@ -22,7 +23,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * 【当前做什么？】
  * 1. 默认 memory 模式：生成一个本地模拟工单号，保证 Agent 项目可以单独运行。
- * 2. after-sales-http 模式：调用桌面 demo 项目的售后工单平台，创建真实工单。
+ * 2. after-sales-http 模式：调用售后工单平台的旧 /api/tickets 入口（保持兼容）。
+ * 3. sla-v1 模式：走契约 v1（服务账号登录 + 幂等建单 + requestId 对账 + 结果回调）。
  *
  * 【为什么仍然要做成工具？】
  * 因为真实项目里转人工通常会调用工单系统、IM 系统或 CRM 系统。
@@ -83,11 +85,17 @@ public class HandoffTools {
                                                           String summary,
                                                           String operationIdempotencyKey) {
         requireText(tenantId, "tenantId");
-        if (properties.isAfterSalesHttpMode()) {
+        if (properties.isSlaV1Mode()
+                && !HandoffAction.REASON_PRODUCT_VERIFICATION.equals(reason)) {
+            // 契约第一阶段 SLA 只有 PRODUCT_CHECK 一种事项类型：普通转人工/投诉/纠纷在
+            // sla-v1 模式退回本地工单——买家侧转接体验不变，也不给 SLA 建错误类型的核实单。
+            return createMemoryTicket(userId, conversationId, reason, summary, "WAITING_HUMAN_AGENT");
+        }
+        if (properties.isRemoteTicketMode()) {
             if (afterSalesTicketClient == null) {
                 // 配置明确要求真实售后平台时，缺少 Client 必须失败，不能悄悄伪造一张 memory 工单。
                 throw new HandoffTicketCreationException(
-                        "After-sales ticket client is required in after-sales HTTP mode"
+                        "After-sales ticket client is required in remote ticket mode"
                 );
             }
             return createAfterSalesTicket(
@@ -167,7 +175,11 @@ public class HandoffTools {
         }
 
         try {
-            AfterSalesTicketCreateResult result = afterSalesTicketClient.createTicket(tenantId, request);
+            AfterSalesTicketCreateResult result = afterSalesTicketClient.createTicket(
+                    tenantId,
+                    conversationId,
+                    request
+            );
             PendingHandoffRecord confirmed;
             try {
                 confirmed = pendingHandoffStore.confirm(
@@ -191,6 +203,25 @@ public class HandoffTools {
                     summary
             );
         } catch (RuntimeException e) {
+            if (e instanceof HandoffTicketCreationRejectedException) {
+                // 协议性拒绝（400/403/409 等）：同样的请求重试不会成功。把 Outbox 记录
+                // 直接推进人工复核（退出自动恢复扫描），再向上抛出拒绝分类。
+                // 若推进失败，记录保持 PREPARED，恢复执行器重放后仍会得到同样拒绝，
+                // 最终经 maxAttempts 进入人工复核——语义不变，只是慢一点。
+                try {
+                    pendingHandoffStore.markNeedsManualReviewByKey(
+                            preparedRecord.key(),
+                            e.getClass().getSimpleName()
+                    );
+                } catch (RuntimeException persistenceFailure) {
+                    persistenceFailure.addSuppressed(e);
+                    throw new HandoffTicketCreationException(
+                            "Remote handoff was rejected but the pending record could not be moved to manual review",
+                            persistenceFailure
+                    );
+                }
+                throw e;
+            }
             if (e instanceof HandoffTicketCreationException) {
                 throw e;
             }

@@ -7,6 +7,7 @@ import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStatus;
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketClient;
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateRequest;
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateResult;
+import com.smartcs.smart_cs_agent.tools.HandoffTicketCreationRejectedException;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -74,6 +75,34 @@ class PendingHandoffRecoveryWorkerTest {
         assertEquals(PendingHandoffStatus.NEEDS_MANUAL_REVIEW, manual.status());
         assertEquals(2, manual.attemptCount());
         assertEquals("IllegalStateException", manual.failureType());
+    }
+
+    @Test
+    void shouldMoveDefinitiveRejectionToManualReviewWithoutRetry() {
+        // 需求四分类收口到恢复执行器：400/403/409 类明确拒绝不占用重试预算、不退避，
+        // 第一次远端调用后直接进人工复核并退出后续扫描。
+        InMemoryPendingHandoffStore store = new InMemoryPendingHandoffStore();
+        PendingHandoffRecord prepared = store.prepare(command("idem-worker-rejected")).record();
+        AtomicLong clock = new AtomicLong(prepared.nextAttemptAt());
+        AtomicInteger remoteCalls = new AtomicInteger();
+        AfterSalesTicketClient client = (tenantId, request) -> {
+            remoteCalls.incrementAndGet();
+            throw new HandoffTicketCreationRejectedException("SLA v1 rejected: 409");
+        };
+        PendingHandoffRecoveryWorker worker = worker(store, client, clock, properties(3));
+
+        worker.recoverDue();
+
+        PendingHandoffRecord manual = store.findByKey(prepared.key()).orElseThrow();
+        assertEquals(PendingHandoffStatus.NEEDS_MANUAL_REVIEW, manual.status());
+        assertEquals("HandoffTicketCreationRejectedException", manual.failureType());
+        assertEquals(1, manual.attemptCount(), "明确拒绝不消耗重试预算");
+
+        clock.set(Long.MAX_VALUE);
+        worker.recoverDue();
+        assertEquals(1, remoteCalls.get(), "拒绝后恢复执行器不得再次调用远端");
+        assertEquals(PendingHandoffStatus.NEEDS_MANUAL_REVIEW,
+                store.findByKey(prepared.key()).orElseThrow().status());
     }
 
     @Test

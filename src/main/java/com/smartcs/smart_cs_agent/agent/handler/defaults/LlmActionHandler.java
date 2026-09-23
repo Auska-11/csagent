@@ -165,6 +165,16 @@ public class LlmActionHandler implements ActionHandler<LLMAction> {
             return "UNKNOWN";
         }
 
+        // 场景专用兜底优先：Workflow 已在 LLMAction.context 里放好与代码决策同口径的
+        // 降级文案（如议价按授权规则算出的报价话术）时，模型故障也必须发出它，
+        // 而不是退回通用演示商城话术——真实闲鱼会话里那句“可查订单/退货”无法向买家交代。
+        Object scenarioFallback = action.getContext() == null
+                ? null
+                : action.getContext().get("fallbackReply");
+        if (scenarioFallback instanceof String reply && !reply.isBlank()) {
+            return reply;
+        }
+
         if ("response_generation".equals(purpose)) {
             Object lastCapabilityResult = context.getState().getTaskState("last_capability_result");
             if (lastCapabilityResult instanceof CapabilityObservation result) {

@@ -11,6 +11,7 @@ import com.smartcs.smart_cs_agent.memory.UserMemoryStore;
 import com.smartcs.smart_cs_agent.monitor.MonitorService;
 import com.smartcs.smart_cs_agent.monitor.TurnOutcome;
 import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuManualModeService;
 import com.smartcs.smart_cs_agent.security.HttpSecurityConfiguration;
 import com.smartcs.smart_cs_agent.security.SecurityErrorWriter;
 import com.smartcs.smart_cs_agent.security.SecurityProperties;
@@ -72,6 +73,10 @@ class ChatApiControllerMvcTest {
 
     @MockBean
     private UserMemoryStore userMemoryStore;
+
+    /** 闲鱼人工模式服务：切片外依赖，Mockito 默认 isBotPaused=false 即自动模式。 */
+    @MockBean
+    private XianyuManualModeService xianyuManualModeService;
 
     @Test
     void shouldReturnBadRequestWhenMessageIsBlank() throws Exception {

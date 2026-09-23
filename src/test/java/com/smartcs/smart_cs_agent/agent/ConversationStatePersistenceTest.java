@@ -77,6 +77,50 @@ class ConversationStatePersistenceTest {
         assertFalse(json.contains("runtime-secret"));
     }
 
+    /**
+     * 闲鱼议价会话的持久化往返：已报价格镜像（bargain_last_quote）与人工模式
+     * （xianyu_manual_mode）都在 PERSISTENT_TASK_STATE_KEYS 里，必须跨 JSON 往返存活，
+     * 否则重启后已同意的价格被改写、暂停被静默解除。
+     */
+    @Test
+    void shouldRoundTripXianyuQuoteMirrorAndManualMode() {
+        ConversationState original = new ConversationState("240卖吗", "USER-XY-TEST");
+        original.startOrResumeWorkflow("bargain", "1.1.0");
+        original.setWorkflowState("bargain", "step", "WAITING_BUYER");
+        original.setWorkflowState("bargain", "lastQuote", "240");
+        original.setWorkflowState("bargain", "buyerOffer", "240");
+        original.setTaskState("bargain_last_quote", "240");
+        original.setTaskState("xianyu_manual_mode", "true");
+        original.setTaskState("last_llm_purpose", "response_generation");
+        original.markWorkflowWaiting();
+
+        // 卖家接管后人工确认成交：模拟 HANDED_OFF 清空 bargain 命名空间，只留 taskState 镜像。
+        original.setWorkflowState("bargain", "lastQuote", null);
+        original.setWorkflowState("bargain", "buyerOffer", null);
+        original.setWorkflowState("bargain", "step", null);
+
+        ConversationStateSnapshot snapshot = original.toPersistenceSnapshot();
+        String json = codec.encode(snapshot);
+        ConversationStateSnapshot decoded = codec.decode(
+                json,
+                ConversationStateSnapshot.CURRENT_SCHEMA_VERSION
+        );
+        ConversationState restored = ConversationState.restore(decoded);
+
+        assertEquals("240", restored.getTaskState("bargain_last_quote"),
+                "报价镜像必须经 JSON 编解码存活");
+        assertEquals("true", restored.getTaskState("xianyu_manual_mode"),
+                "人工模式必须经 JSON 编解码存活");
+        assertTrue(json.contains("bargain_last_quote"));
+        assertNull(restored.getTaskState("last_llm_purpose"), "运行期 taskState 不应持久化");
+        // 恢复后的镜像要能被下一轮议价当作最近一口价读取（getLastQuote 回落路径）。
+        original.setWorkflowState("bargain", "step", "WAITING_BUYER");
+        ConversationState rehydrated = ConversationState.restore(decoded);
+        rehydrated.startOrResumeWorkflow("bargain", "1.1.0");
+        rehydrated.setWorkflowState("bargain", "lastQuote", rehydrated.getTaskState("bargain_last_quote"));
+        assertEquals("240", rehydrated.getWorkflowState("bargain", "lastQuote"));
+    }
+
     @Test
     void shouldRejectUnknownConversationSchemaVersion() {
         ConversationStateSnapshot current = new ConversationState(

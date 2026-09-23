@@ -1,6 +1,7 @@
 package com.smartcs.smart_cs_agent.controller;
 
 import com.smartcs.smart_cs_agent.agent.context.ConversationBusyException;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuConversationPausedException;
 import com.smartcs.smart_cs_agent.handoff.admin.PendingHandoffAdminCursorException;
 import com.smartcs.smart_cs_agent.handoff.admin.PendingHandoffAdminRequestException;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffConflictException;
@@ -116,6 +117,21 @@ public class GlobalExceptionHandler {
                 .body(new ApiErrorResponse(
                         "CONVERSATION_BUSY",
                         "Conversation is currently processing another message, please retry later"
+                ));
+    }
+
+    /**
+     * 闲鱼会话处于人工模式（卖家接管/SELLER_CONFIRM 暂停）时，买家消息不进入 Agent，
+     * 返回 409 让侧车保持静默等待卖家恢复；不产生任何副作用，可直接重试。
+     */
+    @ExceptionHandler(XianyuConversationPausedException.class)
+    public ResponseEntity<ApiErrorResponse> handleXianyuConversationPaused(
+            XianyuConversationPausedException exception) {
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(new ApiErrorResponse(
+                        "XIANYU_CONVERSATION_PAUSED",
+                        "Conversation is in manual mode, seller has taken over"
                 ));
     }
 

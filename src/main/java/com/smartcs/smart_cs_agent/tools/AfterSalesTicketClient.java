@@ -17,4 +17,14 @@ public interface AfterSalesTicketClient {
      */
     AfterSalesTicketCreateResult createTicket(String tenantId,
                                                AfterSalesTicketCreateRequest request);
+
+    /**
+     * v1 变体：携带可信 conversationId，供需要“原商品/原买家/原会话”坐标的集成客户端
+     * （SLA v1）从会话标识解析渠道坐标。默认委托旧签名，保证旧实现与旧测试无需改动。
+     */
+    default AfterSalesTicketCreateResult createTicket(String tenantId,
+                                                       String conversationId,
+                                                       AfterSalesTicketCreateRequest request) {
+        return createTicket(tenantId, request);
+    }
 }

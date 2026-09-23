@@ -15,7 +15,7 @@
 | --- | --- | --- |
 | `LICENSE` | 上游原件 | 原样保留（GPL-3.0 合规） |
 | `utils/xianyu_utils.py` | 上游原件 | **未改动**（sign / mid / uuid / device_id / cookie 解析 / MessagePack 解码） |
-| `XianyuApis.py` | 上游原件 | **1 处改动**（见下） |
+| `XianyuApis.py` | 上游原件 | **2 处改动**（见下） |
 | `main.py` | 上游 `main.py` 移植 | 协议骨架保留，大脑替换为转发（改动清单见下） |
 | `requirements.txt` | 上游裁剪 | 移除 `openai`（侧车不调 LLM） |
 | `.env.example` | 重写 | 侧车自有配置项 |
@@ -67,11 +67,22 @@ WebSocket 连接与注册（`/reg` + token）、心跳维护与超时重连、to
 10. **日志默认级别** DEBUG → INFO（常驻进程降噪）。
 11. 卖家人工接管开关、心跳/token/重连参数、模拟打字等协议层行为原样保留。
 
-## XianyuApis.py 相对上游的唯一改动
+## XianyuApis.py 相对上游的改动
 
-风控分支（`RGV587_ERROR` / "被挤爆啦"）：上游交互式 `input()` 粘贴新 Cookie
-后重试 → 改为打日志说明处置方式后 `sys.exit(1)`，由运行者更新 `.env` 的
-`COOKIES_STR` 后重启。
+1. 风控分支（`RGV587_ERROR` / "被挤爆啦"）：上游交互式 `input()` 粘贴新 Cookie
+   后重试 → 改为打日志说明处置方式后 `sys.exit(1)`，由运行者更新 `.env` 的
+   `COOKIES_STR` 后重启。
+2. **TLS 指纹伪装（2026-09-09）**：阿里 SM 风控升级为按 TLS 指纹拦截——Python
+   `requests` 的握手特征会被 `RGV587_ERROR::SM::STAFF` 直接拒绝（cookie 完全有效
+   也一样），真浏览器放行。会话改用 `curl_cffi`（`impersonate="chrome"`，可用
+   环境变量 `XIANYU_IMPERSONATE` 覆盖）以 Chrome TLS 指纹发请求；未安装
+   `curl_cffi` 时回退 `requests`（本地离线测试不触网，行为不变）。连带适配两处
+   CookieJar 差异：`clear_duplicate_cookies` 的去重重设与 `update_env_cookies`
+   的字符串化统一走 `_cookie_pairs` 辅助函数——它从底层 stdlib CookieJar 取
+   Cookie 对象（curl_cffi 的 `Cookies.jar` 正是它），既兼容两个库的迭代协议，
+   也绕开 curl_cffi 同名跨域 cookie 时 `get()` 抛 `CookieConflict` 的问题。
+   诊断证据：同一 cookie，requests 被拒、curl_cffi 直接过
+   `mtop.taobao.idlemessage.pc.login.token`。
 
 ## 已知边界
 

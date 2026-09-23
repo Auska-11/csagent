@@ -65,6 +65,13 @@ public interface PendingHandoffMapper {
             @Param("nextAttemptAt") long nextAttemptAt,
             @Param("now") long now);
 
+    int markNeedsManualReviewByKey(
+            @Param("tenantId") String tenantId,
+            @Param("idempotencyKey") String idempotencyKey,
+            @Param("failureType") String failureType,
+            @Param("nextAttemptAt") long nextAttemptAt,
+            @Param("now") long now);
+
     PendingHandoffRow findPending(
             @Param("tenantId") String tenantId,
             @Param("idempotencyKey") String idempotencyKey);

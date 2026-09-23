@@ -6,8 +6,10 @@ import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStatus;
 import com.smartcs.smart_cs_agent.handoff.outbox.PendingHandoffStore;
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketClient;
 import com.smartcs.smart_cs_agent.tools.AfterSalesTicketCreateResult;
+import com.smartcs.smart_cs_agent.tools.HandoffTicketCreationRejectedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -36,6 +38,8 @@ public class PendingHandoffRecoveryWorker {
     private final LongSupplier clock;
     private final Supplier<String> ownerTokenSupplier;
 
+    // 多构造函数时必须显式指定装配入口，否则 Spring 回退找无参构造导致启动失败。
+    @Autowired
     public PendingHandoffRecoveryWorker(PendingHandoffStore store,
                                         AfterSalesTicketClient client,
                                         PendingHandoffRecoveryProperties properties) {
@@ -86,8 +90,10 @@ public class PendingHandoffRecoveryWorker {
         PendingHandoffClaim claim = optionalClaim.get();
         try {
             // 使用记录中持久化的可信 tenantId，保证恢复请求仍写入最初那个售后租户。
+            // conversationId 同样取自持久化记录：SLA v1 客户端需要它解析原商品/原买家坐标。
             AfterSalesTicketCreateResult result = client.createTicket(
                     claim.record().tenantId(),
+                    claim.record().conversationId(),
                     claim.record().request()
             );
             store.confirm(
@@ -108,6 +114,12 @@ public class PendingHandoffRecoveryWorker {
         );
         if (current.isPresent() && current.get().status() == PendingHandoffStatus.CONFIRMED) {
             store.releaseClaim(claim);
+            return;
+        }
+
+        if (failure instanceof HandoffTicketCreationRejectedException) {
+            // 协议性拒绝不进入退避重试：重放同样的请求仍会被拒绝。直接人工复核。
+            store.markNeedsManualReview(claim, failure.getClass().getSimpleName());
             return;
         }
 

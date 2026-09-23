@@ -73,7 +73,11 @@ public class ConversationState {
             "return_id",
             "return_reason",
             "last_user_preference",
-            "used_user_preference"
+            "used_user_preference",
+            // 闲鱼卖家接管暂停状态与议价最近一口价的镜像：二者都必须跨重启存活，
+            // 否则暂停被重启静默解除、已同意的价格在新进程里被改写。
+            "xianyu_manual_mode",
+            "bargain_last_quote"
     );
 
     /**

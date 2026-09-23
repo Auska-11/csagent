@@ -19,6 +19,31 @@ BRIDGE 契约（Java 侧 X2 实现）：
        body  {"conversationId": "...", "message": "..."}
        resp  {"reply": "..."}
      —— 与现有聊天端点同构：conversationId 原样透传，身份只信 JWT（body userId 可省略）。
+     —— 409 {errorCode: "XIANYU_CONVERSATION_PAUSED"}：Java 侧人工模式（卖家接管/
+        SELLER_CONFIRM 暂停），侧车静默并对齐本地人工模式（ConversationPausedError）。
+  3) POST {CS_AGENT_URL}/api/xianyu/conversations/manual-mode   Bearer <服务令牌>
+       body  {"buyerId": "...", "itemId": "...", "enabled": true|false}
+     —— 卖家句号切换人工接管时双向同步：恢复自动回复必须等 Java 确认成功，
+        否则 Java 仍 409、买家消息石沉大海。会话不存在返回 404（本地状态独立生效）。
+  4) POST {CS_AGENT_URL}/api/xianyu/conversations/seller-messages  Bearer <服务令牌>
+       body  {"buyerId": "...", "itemId": "...", "text": "...", "resumeBot": false}
+     —— 卖家人工回复同步进 Java 会话历史：机器人恢复后模型可见卖家口径，
+        不再“失忆”。失败不影响闲鱼侧已送达。
+  5) POST {CS_AGENT_URL}/api/xianyu/items/{itemId}/facts    Bearer <服务令牌>
+       body  {"price": "265" | "265-280", "stock": 3}
+     —— 商品快照 TTL 过期重新拉取后推送热更新（改价/售出对齐现势），
+        Java 侧持久化，重启不回退。已读到但未同步成功的事实进入 pending_facts
+        （随 sidecar-state.json 落盘）：TTL 到期、平台读取失败、侧车重启都不会
+        丢失；期间一律暂缓自动报价（含价格更新——不按旧价承诺成交，不以
+        "库存大于零"放行），买家下一条消息前重试，推送成功才解除拦截。
+  6) GET  {CS_AGENT_URL}/api/xianyu/conversations/manual-mode?buyerId&itemId  Bearer <服务令牌>
+     —— 侧车重启恢复后查询 Java 侧人工模式并对齐本地状态（Java 是暂停语义
+        的事实源；404 = 会话从未到达 Java，保留本地落盘状态）。
+
+会话映射、人工模式状态与待同步商品事实落盘在 data/sidecar-state.json
+（SIDECAR_STATE_FILE 可覆盖，compose 挂卷持久化）：侧车重启/重建后，卖家人工
+回复与句号仍能同步 Java，不需要买家先再发一条消息；未同步成功的商品事实
+（pendingFacts）与对应拦截状态同样跨重启保留。
 """
 
 import asyncio
@@ -42,6 +67,14 @@ from utils.xianyu_utils import (
     decrypt,
 )
 from XianyuApis import XianyuApis
+
+
+class ConversationPausedError(Exception):
+    """Java 侧会话处于人工模式（409 XIANYU_CONVERSATION_PAUSED），卖家已接管。
+
+    抛给调用方后侧车应静默并把本地状态对齐为人工模式，
+    直到卖家句号恢复（经 Java 确认）为止。
+    """
 
 
 class CsAgentClient:
@@ -71,8 +104,49 @@ class CsAgentClient:
             raise PermissionError(f"{path} 认证失败({resp.status_code})")
         if resp.status_code == 404:
             raise ConnectionError(f"{path} 不存在（X2 会话端点未部署或路径不符）")
+        if resp.status_code == 409:
+            error_code = ""
+            try:
+                error_code = resp.json().get("errorCode", "")
+            except Exception:
+                pass
+            if error_code == "XIANYU_CONVERSATION_PAUSED":
+                raise ConversationPausedError(f"{path} 会话处于人工模式（卖家接管中）")
+            raise ConnectionError(f"{path} 冲突({error_code or resp.status_code})")
         resp.raise_for_status()
         return resp.json()
+
+    def _get(self, path, token):
+        """GET 服务令牌端点；404 返回 None（调用方按"无此会话"语义处理），其余失败抛。"""
+        resp = self.session.get(
+            self.base_url + path,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=self.timeout,
+        )
+        if resp.status_code == 404:
+            return None
+        if resp.status_code in (401, 403):
+            raise PermissionError(f"{path} 认证失败({resp.status_code})")
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_manual_mode(self, buyer_id, item_id):
+        """查询 Java 侧人工模式（GET /conversations/manual-mode）。
+
+        返回 True/False；404（会话从未到达 Java）返回 None；网络/服务异常返回
+        None 并记 WARN——调用方把 None 视为"查询失败"，保留本地状态不翻转。
+        """
+        try:
+            data = self._get(
+                f"/api/xianyu/conversations/manual-mode?buyerId={buyer_id}&itemId={item_id}",
+                self.service_token,
+            )
+        except Exception as exc:
+            logger.warning(f"查询 Java 人工模式失败（buyer={buyer_id}, item={item_id}）: {exc}")
+            return None
+        if data is None:
+            return None
+        return bool(data.get("manualMode", False))
 
     def ensure_session(self, buyer_id, item_id, item_snapshot=None):
         key = (buyer_id, item_id)
@@ -118,6 +192,50 @@ class CsAgentClient:
         if not isinstance(reply, str) or not reply.strip():
             raise ValueError(f"/api/chat/send 返回异常: {data}")
         return data
+
+    def set_manual_mode(self, buyer_id, item_id, enabled):
+        """同步人工模式到 Java（服务令牌端点）。返回是否成功（bool），失败不抛。"""
+        try:
+            self._post(
+                "/api/xianyu/conversations/manual-mode",
+                {"buyerId": buyer_id, "itemId": item_id, "enabled": bool(enabled)},
+                self.service_token,
+            )
+            return True
+        except Exception as exc:
+            logger.warning(f"人工模式同步 Java 失败（buyer={buyer_id}, item={item_id}, "
+                           f"enabled={enabled}）: {exc}")
+            return False
+
+    def add_seller_message(self, buyer_id, item_id, text, resume_bot=False):
+        """卖家人工回复同步进 Java 会话历史（买家在闲鱼侧已看到原文，这步失败不重试）。"""
+        try:
+            self._post(
+                "/api/xianyu/conversations/seller-messages",
+                {"buyerId": buyer_id, "itemId": item_id, "text": text,
+                 "resumeBot": bool(resume_bot)},
+                self.service_token,
+            )
+            return True
+        except Exception as exc:
+            logger.warning(f"卖家消息同步 Java 失败（buyer={buyer_id}, item={item_id}）: {exc}")
+            return False
+
+    def push_item_facts(self, item_id, price=None, stock=None):
+        """商品事实热更新推送（改价/售出对齐现势），失败不阻塞回复链路。"""
+        if not price and stock is None:
+            return False
+        body = {}
+        if price:
+            body["price"] = price
+        if stock is not None:
+            body["stock"] = int(stock)
+        try:
+            self._post(f"/api/xianyu/items/{item_id}/facts", body, self.service_token)
+            return True
+        except Exception as exc:
+            logger.warning(f"商品事实推送 Java 失败（item={item_id}）: {exc}")
+            return False
 
 
 class XianyuLive:
@@ -175,8 +293,30 @@ class XianyuLive:
         self.reply_min_interval = float(os.getenv("REPLY_MIN_INTERVAL", "3.5"))
         self._last_reply_at = {}  # buyer_id -> monotonic 时间戳
 
-        # 商品信息进程内缓存（替代上游 SQLite 商品表；失败不阻塞回复）
+        # 商品信息进程内缓存（替代上游 SQLite 商品表；失败不阻塞回复）。
+        # TTL 过期后重新拉取平台现势，并推送 Java 热更新（改价/售出对齐现势）。
+        # pending_facts 是"已从平台读到但尚未成功同步 Java"的事实本体（价格/
+        # 库存），随 sidecar-state.json 落盘：TTL 到期、平台读取失败、侧车重启
+        # 都不丢，推送成功才移除；存在期间 ensure_facts_synced 一律拦截自动报价。
+        # item_facts_synced 是其内存镜像（最近一次推送结果），行为闸门只看 pending。
         self.item_cache = {}
+        self.item_cache_at = {}
+        self.item_facts_synced = {}
+        self.pending_facts = {}
+        self.item_cache_ttl = float(os.getenv("ITEM_CACHE_TTL", "300"))
+
+        # chat_id -> {"buyerId", "itemId"} 映射：卖家句号/人工回复要同步 Java，
+        # Java 按 (buyerId, itemId) 寻址；买家消息到达时顺手记录（协议层自学习）。
+        self._chat_buyers = {}
+
+        # BRIDGE 下启用状态落盘：映射 + 人工模式集合持久化到 data/sidecar-state.json
+        # （compose 挂卷），侧车重启/重建后卖家句号与人工回复仍能同步 Java，
+        # 不依赖买家先再发一条消息。ECHO 无 Java 语义，不落盘。
+        self.state_file = (
+            os.getenv("SIDECAR_STATE_FILE", "data/sidecar-state.json")
+            if self.mode == "BRIDGE"
+            else None
+        )
 
         # Java 客户端按需创建（ECHO 模式不依赖 Java）
         self.cs_client = None
@@ -190,6 +330,101 @@ class XianyuLive:
             )
         elif self.mode != "ECHO":
             raise SystemExit(f"未知的 SIDECAR_MODE: {self.mode}（可选 ECHO / BRIDGE）")
+
+        self._load_state()
+
+    # ------------------------------------------------------------------
+    # 状态落盘（chat_id→买家映射 + 人工模式集合），侧车重启恢复
+    # ------------------------------------------------------------------
+
+    def _load_state(self):
+        """从 state_file 恢复映射与人工模式（文件不存在/损坏时静默从零开始）。"""
+        if not self.state_file:
+            return
+        try:
+            with open(self.state_file, "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except FileNotFoundError:
+            return
+        except Exception as exc:
+            logger.warning(f"侧车状态文件读取失败（按空状态启动）: {exc}")
+            return
+        buyers = payload.get("chatBuyers")
+        if isinstance(buyers, dict):
+            # 容错：旧格式/脏数据行丢弃
+            for chat_id, entry in buyers.items():
+                if isinstance(entry, dict) and entry.get("buyerId"):
+                    self._chat_buyers[chat_id] = {
+                        "buyerId": str(entry["buyerId"]),
+                        "itemId": str(entry.get("itemId") or ""),
+                    }
+            # 恢复后人工模式时间戳从现在起算，避免落盘后立刻超时退出
+            now = time.time()
+            for chat_id in self._chat_buyers:
+                if chat_id in (payload.get("manualMode") or []):
+                    self.manual_mode_conversations.add(chat_id)
+                    self.manual_mode_timestamps[chat_id] = now
+        pending = payload.get("pendingFacts")
+        if isinstance(pending, dict):
+            # 恢复待同步事实与拦截状态：重启不解除，推送成功才解除
+            for item_id, facts in pending.items():
+                if isinstance(facts, dict):
+                    self.pending_facts[str(item_id)] = facts
+                    self.item_facts_synced[str(item_id)] = False
+        logger.info(
+            f"侧车状态已从磁盘恢复（会话映射 {len(self._chat_buyers)} 项，"
+            f"人工模式 {len(self.manual_mode_conversations)} 项，"
+            f"待同步商品事实 {len(self.pending_facts)} 项）: {self.state_file}"
+        )
+
+    def _save_state(self):
+        """把映射与人工模式集合原子写盘（BRIDGE 才启用；失败不阻塞消息链路）。"""
+        if not self.state_file:
+            return
+        payload = {
+            "chatBuyers": self._chat_buyers,
+            "manualMode": sorted(self.manual_mode_conversations),
+            "pendingFacts": self.pending_facts,
+        }
+        try:
+            os.makedirs(os.path.dirname(self.state_file) or ".", exist_ok=True)
+            tmp_path = f"{self.state_file}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, self.state_file)
+        except Exception as exc:
+            logger.warning(f"侧车状态文件写入失败: {exc}")
+
+    async def align_manual_state_with_java(self):
+        """侧车重启恢复后，把本地人工模式对齐 Java 暂停状态（Java 是事实源）。
+
+        对每个已恢复映射的会话查询 GET /conversations/manual-mode：
+        - Java=manual 而本地=auto：本地进入 manual（重启窗口期内卖家从 Java 侧
+          接管的会话，不能放行自动回复）；
+        - Java=auto 而本地=manual：本地恢复 auto；
+        - 404（会话从未到达 Java）：保留本地落盘状态（首条买家消息尚未进过
+          Java 时切过句号的语义）。
+        查询失败不阻塞启动，保持本地状态，下次句号同步时再对齐。
+        """
+        if self.mode != "BRIDGE" or not self.cs_client:
+            return
+        for chat_id, entry in list(self._chat_buyers.items()):
+            buyer_id, mapped_item = entry["buyerId"], entry.get("itemId")
+            if not mapped_item:
+                continue
+            remote = await asyncio.to_thread(
+                self.cs_client.get_manual_mode, buyer_id, mapped_item
+            )
+            if remote is None:
+                continue
+            local = self.is_manual_mode(chat_id)
+            if remote and not local:
+                self.enter_manual_mode(chat_id)
+                logger.info(f"会话 {chat_id} 对齐 Java 人工模式（重启恢复）")
+            elif not remote and local:
+                self.exit_manual_mode(chat_id)
+                logger.info(f"会话 {chat_id} 对齐 Java 自动模式（重启恢复）")
+        self._save_state()
 
     async def refresh_token(self):
         """刷新token"""
@@ -418,12 +653,14 @@ class XianyuLive:
         """进入人工接管模式"""
         self.manual_mode_conversations.add(chat_id)
         self.manual_mode_timestamps[chat_id] = time.time()
+        self._save_state()
 
     def exit_manual_mode(self, chat_id):
         """退出人工接管模式"""
         self.manual_mode_conversations.discard(chat_id)
         if chat_id in self.manual_mode_timestamps:
             del self.manual_mode_timestamps[chat_id]
+        self._save_state()
 
     def toggle_manual_mode(self, chat_id):
         """切换人工接管模式"""
@@ -488,19 +725,90 @@ class XianyuLive:
 
         return json.dumps(summary, ensure_ascii=False)
 
+    def _record_facts_sync(self, item_id, facts, pushed):
+        """登记一次事实同步结果：成功移除待同步项并落盘，失败保留（含落盘）。
+
+        pending_facts 的存在本身就是拦截状态——只在推送成功时清除。
+        """
+        if pushed:
+            if self.pending_facts.pop(item_id, None) is not None:
+                self._save_state()
+        else:
+            self.pending_facts[item_id] = facts
+            self._save_state()
+        self.item_facts_synced[item_id] = pushed
+
     def get_item_snapshot(self, item_id):
-        """商品信息快照（进程内缓存；获取失败返回 None，不阻塞回复链路）。"""
-        if item_id in self.item_cache:
-            return self.item_cache[item_id]
+        """商品信息快照（带 TTL 的进程内缓存；失败返回 None，不阻塞回复链路）。
+
+        TTL 过期后重新拉取平台现势；BRIDGE 模式下把快照里的价格/库存作为热更新
+        推送到 Java（卖家改价/售出后，议价决策在 TTL 内对齐新事实，Java 侧持久化、
+        重启不回退）。推送失败时事实进入 pending_facts（落盘），ensure_facts_synced
+        会在买家下一条消息前重试——不等下一个 TTL。
+
+        平台读取失败时：该商品存在未同步事实则保留旧快照不清成 None——已读到的
+        事实不能因为一次刷新失败而丢失（否则闸门只见"无事实"，缺失库存会被当成
+        有货放行）；无未同步事实时沿用 None 占位（防反复打闲鱼 API）。
+        """
+        cached = self.item_cache.get(item_id)
+        fetched_at = self.item_cache_at.get(item_id, 0)
+        if time.time() - fetched_at < self.item_cache_ttl:
+            # TTL 未到：命中缓存（含上次失败的 None 占位，避免反复打闲鱼 API）。
+            return cached
         api_result = self.xianyu.get_item_info(item_id)
         if "data" in api_result and "itemDO" in api_result["data"]:
             item_info = api_result["data"]["itemDO"]
             snapshot = self.build_item_description(item_info)
             self.item_cache[item_id] = snapshot
+            self.item_cache_at[item_id] = time.time()
+            if self.mode == "BRIDGE" and self.cs_client:
+                summary = json.loads(snapshot)
+                facts = {
+                    "price": summary.get("price_range"),
+                    "stock": summary.get("total_stock"),
+                }
+                pushed = self.cs_client.push_item_facts(
+                    item_id, price=facts["price"], stock=facts["stock"]
+                )
+                self._record_facts_sync(item_id, facts, pushed)
             return snapshot
         logger.warning(f"获取商品信息失败（继续无快照回复）: {api_result}")
+        if item_id in self.pending_facts:
+            # 读取失败但仍有未同步事实：旧快照与拦截状态原样保留待重试。
+            self.item_cache_at[item_id] = time.time()
+            logger.warning(
+                f"商品 {item_id} 平台读取失败，保留未同步事实与旧快照（拦截不解除）"
+            )
+            return cached
         self.item_cache[item_id] = None
+        self.item_cache_at[item_id] = time.time()
         return None
+
+    def ensure_facts_synced(self, item_id):
+        """买家消息出站前的同步闸门：存在未同步事实则先重试，失败一律拦截。
+
+        pending_facts（跨重启持久化）里有该商品 = 平台已读到但 Java 尚未确认的
+        价格/库存事实。此时必须暂缓本轮自动回复——无论是已售（旧库存会让 Java
+        报价成交）还是改价（旧价格会让 Agent 承诺错误的成交价），不按"库存大于
+        零"放行。重试成功即解除拦截并正常转发；无未同步事实时不拦截（无快照
+        回复路径照常，平台从未读到过事实时没有"旧事实"可错）。
+        """
+        if self.mode != "BRIDGE" or not self.cs_client:
+            return True
+        facts = self.pending_facts.get(item_id)
+        if facts is None:
+            return True
+        pushed = self.cs_client.push_item_facts(
+            item_id, price=facts.get("price"), stock=facts.get("stock")
+        )
+        self._record_facts_sync(item_id, facts, pushed)
+        if pushed:
+            logger.info(f"商品 {item_id} 事实推送重试成功，解除拦截")
+            return True
+        logger.error(
+            f"商品 {item_id} 事实未能同步 Java（价格/库存未确认），暂缓自动回复"
+        )
+        return False
 
     def apply_disclaimer(self, chat_id, reply):
         """每个会话首条自动回复追加免责话术（置空 DISCLAIMER_TEXT 关闭）。"""
@@ -512,17 +820,28 @@ class XianyuLive:
     async def compose_reply(self, buyer_id, item_id, send_message):
         """ECHO 本地回显；BRIDGE 转发 Java 客服 Agent（HTTP 放线程池，避免饿死心跳）。
 
-        返回 (reply, handoff_requested)：handoff_requested=True 表示 Java 侧
-        转人工成功，调用方应暂停该会话的自动回复。
+        返回 (reply, handoff_requested)：
+        - handoff_requested=True 表示 Java 侧转人工/人工接管中，调用方应暂停该会话
+          的自动回复；
+        - reply 为 None 表示本轮静默（Java 409 人工模式：卖家已接管，或无兜底话术）。
         """
         if self.mode == "ECHO":
             return f"[echo:xianyu_{buyer_id}_{item_id}] {send_message}", False
 
         snapshot = await asyncio.to_thread(self.get_item_snapshot, item_id)
+        # 事实同步闸门：平台读到但 Java 未收到的商品事实先重试；已售（库存 0）
+        # 仍未同步成功时暂缓本轮回复，绝不按旧库存转发报价。
+        if not await asyncio.to_thread(self.ensure_facts_synced, item_id):
+            return None, False
         try:
             data = await asyncio.to_thread(
                 self.cs_client.chat, buyer_id, item_id, send_message, snapshot
             )
+        except ConversationPausedError:
+            # Java 侧人工模式（卖家接管/SELLER_CONFIRM 暂停）：静默等待，并让调用方
+            # 把本地状态对齐为人工模式——句号经 Java 确认恢复后自动回复才继续。
+            logger.info(f"会话 xianyu_{buyer_id}_{item_id} 处于 Java 人工模式，静默等待卖家")
+            return None, True
         except Exception as exc:
             logger.error(f"转发客服 Agent 失败: {exc}")
             return self.fallback_reply or None, False
@@ -536,6 +855,54 @@ class XianyuLive:
         if wait > 0:
             await asyncio.sleep(min(wait, 10.0))
         self._last_reply_at[buyer_id] = time.monotonic()
+
+    async def handle_seller_toggle(self, chat_id, item_id):
+        """卖家句号：切换本地人工接管，并同步 Java（双层转人工的真实闭环）。
+
+        同步规则（保守方向：宁可让卖家重发一次句号，也不让买家消息石沉大海）：
+        - 进入 manual：本地先进入；Java 同步尽力而为（失败无害——本地 manual
+          仍会挡住自动转发，买家消息由 Java 正常处理）。
+        - 恢复 auto：必须 Java 确认成功才本地恢复；失败回滚为 manual，卖家重试。
+          Java 404（该会话从未进过 Java）时仅本地恢复即可。
+        """
+        mode = self.toggle_manual_mode(chat_id)
+
+        if self.mode != "BRIDGE" or not self.cs_client:
+            # ECHO/无客户端：纯协议层行为（X1 遗留语义）
+            if mode == "manual":
+                logger.info(f"🔴 已接管会话 {chat_id} (商品: {item_id})")
+            else:
+                logger.info(f"🟢 已恢复会话 {chat_id} 的自动回复 (商品: {item_id})")
+            return
+
+        buyer_id = (self._chat_buyers.get(chat_id) or {}).get("buyerId")
+        if not buyer_id:
+            logger.warning(f"会话 {chat_id} 尚无买家映射，无法同步 Java 人工模式（仅本地生效）")
+            return
+
+        ok = await asyncio.to_thread(
+            self.cs_client.set_manual_mode, buyer_id, item_id, mode == "manual"
+        )
+        if mode == "manual":
+            logger.info(f"🔴 已接管会话 {chat_id} (商品: {item_id}, Java同步: {'成功' if ok else '失败，本地仍为人工'})")
+        elif ok:
+            logger.info(f"🟢 已恢复会话 {chat_id} 的自动回复 (商品: {item_id}，Java 已确认)")
+        else:
+            # 恢复未被 Java 确认：无条件回滚为人工模式，保持暂停，卖家重发句号重试。
+            # （mode=="auto" 意味着切换前就是人工，回滚不会误伤自动态会话。）
+            self.enter_manual_mode(chat_id)
+            logger.warning(f"🟡 会话 {chat_id} 的自动回复恢复未被 Java 确认，保持人工模式（请重发句号重试）")
+
+    async def handle_seller_message(self, chat_id, item_id, text):
+        """卖家人工回复：闲鱼侧已送达买家；BRIDGE 下同步进 Java 会话历史，
+        机器人恢复后模型可见卖家口径（resumeBot=false，恢复只由句号/消息端点触发）。"""
+        logger.info(f"卖家人工回复 (会话: {chat_id}, 商品: {item_id}): {text}")
+        if self.mode != "BRIDGE" or not self.cs_client:
+            return
+        buyer_id = (self._chat_buyers.get(chat_id) or {}).get("buyerId")
+        if not buyer_id:
+            return
+        await asyncio.to_thread(self.cs_client.add_seller_message, buyer_id, item_id, text, False)
 
     async def handle_message(self, message_data, websocket):
         """处理所有类型的消息"""
@@ -641,17 +1008,19 @@ class XianyuLive:
             if send_user_id == self.myid:
                 logger.debug("检测到卖家消息，检查是否为控制命令")
 
-                # 检查切换命令
+                # 检查切换命令（句号）：本地切换 + 同步 Java（见 handle_seller_toggle）
                 if self.check_toggle_keywords(send_message):
-                    mode = self.toggle_manual_mode(chat_id)
-                    if mode == "manual":
-                        logger.info(f"🔴 已接管会话 {chat_id} (商品: {item_id})")
-                    else:
-                        logger.info(f"🟢 已恢复会话 {chat_id} 的自动回复 (商品: {item_id})")
+                    await self.handle_seller_toggle(chat_id, item_id)
                     return
 
-                logger.info(f"卖家人工回复 (会话: {chat_id}, 商品: {item_id}): {send_message}")
+                # 卖家人工回复：闲鱼侧已送达，同步进 Java 会话历史（失败不影响送达）
+                await self.handle_seller_message(chat_id, item_id, send_message)
                 return
+
+            # 买家消息到达：记录 chat_id -> {buyerId, itemId} 映射并落盘，卖家
+            # 句号/人工回复据此同步 Java（侧车重启后从磁盘恢复，无需买家再发消息）。
+            self._chat_buyers[chat_id] = {"buyerId": send_user_id, "itemId": item_id}
+            self._save_state()
 
             logger.info(
                 f"用户: {send_user_name} (ID: {send_user_id}), 商品: {item_id}, "
@@ -673,13 +1042,18 @@ class XianyuLive:
             # 生成回复（ECHO 回显 / BRIDGE 转发 Java），并获知本轮是否转人工
             bot_reply, handoff_requested = await self.compose_reply(send_user_id, item_id, send_message)
 
-            # 无需回复（Java 失败且未配置兜底话术等情形）
+            # 无需回复：Java 409 人工模式（handoff_requested=True 静默等待卖家），
+            # 或 Java 故障且未配置兜底话术。
             if not bot_reply:
-                logger.info(f"[无需回复] 买家 {send_user_name} 的消息未生成回复")
+                if handoff_requested:
+                    self.enter_manual_mode(chat_id)
+                    logger.info(f"🔴 会话 {chat_id} 对齐 Java 人工模式，静默等待卖家（句号恢复需经 Java 确认）")
+                else:
+                    logger.info(f"[无需回复] 买家 {send_user_name} 的消息未生成回复")
                 return
 
             # X4 双层转人工：Java 侧工单创建成功（handoffRequested=true）时暂停该会话
-            # 自动回复，进入人工接管集合；卖家在闲鱼 App 发句号即可恢复自动回复。
+            # 自动回复，进入人工接管集合；卖家在闲鱼 App 发句号（经 Java 确认）恢复。
             if handoff_requested:
                 self.enter_manual_mode(chat_id)
                 logger.info(f"🟠 会话 {chat_id} 触发转人工，已暂停自动回复（卖家发句号恢复）")
@@ -766,6 +1140,9 @@ class XianyuLive:
         return False
 
     async def main(self):
+        # 侧车（可能刚重启）先对齐 Java 暂停状态：落盘恢复的会话里，Java 侧
+        # 已接管/已恢复的，本地跟着翻转；对齐失败保留本地状态（下次句号再同步）。
+        await self.align_manual_state_with_java()
         while True:
             try:
                 # 重置连接重启标志

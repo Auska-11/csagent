@@ -122,7 +122,8 @@ smartcs:
       read-timeout-ms: ${SMARTCS_QDRANT_READ_TIMEOUT_MS:10000}
   handoff:
     # memory：默认生成本地模拟人工工单，适合单独启动 Agent 项目和跑测试。
-    # after-sales-http：调用独立 after-sales-sla-platform 项目的接口创建真实工单。
+    # after-sales-http：调用独立 after-sales-sla-platform 项目的旧 /api/tickets 入口。
+    # sla-v1：契约 v1——服务账号登录 + /api/integrations/v1/work-items 幂等建单 + 结果回调。
     mode: ${SMARTCS_HANDOFF_MODE:memory}
     after-sales:
       base-url: ${SMARTCS_AFTER_SALES_BASE_URL:http://localhost:8081}
@@ -133,6 +134,21 @@ smartcs:
       result-query-mode: ${SMARTCS_AFTER_SALES_RESULT_QUERY_MODE:unavailable}
       connect-timeout-ms: ${SMARTCS_AFTER_SALES_CONNECT_TIMEOUT_MS:3000}
       read-timeout-ms: ${SMARTCS_AFTER_SALES_READ_TIMEOUT_MS:10000}
+    sla-v1:
+      # SLA v1 集成（契约 docs/31-seller-agent-integration-v1.md）。凭据只经环境变量注入，
+      # 不入库、不打日志。username/password 是 SLA 侧 app.integration.v1.agent-users 配置的
+      # 服务账号；seller-account-id 必须与该账号服务端绑定的渠道卖家一致，否则建单 403。
+      base-url: ${SMARTCS_HANDOFF_SLA_V1_BASE_URL:http://localhost:8081}
+      username: ${SMARTCS_HANDOFF_SLA_V1_USERNAME:}
+      password: ${SMARTCS_HANDOFF_SLA_V1_PASSWORD:}
+      seller-account-id: ${SMARTCS_HANDOFF_SLA_V1_SELLER_ACCOUNT_ID:}
+      # 结果回调接收端：令牌与租户都配置齐全才启用 /api/integrations/v1/sla-results，
+      # 否则端点按 404 处理（SLA 侧重试后转人工，不静默丢结果）。
+      callback-token: ${SMARTCS_HANDOFF_SLA_V1_CALLBACK_TOKEN:}
+      callback-tenant-id: ${SMARTCS_HANDOFF_SLA_V1_CALLBACK_TENANT_ID:}
+      connect-timeout-ms: ${SMARTCS_HANDOFF_SLA_V1_CONNECT_TIMEOUT_MS:3000}
+      read-timeout-ms: ${SMARTCS_HANDOFF_SLA_V1_READ_TIMEOUT_MS:10000}
+      token-expiry-skew-seconds: ${SMARTCS_HANDOFF_SLA_V1_TOKEN_EXPIRY_SKEW_SECONDS:30}
     recovery:
       # 默认关闭；只有确认售后平台真正支持 Idempotency-Key 时才开启后台补建。
       enabled: ${SMARTCS_HANDOFF_RECOVERY_ENABLED:false}
@@ -168,6 +184,13 @@ smartcs:
     buyer-token-ttl-seconds: ${SMARTCS_XIANYU_BUYER_TOKEN_TTL_SECONDS:86400}
     # 商品快照与知识文档草稿落盘目录；草稿需人工审校后移入 resources/knowledge/product/ 并重启生效。
     item-snapshot-dir: ${SMARTCS_XIANYU_ITEM_SNAPSHOT_DIR:data/xianyu-items}
+    # 议价授权（场景规则）。未配置 = 未授权：买家出价一律转卖家本人确认，绝不自行答应或回绝。
+    # 金额为空字符串时不绑定（保持 null），即"未授权该维度"；服务器经 SMARTCS_XIANYU_SCENARIO_* 注入。
+    scenario:
+      seller-rules:
+        bargain-accepted: ${SMARTCS_XIANYU_SCENARIO_SELLER_RULES_BARGAIN_ACCEPTED:false}
+        floor-price: ${SMARTCS_XIANYU_SCENARIO_SELLER_RULES_FLOOR_PRICE:}
+        allowed-discount: ${SMARTCS_XIANYU_SCENARIO_SELLER_RULES_ALLOWED_DISCOUNT:}
   monitor:
     # Eval 候选样本默认保存到本地 data 目录。
     # 这样用户点“无用”后生成的待审核样本，项目重启后仍然可以继续审核。

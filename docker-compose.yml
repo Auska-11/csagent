@@ -74,6 +74,16 @@ services:
       SMARTCS_AFTER_SALES_CONNECT_TIMEOUT_MS: ${SMARTCS_AFTER_SALES_CONNECT_TIMEOUT_MS:-3000}
       SMARTCS_AFTER_SALES_READ_TIMEOUT_MS: ${SMARTCS_AFTER_SALES_READ_TIMEOUT_MS:-10000}
       SMARTCS_HANDOFF_MODE: ${SMARTCS_HANDOFF_MODE:-memory}
+      # SLA v1 集成（契约 docs/31-seller-agent-integration-v1.md）：服务账号凭据与回调令牌
+      # 只经部署环境注入，不写镜像、不打日志。callback-token/tenant 配齐后回调端点才启用。
+      SMARTCS_HANDOFF_SLA_V1_BASE_URL: ${SMARTCS_HANDOFF_SLA_V1_BASE_URL:-http://localhost:8081}
+      SMARTCS_HANDOFF_SLA_V1_USERNAME: ${SMARTCS_HANDOFF_SLA_V1_USERNAME:-}
+      SMARTCS_HANDOFF_SLA_V1_PASSWORD: ${SMARTCS_HANDOFF_SLA_V1_PASSWORD:-}
+      SMARTCS_HANDOFF_SLA_V1_SELLER_ACCOUNT_ID: ${SMARTCS_HANDOFF_SLA_V1_SELLER_ACCOUNT_ID:-}
+      SMARTCS_HANDOFF_SLA_V1_CALLBACK_TOKEN: ${SMARTCS_HANDOFF_SLA_V1_CALLBACK_TOKEN:-}
+      SMARTCS_HANDOFF_SLA_V1_CALLBACK_TENANT_ID: ${SMARTCS_HANDOFF_SLA_V1_CALLBACK_TENANT_ID:-}
+      SMARTCS_HANDOFF_SLA_V1_CONNECT_TIMEOUT_MS: ${SMARTCS_HANDOFF_SLA_V1_CONNECT_TIMEOUT_MS:-3000}
+      SMARTCS_HANDOFF_SLA_V1_READ_TIMEOUT_MS: ${SMARTCS_HANDOFF_SLA_V1_READ_TIMEOUT_MS:-10000}
       # 当前外部平台没有只读幂等查询协议，reconcile 必须显式返回 unavailable。
       SMARTCS_AFTER_SALES_RESULT_QUERY_MODE: ${SMARTCS_AFTER_SALES_RESULT_QUERY_MODE:-unavailable}
       # 后台恢复默认关闭；开启前必须确认售后平台真正支持 Idempotency-Key。
@@ -115,8 +125,18 @@ services:
       # 的 CS_AGENT_TOKEN 一致（≥32 字节，启动期强度校验）。
       SMARTCS_XIANYU_ENABLED: ${SMARTCS_XIANYU_ENABLED:-false}
       SMARTCS_XIANYU_SERVICE_TOKEN: ${SMARTCS_XIANYU_SERVICE_TOKEN:-}
+      # 议价授权（未配置=未授权，一律转卖家确认）；金额变量留空即该维度不授权。
+      SMARTCS_XIANYU_SCENARIO_SELLER_RULES_BARGAIN_ACCEPTED: ${SMARTCS_XIANYU_SCENARIO_SELLER_RULES_BARGAIN_ACCEPTED:-false}
+      SMARTCS_XIANYU_SCENARIO_SELLER_RULES_FLOOR_PRICE: ${SMARTCS_XIANYU_SCENARIO_SELLER_RULES_FLOOR_PRICE:-}
+      SMARTCS_XIANYU_SCENARIO_SELLER_RULES_ALLOWED_DISCOUNT: ${SMARTCS_XIANYU_SCENARIO_SELLER_RULES_ALLOWED_DISCOUNT:-}
       # 小内存服务器（2C/3.4G）必须给 JVM 封顶；本地大内存可自行覆盖。
       JAVA_OPTS: ${SMARTCS_JAVA_OPTS:--Xmx768m -Xms256m}
+    # 数据目录挂卷（item-snapshot-dir=data/xianyu-items，容器内 /app/data）：
+    # XianyuItemFactService 的改价/售出覆盖层落在这里，compose 重建容器后
+    # 不再回退到知识文档旧库存（评审三轮问题 1）。eval-candidates 等本地
+    # data 产物也随卷持久化。
+    volumes:
+      - agent_data:/app/data
     depends_on:
       mysql:
         condition: service_healthy
@@ -147,6 +167,10 @@ services:
       CS_AGENT_URL: http://smart-cs-agent:8080
       SIDECAR_MODE: BRIDGE
       TZ: Asia/Shanghai
+    # 会话映射/人工模式状态落盘（data/sidecar-state.json）随卷持久化：侧车重启或
+    # 重建容器后，卖家句号与人工回复仍能同步 Java，不依赖买家先再发一条消息。
+    volumes:
+      - sidecar_state:/app/data
     depends_on:
       smart-cs-agent:
         condition: service_healthy
@@ -155,3 +179,5 @@ services:
 volumes:
   mysql_data:
   qdrant_data:
+  agent_data:
+  sidecar_state:

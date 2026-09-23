@@ -1,0 +1,125 @@
+# after-sales-sla-platform 服务器共部署编排（由 csagent 仓库维护，SLA 源仓库只读）。
+#
+# 与 SLA 自带 compose 的差异（适配 3.5G 小内存 ECS，与客服 Agent 并排运行）：
+# 1. 只部署 mysql + rabbitmq + app；redis / elasticsearch 是可选 profile，
+#    未启用时 SLA 以内存实现幂等与本地索引，运行正确，只是缺分布式缓存与全文检索。
+# 2. app 镜像走 Dockerfile.prebuilt（JAR 在开发机构建），不在服务器上编译。
+# 3. app 依赖并加入 csagent_default 网络：agent 用 http://after-sales-app:8081
+#    建单，SLA 用 http://smart-cs-agent:8080 回调，双向走容器内网。
+# 4. 所有密钥从 /opt/sla/.env 读取（scp 落盘 chmod 600，不入库、不打印）。
+# 5. 结果回调 v1 集成通过 APP_INTEGRATION_V1_JSON（SPRING_APPLICATION_JSON）
+#    注入 agent-users 服务账号，只从环境读取，不写镜像。
+#
+# 用法（服务器 /opt/sla）：
+#   docker compose up -d --build
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  sla-mysql:
+    image: mysql:8.4
+    container_name: after-sales-mysql
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      MYSQL_DATABASE: ${SLA_MYSQL_DATABASE:?set SLA_MYSQL_DATABASE in .env}
+      MYSQL_USER: ${SLA_MYSQL_USER:?set SLA_MYSQL_USER in .env}
+      MYSQL_PASSWORD: ${SLA_MYSQL_PASSWORD:?set SLA_MYSQL_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${SLA_MYSQL_ROOT_PASSWORD:?set SLA_MYSQL_ROOT_PASSWORD in .env}
+      TZ: Asia/Shanghai
+    # 服务器已有 smart-cs-mysql 占 3307，SLA MySQL 绑 3308，且只绑回环。
+    ports:
+      - "127.0.0.1:${SLA_MYSQL_PORT:-3308}:3306"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      # mysql:8.4（2026-09 补丁）默认不加载 mysql_native_password，而 SLA 的
+      # Flyway 12.11 驱动按 native_password 握手；显式加载插件保持连接可用。
+      - --mysql-native-password=ON
+    volumes:
+      - sla_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_ROOT_PASSWORD}\" mysqladmin ping -h localhost -uroot --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  sla-rabbitmq:
+    image: rabbitmq:3.13
+    container_name: after-sales-rabbitmq
+    restart: unless-stopped
+    logging: *default-logging
+    # 管理界面不部署（-management 镜像），省 ~150M 内存；诊断用 rabbitmqctl。
+    ports:
+      - "127.0.0.1:${SLA_RABBITMQ_PORT:-5673}:5672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${SLA_RABBITMQ_USERNAME:?set SLA_RABBITMQ_USERNAME in .env}
+      RABBITMQ_DEFAULT_PASS: ${SLA_RABBITMQ_PASSWORD:?set SLA_RABBITMQ_PASSWORD in .env}
+    volumes:
+      - sla_rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.prebuilt
+    image: after-sales-sla-platform:prebuilt
+    container_name: after-sales-app
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      sla-mysql:
+        condition: service_healthy
+      sla-rabbitmq:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: 8081
+      # 只启用 mysql + rabbit + prod；redis/elasticsearch 是可选增强，小内存服务器不装。
+      SPRING_PROFILES_ACTIVE: mysql,rabbit,prod
+      SPRING_DATASOURCE_URL: jdbc:mysql://sla-mysql:3306/${SLA_MYSQL_DATABASE:?set SLA_MYSQL_DATABASE in .env}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+      SPRING_DATASOURCE_USERNAME: ${SLA_MYSQL_USER:?set SLA_MYSQL_USER in .env}
+      SPRING_DATASOURCE_PASSWORD: ${SLA_MYSQL_PASSWORD:?set SLA_MYSQL_PASSWORD in .env}
+      SPRING_RABBITMQ_HOST: sla-rabbitmq
+      SPRING_RABBITMQ_USERNAME: ${SLA_RABBITMQ_USERNAME:?set SLA_RABBITMQ_USERNAME in .env}
+      SPRING_RABBITMQ_PASSWORD: ${SLA_RABBITMQ_PASSWORD:?set SLA_RABBITMQ_PASSWORD in .env}
+      # prod profile 无默认值，缺失即启动失败——避免演示密钥上线。
+      APP_AUTH_JWT_SECRET: ${SLA_APP_AUTH_JWT_SECRET:?set SLA_APP_AUTH_JWT_SECRET in .env}
+      APP_AUTH_BOOTSTRAP_USERNAME: ${SLA_APP_AUTH_BOOTSTRAP_USERNAME:?set SLA_APP_AUTH_BOOTSTRAP_USERNAME in .env}
+      APP_AUTH_BOOTSTRAP_PASSWORD: ${SLA_APP_AUTH_BOOTSTRAP_PASSWORD:?set SLA_APP_AUTH_BOOTSTRAP_PASSWORD in .env}
+      APP_AUTH_BOOTSTRAP_USER_ID: ${SLA_APP_AUTH_BOOTSTRAP_USER_ID:?set SLA_APP_AUTH_BOOTSTRAP_USER_ID in .env}
+      APP_AUTH_BOOTSTRAP_TENANT_ID: ${SLA_APP_AUTH_BOOTSTRAP_TENANT_ID:?set SLA_APP_AUTH_BOOTSTRAP_TENANT_ID in .env}
+      # v1 集成入口与 Agent 服务账号（callback-url 指向容器内网的 agent 服务名）。
+      # .env 里的 JSON 原样映射为标准的 SPRING_APPLICATION_JSON；
+      # callback-token 必须与 agent 侧 SMARTCS_HANDOFF_SLA_V1_CALLBACK_TOKEN 一致。
+      APP_INTEGRATION_V1_ENABLED: "true"
+      SPRING_APPLICATION_JSON: ${SLA_APP_INTEGRATION_V1_JSON:?set SLA_APP_INTEGRATION_V1_JSON in .env}
+      TZ: Asia/Shanghai
+      # 小内存服务器 JVM 封顶；本地大内存可覆盖。
+      JAVA_OPTS: ${SLA_JAVA_OPTS:--Xmx512m -Xms192m}
+    ports:
+      - "127.0.0.1:${SLA_APP_PORT:-8081}:8081"
+    volumes:
+      - sla_attachment_data:/app/data/attachments
+    networks:
+      - default
+      - csagent_default
+
+networks:
+  # external：由客服 Agent 栈（/opt/csagent）创建；SLA app 加入后可与
+  # smart-cs-agent 容器互访，MySQL/RabbitMQ 仍隔离在本 compose 内。
+  csagent_default:
+    external: true
+
+volumes:
+  sla_mysql_data:
+  sla_rabbitmq_data:
+  sla_attachment_data:

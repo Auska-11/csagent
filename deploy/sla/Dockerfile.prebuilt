@@ -1,0 +1,37 @@
+# SLA 平台（after-sales-sla-platform）预打包运行镜像。
+# JAR 已在开发机构建完成（含 Vue/Vite 前端 static 资源），服务器只做运行时镜像，
+# 避免在小内存 ECS 上执行 node/npm/maven 多阶段构建。
+#
+# SLA 源码仓库保持只读：本文件与同目录编排均由 csagent 仓库维护，
+# 同步方式见 scripts/deploy/sync-sla-to-server.sh。
+#
+# 开发机（SLA 仓库根目录）：mvn -DskipTests package
+# 服务器（/opt/sla）：docker compose up -d --build
+FROM eclipse-temurin:17-jre-jammy
+
+# 与 SLA 仓库自带 Dockerfile 的运行层保持一致：非 root 用户 + 附件目录 + 健康检查。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system app \
+    && useradd --system --gid app --home-dir /app app \
+    && mkdir -p /app/data/attachments \
+    && chown -R app:app /app
+
+WORKDIR /app
+
+COPY target/after-sales-sla-platform-0.0.1-SNAPSHOT.jar app.jar
+
+# 附件统一写入可挂载的数据目录，容器文件系统不留业务数据。
+ENV APP_ATTACHMENTS_STORAGE_ROOT=/app/data/attachments
+
+USER app
+
+EXPOSE 8081
+
+# 首次启动要做库表初始化和 Rabbit 队列声明，start-period 给足。
+HEALTHCHECK --interval=10s --timeout=3s --start-period=90s --retries=12 \
+    CMD curl --fail --silent http://localhost:8081/actuator/health || exit 1
+
+# JAVA_OPTS 由 compose 注入（默认 -Xmx512m -Xms192m），适配小内存服务器。
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

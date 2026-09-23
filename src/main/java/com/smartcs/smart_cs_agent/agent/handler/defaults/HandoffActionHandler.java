@@ -55,6 +55,21 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
         handoffData.put("context", action.getContext());
         context.addTrace("handoff_requested", "Workflow 判断需要转人工", handoffData);
 
+        // 只暂停、不建工单：真实闲鱼会话里“未授权承诺”需要的是卖家本人拍板，而不是
+        // 一张人工工单。跳过能力网关（无副作用、无需幂等键），仍以 HANDED_OFF 收尾，
+        // CustomerServiceAgent 会置 handoffRequested=true，侧车据此进入人工模式；
+        // 卖家回复经 seller-message 端点写回会话后恢复机器人。
+        if (action.isPauseOnly()) {
+            Map<String, Object> pauseData = new LinkedHashMap<>();
+            pauseData.put("reason", action.getReason());
+            pauseData.put("summaryPreview", HandlerTraceSupport.preview(action.getSummary(), 160));
+            context.addTrace("handoff_pause_only", "暂停机器人转卖家本人确认（不创建工单）", pauseData);
+            String reply = action.getBuyerReply().isBlank()
+                    ? "这件事我做不了主，已经帮您转告卖家本人，请稍等确认。"
+                    : action.getBuyerReply();
+            return ActionExecutionResult.handedOff(reply);
+        }
+
         if (!skillManager.isCapabilityAllowed(skillPackage, HANDOFF_CAPABILITY)) {
             CapabilityObservation denied = new CapabilityObservation(
                     HANDOFF_CAPABILITY,
@@ -115,7 +130,7 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
         if (result.isSuccess()) {
             observedData.put("ticketId", extractTicketId(result.getData()));
             context.addTrace("handoff_created", "已创建人工转接工单", observedData);
-            String answer = buildHandoffAnswer(result);
+            String answer = buildHandoffAnswer(result, action.getReason());
             return ActionExecutionResult.handedOff(answer);
         }
 
@@ -159,10 +174,16 @@ public class HandoffActionHandler implements ActionHandler<HandoffAction> {
         );
     }
 
-    private String buildHandoffAnswer(CapabilityObservation result) {
+    private String buildHandoffAnswer(CapabilityObservation result, String reason) {
         String ticketId = extractTicketId(result.getData());
         if (ticketId == null) {
             ticketId = "人工工单已创建";
+        }
+        if (HandoffAction.REASON_PRODUCT_VERIFICATION.equals(reason)) {
+            // 商品核实不是投诉或人工接管，不能用“带来不好的体验/转接人工客服”的
+            // 道歉口径；买家预期是“等卖家实测结果”。
+            return "您问的这个功能我这边还没有确切结论，已经请卖家本人实际核实（记录编号："
+                    + ticketId + "），结果确认后马上告诉您，请稍等。";
         }
         return "非常抱歉给您带来不好的体验。当前问题我已为您转接人工客服，工单号：" + ticketId
                 + "。人工客服会参考当前会话摘要继续处理，请您稍等。";
