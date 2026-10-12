@@ -207,8 +207,7 @@ Cache-Control: no-store
 
 生产环境不需要再手动关闭 Demo：三处默认值都已改为关闭（`SecurityProperties` 代码默认、`application.yml` 的 `${SMARTCS_SECURITY_DEMO_ISSUER_ENABLED:false}`、`docker-compose.yml` 的 `:-false`），
 且 `docker-compose.yml` 将 `SMARTCS_SECURITY_JWT_SECRET` 声明为必填变量——缺失时容器直接拒绝启动，不再回退到仓库公开的开发密钥。
-此外 `SecurityProperties` 启动期守卫会拒绝“Demo 签发开启 + 仓库公开开发密钥”的组合（`IllegalStateException` 启动失败），
-因此把公开签发接口带到公网的前提是显式提供私有随机密钥。
+2026-10-07 补充：`SecurityProperties` 已移除公开默认密钥。无论 Demo 签发是否开启，IDE、Maven、JAR 和 Compose 都必须显式配置至少 32 字节的私有随机密钥；缺失、过短或使用仓库中的开发密钥占位值时启动失败。测试专用密钥仅存在于测试 classpath，不打入发布 JAR。
 
 本地演示需要显式开启：叠加 `docker-compose.demo.yml`（只覆盖 `SMARTCS_SECURITY_DEMO_ISSUER_ENABLED: "true"`，不提供任何密钥默认值）或设置同名环境变量。
 

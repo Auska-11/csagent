@@ -1,9 +1,16 @@
 package com.smartcs.smart_cs_agent.security;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.beans.BeansException;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.test.context.support.TestPropertySourceUtils;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -29,33 +36,63 @@ class SecurityPropertiesTest {
     }
 
     @Test
-    void demoIssuerWithKnownDevSecretMustFailStartup() {
+    void missingSecretMustFailStartupEvenWhenDemoIssuerIsDisabled() {
         SecurityProperties unsafe = new SecurityProperties();
-        unsafe.setDemoIssuerEnabled(true);
-        // jwtSecret 默认就是仓库公开的开发密钥。
-
-        IllegalStateException failure = assertThrows(
-                IllegalStateException.class,
-                unsafe::rejectDemoIssuerWithKnownDevSecret
-        );
+        assertNull(unsafe.getJwtSecret());
+        IllegalStateException failure = assertThrows(IllegalStateException.class, unsafe::validateJwtSecret);
         assertTrue(failure.getMessage().contains("SMARTCS_SECURITY_JWT_SECRET"));
     }
 
     @Test
-    void demoIssuerWithPrivateSecretShouldStart() {
-        SecurityProperties safe = new SecurityProperties();
-        safe.setDemoIssuerEnabled(true);
-        safe.setJwtSecret("private-test-secret-with-at-least-32-bytes!!");
-
-        assertDoesNotThrow(safe::rejectDemoIssuerWithKnownDevSecret);
+    void knownSecretsMustBeRejectedRegardlessOfDemoIssuerSetting() {
+        for (boolean demoEnabled : new boolean[]{false, true}) {
+            for (String secret : new String[]{
+                    "dev-only-smart-cs-agent-change-this-secret-32bytes",
+                    "replace-with-at-least-32-random-bytes"}) {
+                SecurityProperties unsafe = new SecurityProperties();
+                unsafe.setDemoIssuerEnabled(demoEnabled);
+                unsafe.setJwtSecret(secret);
+                assertThrows(IllegalStateException.class, unsafe::validateJwtSecret);
+            }
+        }
     }
 
     @Test
-    void knownDevSecretIsAcceptableWhileDemoIssuerDisabled() {
-        SecurityProperties localOnly = new SecurityProperties();
-        // 本地裸跑 JAR、不开 demo 签发：允许继续使用开发默认密钥完成非对外学习场景。
-        assertFalse(localOnly.isDemoIssuerEnabled());
+    void privateSecretShouldAllowBothStartupModes() {
+        for (boolean demoEnabled : new boolean[]{false, true}) {
+            SecurityProperties safe = new SecurityProperties();
+            safe.setDemoIssuerEnabled(demoEnabled);
+            safe.setJwtSecret("private-test-secret-with-at-least-32-bytes!!");
+            assertDoesNotThrow(safe::validateJwtSecret);
+        }
+    }
 
-        assertDoesNotThrow(localOnly::rejectDemoIssuerWithKnownDevSecret);
+    @Test
+    void springStartupMustEnforceSecretValidationAfterPropertyBinding() {
+        try (AnnotationConfigApplicationContext missing = securityContext()) {
+            assertThrows(BeansException.class, missing::refresh);
+        }
+        try (AnnotationConfigApplicationContext known = securityContext(
+                "smartcs.security.demo-issuer-enabled=false",
+                "smartcs.security.jwt-secret=dev-only-smart-cs-agent-change-this-secret-32bytes")) {
+            assertThrows(BeansException.class, known::refresh);
+        }
+        try (AnnotationConfigApplicationContext safe = securityContext(
+                "smartcs.security.jwt-secret=private-test-secret-with-at-least-32-bytes!!")) {
+            assertDoesNotThrow(safe::refresh);
+            assertNotNull(safe.getBean(SecurityProperties.class).getJwtSecret());
+        }
+    }
+
+    private AnnotationConfigApplicationContext securityContext(String... properties) {
+        AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext();
+        TestPropertySourceUtils.addInlinedPropertiesToEnvironment(context, properties);
+        context.register(SecurityBindingConfiguration.class);
+        return context;
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @EnableConfigurationProperties(SecurityProperties.class)
+    static class SecurityBindingConfiguration {
     }
 }

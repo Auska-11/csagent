@@ -2,27 +2,22 @@ package com.smartcs.smart_cs_agent.channel.xianyu;
 
 import com.smartcs.smart_cs_agent.channel.xianyu.XianyuItemFactService.ItemFacts;
 import com.smartcs.smart_cs_agent.channel.xianyu.XianyuItemFactService.PriceRange;
-import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeSearchRequest;
-import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeSearchResponse;
-import com.smartcs.smart_cs_agent.knowledge.service.KnowledgeSearchService;
 import com.smartcs.smart_cs_agent.tools.KnowledgeSearchResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import com.smartcs.smart_cs_agent.tools.KnowledgeDocument;
+import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeType;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
 
 /**
  * XianyuItemFactService 单元测试：审阅缺陷 #4/#7 的直接回归层。
@@ -52,7 +47,7 @@ class XianyuItemFactServiceTest {
 
     @Test
     void negativeConditionSentencesArePreservedVerbatimNotWordConcatenated() {
-        XianyuItemFactService factService = service(knowledgeServiceWith(
+        XianyuItemFactService factService = service(catalogWith(
                 hit(DOC_ID, "MacBook Pro 14 / 商品描述", "没有维修过，没有划痕，不是全新")));
 
         String condition = factService.itemFacts(ITEM_ID).orElseThrow().condition();
@@ -63,7 +58,7 @@ class XianyuItemFactServiceTest {
 
     @Test
     void conditionKeepsWholeSentencesFromMixedRealisticDoc() {
-        XianyuItemFactService factService = service(knowledgeServiceWith(
+        XianyuItemFactService factService = service(catalogWith(
                 hit(DOC_ID, "iPhone 13 / 商品描述",
                         "iPhone 13：自用一年，95新。没有维修过，没有划痕，不是全新。"
                                 + "电池健康 91%，屏幕有轻微使用痕迹。支持蓝牙连接，功能一切正常。")));
@@ -121,8 +116,8 @@ class XianyuItemFactServiceTest {
     // --- 文档过滤与查询语义 ---
 
     @Test
-    void itemFactsFiltersToExactDocumentAndQueriesByItemId() {
-        KnowledgeSearchService knowledgeService = knowledgeServiceWith(
+    void exactItemLookupDoesNotDependOnSearchRanking() {
+        XianyuReviewedItemCatalog knowledgeService = catalogWith(
                 hit(DOC_ID, "MacBook Pro 14 / 基本信息", "价格：¥265\n库存：1\n商品 ID：1079979582985"),
                 hit(DOC_ID, "MacBook Pro 14 / 商品描述", "MacBook Pro 14：自用一年，没有维修过，没有划痕"),
                 hit("product/999999.md", "其他商品 / 基本信息", "价格：¥9999\n库存：88"));
@@ -138,33 +133,30 @@ class XianyuItemFactServiceTest {
         assertEquals("自用一年，没有维修过，没有划痕", facts.description());
         assertEquals("没有维修过；没有划痕", facts.condition());
 
-        // 检索必须按 itemId 查询（当前商品是确定的，不做语义猜测）。
-        ArgumentCaptor<KnowledgeSearchRequest> captor = ArgumentCaptor.forClass(KnowledgeSearchRequest.class);
-        verify(knowledgeService).searchWithDiagnostics(captor.capture());
-        assertEquals(ITEM_ID, captor.getValue().query());
+        assertTrue(factService.itemFacts("999999").isPresent());
+        assertTrue(factService.itemFacts("missing").isEmpty());
     }
 
     @Test
     void missingDocWithoutOverrideReturnsEmptyAndNeverFabricates() {
-        KnowledgeSearchService knowledgeService = emptyKnowledgeService();
+        XianyuReviewedItemCatalog knowledgeService = emptyCatalog();
         XianyuItemFactService factService = service(knowledgeService);
 
         assertTrue(factService.itemFacts(ITEM_ID).isEmpty());
         assertTrue(factService.currentItemFacts("xianyu_buyer-01_1079979582985").isEmpty());
 
         // 非法 itemId 直接拒绝，不打扰知识检索（用独立 mock 隔离前两步的合法查询）。
-        KnowledgeSearchService untouched = emptyKnowledgeService();
+        XianyuReviewedItemCatalog untouched = emptyCatalog();
         XianyuItemFactService guardOnly = service(untouched);
         assertTrue(guardOnly.itemFacts(null).isEmpty());
         assertTrue(guardOnly.itemFacts("   ").isEmpty());
-        verifyNoInteractions(untouched);
     }
 
     // --- 热更新覆盖层（缺陷 #7：改价/售出对齐现势） ---
 
     @Test
     void liveOverrideMergesPartialPushesAndWinsOverDocument() {
-        XianyuItemFactService factService = service(knowledgeServiceWith(
+        XianyuItemFactService factService = service(catalogWith(
                 hit(DOC_ID, "MacBook Pro 14 / 基本信息", "价格：¥265\n库存：1")));
 
         // 改价只推价格：库存仍以文档为准。
@@ -196,7 +188,7 @@ class XianyuItemFactServiceTest {
 
     @Test
     void overrideWithoutDocAnswersPriceAndStockButNeverInventsTitleOrCondition() {
-        XianyuItemFactService factService = service(emptyKnowledgeService());
+        XianyuItemFactService factService = service(emptyCatalog());
         factService.applyLiveOverride(ITEM_ID, PriceRange.of(new BigDecimal("250")), 1);
 
         // 文档还在人工审校：价格库存按覆盖值回答，标题/描述/成色保持未知，绝不编造。
@@ -214,7 +206,7 @@ class XianyuItemFactServiceTest {
 
     @Test
     void currentItemIdParsesOnlyXianyuConversationShape() {
-        XianyuItemFactService factService = service(emptyKnowledgeService());
+        XianyuItemFactService factService = service(emptyCatalog());
 
         assertEquals(Optional.of(ITEM_ID), factService.currentItemId("xianyu_buyer-01_" + ITEM_ID));
         assertEquals(Optional.empty(), factService.currentItemId("conv-123"));
@@ -224,7 +216,7 @@ class XianyuItemFactServiceTest {
 
     @Test
     void isXianyuConversationRequiresTenantAndConversationShape() {
-        XianyuItemFactService factService = service(emptyKnowledgeService());
+        XianyuItemFactService factService = service(emptyCatalog());
 
         assertTrue(factService.isXianyuConversation("xianyu", "xianyu_b_" + ITEM_ID));
         assertTrue(factService.isXianyuConversation(" Xianyu ", "xianyu_b_" + ITEM_ID));
@@ -255,14 +247,14 @@ class XianyuItemFactServiceTest {
     @Test
     void liveOverridesSurviveRestartInsteadOfFallingBackToDocument() {
         // 文档写的是旧事实：¥265 / 库存 1。
-        KnowledgeSearchService knowledgeService = knowledgeServiceWith(
+        XianyuReviewedItemCatalog knowledgeService = catalogWith(
                 hit(DOC_ID, "MacBook Pro 14 / 基本信息", "价格：¥265\n库存：1"));
         XianyuItemFactService before = service(knowledgeService);
         before.applyLiveOverride(ITEM_ID, PriceRange.of(new BigDecimal("245")), null);
         before.applyLiveOverride(ITEM_ID, null, 0);
 
         // 服务重启：同一快照目录上的新实例从磁盘恢复覆盖层，售出状态不回退为文档的库存 1。
-        XianyuItemFactService after = service(knowledgeServiceWith(
+        XianyuItemFactService after = service(catalogWith(
                 hit(DOC_ID, "MacBook Pro 14 / 基本信息", "价格：¥265\n库存：1")));
         ItemFacts facts = after.itemFacts(ITEM_ID).orElseThrow();
         assertEquals(0, new BigDecimal("245").compareTo(facts.price().min()));
@@ -272,7 +264,7 @@ class XianyuItemFactServiceTest {
 
     @Test
     void seededSnapshotNeverOverwritesNewerLiveOverride() {
-        XianyuItemFactService factService = service(emptyKnowledgeService());
+        XianyuItemFactService factService = service(emptyCatalog());
 
         // 侧车 TTL 过期重拉推送了售出事实。
         factService.applyLiveOverride(ITEM_ID, null, 0);
@@ -295,10 +287,10 @@ class XianyuItemFactServiceTest {
 
     @Test
     void seededOverrideIsPersistedAndSurvivesRestart() {
-        XianyuItemFactService before = service(emptyKnowledgeService());
+        XianyuItemFactService before = service(emptyCatalog());
         assertTrue(before.seedLiveOverride(ITEM_ID, PriceRange.of(new BigDecimal("265")), 1));
 
-        XianyuItemFactService after = service(emptyKnowledgeService());
+        XianyuItemFactService after = service(emptyCatalog());
         ItemFacts facts = after.itemFacts(ITEM_ID).orElseThrow();
         assertEquals("¥265", facts.price().display());
         assertEquals(1, facts.stock());
@@ -306,32 +298,33 @@ class XianyuItemFactServiceTest {
 
     // --- 构造辅助 ---
 
-    private static KnowledgeSearchService knowledgeServiceWith(KnowledgeSearchResult... hits) {
-        KnowledgeSearchService service = mock(KnowledgeSearchService.class);
-        when(service.searchWithDiagnostics(any(KnowledgeSearchRequest.class)))
-                .thenReturn(new KnowledgeSearchResponse(List.of(hits), List.of()));
-        return service;
+    private static XianyuReviewedItemCatalog catalogWith(KnowledgeSearchResult... hits) {
+        var grouped = new LinkedHashMap<String, List<KnowledgeSearchResult>>();
+        for (var hit : hits) grouped.computeIfAbsent(hit.getDocumentId(), ignored -> new ArrayList<>()).add(hit);
+        List<KnowledgeDocument> documents = grouped.entrySet().stream().map(entry -> {
+            String title = entry.getValue().get(0).getTitle().split(" / ")[0];
+            String markdown = "# " + title + "\n" + String.join("\n", entry.getValue().stream()
+                    .map(hit -> "## " + hit.getTitle().substring(hit.getTitle().indexOf(" / ") + 3) + "\n" + hit.getSnippet()).toList());
+            return new KnowledgeDocument(entry.getKey(), "product", title, markdown, List.of(title),
+                    KnowledgeType.POLICY, "", "", "reviewed-test", "1", null, "xianyu");
+        }).toList();
+        return new XianyuReviewedItemCatalog(documents);
     }
 
-    private static KnowledgeSearchService emptyKnowledgeService() {
-        KnowledgeSearchService service = mock(KnowledgeSearchService.class);
-        when(service.searchWithDiagnostics(any(KnowledgeSearchRequest.class)))
-                .thenReturn(KnowledgeSearchResponse.empty());
-        return service;
-    }
+    private static XianyuReviewedItemCatalog emptyCatalog() { return new XianyuReviewedItemCatalog(List.of()); }
 
     private static KnowledgeSearchResult hit(String documentId, String title, String snippet) {
         return new KnowledgeSearchResult(documentId, "product", title, 100, snippet);
     }
 
-    private XianyuItemFactService service(KnowledgeSearchService knowledgeService) {
+    private XianyuItemFactService service(XianyuReviewedItemCatalog knowledgeService) {
         XianyuSidecarProperties properties = new XianyuSidecarProperties();
         properties.setItemSnapshotDir(snapshotDir.toString());
-        return new XianyuItemFactService(knowledgeService, properties);
+        return new XianyuItemFactService(knowledgeService, new XianyuItemProfileStore(properties), properties);
     }
 
     private ItemFacts factsFromDocContent(String content) {
-        XianyuItemFactService factService = service(knowledgeServiceWith(
+        XianyuItemFactService factService = service(catalogWith(
                 hit(DOC_ID, "MacBook Pro 14 / 基本信息", content)));
         return factService.itemFacts(ITEM_ID).orElseThrow();
     }

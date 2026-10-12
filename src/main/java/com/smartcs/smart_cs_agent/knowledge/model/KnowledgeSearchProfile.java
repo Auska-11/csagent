@@ -1,13 +1,19 @@
 package com.smartcs.smart_cs_agent.knowledge.model;
 
-/** knowledge.search 的内部检索 Profile。空过滤字段表示不限制。 */
+/** 内部检索范围。空渠道表示通用资料范围；空品类、型号和版本表示未指定这些过滤条件。 */
 public record KnowledgeSearchProfile(
         KnowledgeType knowledgeType,
         String productCategory,
         String productModel,
-        String version
+        String version,
+        String channel
 ) {
+    public KnowledgeSearchProfile(KnowledgeType knowledgeType, String productCategory, String productModel, String version) {
+        this(knowledgeType, productCategory, productModel, version, "");
+    }
+
     public KnowledgeSearchProfile {
+        channel = channel == null ? "" : channel.trim().toLowerCase(java.util.Locale.ROOT);
         productCategory = safe(productCategory);
         productModel = safe(productModel);
         version = safe(version);

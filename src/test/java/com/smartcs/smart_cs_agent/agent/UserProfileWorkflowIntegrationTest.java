@@ -13,6 +13,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 从真实客服入口验证用户资料、认证 Principal、长期偏好和商品推荐的完整链路。 */
@@ -65,7 +66,7 @@ class UserProfileWorkflowIntegrationTest {
         String conversationId = "conv-user-preference-integration";
         String userId = "USER-002";
         conversationStore.clear(ConversationKey.defaultTenant(userId, conversationId));
-        userMemoryStore.clear(userId);
+        userMemoryStore.clear("default", userId);
 
         ChatResponse remembered = agent.chatWithTrace(authenticatedRequest(
                 conversationId,
@@ -82,6 +83,41 @@ class UserProfileWorkflowIntegrationTest {
         ));
         assertTrue(recommendation.getReply().contains("之前偏好的“蓝牙耳机”"));
         assertTrue(recommendation.getReply().contains("蓝牙耳机 Pro Max"));
+    }
+
+    @Test
+    void profileWritesAndRecommendationsMustRemainWithinAuthenticatedTenant() {
+        String userId = "tenant-preference-user";
+        String conversationId = "shared-preference-conversation";
+        for (String tenant : new String[]{"tenant-a", "tenant-b"}) {
+            userMemoryStore.clear(tenant, userId);
+            conversationStore.clear(new ConversationKey(tenant, userId, conversationId));
+        }
+
+        ChatResponse first = agent.chatWithTrace(tenantRequest(
+                "tenant-a", conversationId, userId, "我喜欢蓝牙耳机"));
+        ChatResponse second = agent.chatWithTrace(tenantRequest(
+                "tenant-b", conversationId, userId, "我喜欢智能手表"));
+        assertTrue(first.getReply().contains("记住了"));
+        assertTrue(second.getReply().contains("记住了"));
+        assertEquals(java.util.List.of("蓝牙耳机"),
+                userMemoryStore.getSnapshot("tenant-a", userId).getProductPreferences());
+        assertEquals(java.util.List.of("智能手表"),
+                userMemoryStore.getSnapshot("tenant-b", userId).getProductPreferences());
+
+        ChatResponse recommendationA = agent.chatWithTrace(tenantRequest(
+                "tenant-a", conversationId, userId, "给我推荐一下"));
+        ChatResponse recommendationB = agent.chatWithTrace(tenantRequest(
+                "tenant-b", conversationId, userId, "给我推荐一下"));
+        assertTrue(recommendationA.getReply().contains("之前偏好的“蓝牙耳机”"));
+        assertFalse(recommendationA.getReply().contains("智能手表"));
+        assertTrue(recommendationB.getReply().contains("之前偏好的“智能手表”"));
+        assertFalse(recommendationB.getReply().contains("蓝牙耳机"));
+    }
+
+    private ChatRequest tenantRequest(String tenantId, String conversationId, String userId, String message) {
+        return new ChatRequest(tenantId, conversationId, userId, message,
+                AuthenticatedPrincipal.authenticated(tenantId, userId, Set.of("CUSTOMER")));
     }
 
     private ChatRequest authenticatedRequest(String conversationId, String userId, String message) {

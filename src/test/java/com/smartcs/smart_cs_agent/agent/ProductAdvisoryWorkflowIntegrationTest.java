@@ -75,7 +75,7 @@ class ProductAdvisoryWorkflowIntegrationTest {
         String conversationId = "conv-product-preference-integration";
         String userId = "USER-PRODUCT-C";
         conversationStore.clear(ConversationKey.defaultTenant(userId, conversationId));
-        userMemoryStore.clear(userId);
+        userMemoryStore.clear("default", userId);
 
         // 偏好写入已由 UserProfileWorkflow 接管，商品 Workflow 只负责读取并推荐。
         ChatResponse remembered = agent.chatWithTrace(request(

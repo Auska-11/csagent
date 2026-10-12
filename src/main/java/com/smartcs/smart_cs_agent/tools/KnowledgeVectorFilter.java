@@ -7,9 +7,15 @@ public record KnowledgeVectorFilter(
         KnowledgeType knowledgeType,
         String productCategory,
         String productModel,
-        String version
+        String version,
+        String channel
 ) {
+    public KnowledgeVectorFilter(KnowledgeType knowledgeType, String productCategory, String productModel, String version) {
+        this(knowledgeType, productCategory, productModel, version, "");
+    }
+
     public KnowledgeVectorFilter {
+        channel = channel == null ? "" : channel.trim().toLowerCase(java.util.Locale.ROOT);
         productCategory = safe(productCategory);
         productModel = safe(productModel);
         version = safe(version);

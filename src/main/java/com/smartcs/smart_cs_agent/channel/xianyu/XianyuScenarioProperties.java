@@ -16,9 +16,9 @@ import java.util.Set;
  *
  * <p>为什么不用散落的 {@code tenantId == xianyu} 判断：本类把两类决策收敛到同一处——</p>
  * <ul>
- *     <li>{@link #excludedWorkflows}：路由边界。演示商城流程（订单、退货、发票政策等）
- *         即使关键词命中也不得进入真实买家会话，Router 侧统一跳过。</li>
- *     <li>{@link #sellerRules}：议价授权。报价、包邮等承诺只能来自这里的显式配置；
+ *     <li>{@link #allowedWorkflows} 与 {@link #excludedWorkflows}：真实渠道的流程准入边界，
+ *         由渠道资格策略统一检查，商城流程即使关键词命中也不得进入。</li>
+ *     <li>{@link #sellerRules}：议价授权。作为配置兜底，已发布的逐商品授权由 XianyuSellerRuleService 优先读取；
  *         没有配置就是“未授权”，回复必须引导卖家确认，模型不得自行发挥。</li>
  * </ul>
  *
@@ -38,6 +38,19 @@ public class XianyuScenarioProperties {
     private Set<String> excludedWorkflows = new LinkedHashSet<>(List.of(
             "order_query", "return_apply", "return_query", "warranty_query"
     ));
+
+    /** New workflows are closed to the live channel until explicitly approved. */
+    private Set<String> allowedWorkflows = new LinkedHashSet<>(List.of(
+            "product_advisory", "bargain", "xianyu_trade", "troubleshooting", "escalation", "customer_service"
+    ));
+
+    public Set<String> getAllowedWorkflows() { return allowedWorkflows; }
+    public void setAllowedWorkflows(Set<String> allowedWorkflows) {
+        this.allowedWorkflows = allowedWorkflows == null ? new LinkedHashSet<>() : new LinkedHashSet<>(allowedWorkflows);
+    }
+    public boolean isWorkflowAllowed(String workflowId) {
+        return workflowId != null && allowedWorkflows.contains(workflowId.trim()) && !isWorkflowExcluded(workflowId);
+    }
 
     /** 卖家商业规则；未配置时议价等承诺一律按“需卖家确认”处理。 */
     private SellerRules sellerRules = new SellerRules();

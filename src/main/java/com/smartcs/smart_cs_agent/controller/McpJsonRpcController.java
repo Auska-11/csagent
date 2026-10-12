@@ -5,6 +5,7 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityDefinition;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.mcp.server.McpInvocationMetadata;
 import com.smartcs.smart_cs_agent.mcp.server.McpServerAdapter;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -19,6 +20,7 @@ import java.util.Map;
 public class McpJsonRpcController {
 
     private static final int METHOD_NOT_FOUND = -32601;
+    private static final int INVALID_REQUEST = -32600;
     private static final int INVALID_PARAMS = -32602;
 
     private final McpServerAdapter serverAdapter;
@@ -28,15 +30,29 @@ public class McpJsonRpcController {
     }
 
     @PostMapping("/mcp")
-    public McpJsonRpcResponse handle(
+    public ResponseEntity<McpJsonRpcResponse> handleHttp(
             @RequestBody(required = false) McpJsonRpcRequest request,
             @AuthenticationPrincipal AuthenticatedPrincipal principal) {
-        if (request == null || request.getMethod() == null || request.getMethod().isBlank()) {
+        if (request != null && "2.0".equals(request.getJsonrpc())
+                && request.getMethod() != null && !request.getMethod().isBlank() && !request.hasId()) {
+            // 已初始化、取消等通知不产生 JSON-RPC 响应；未知通知也忽略。
+            // tools/call 必须通过带 id 的请求执行，不能用通知静默触发业务能力。
+            return ResponseEntity.accepted().build();
+        }
+        return ResponseEntity.ok(handle(request, principal));
+    }
+
+    public McpJsonRpcResponse handle(McpJsonRpcRequest request, AuthenticatedPrincipal principal) {
+        if (request == null || !"2.0".equals(request.getJsonrpc())) {
+            return McpJsonRpcResponse.error(null, INVALID_REQUEST, "JSON-RPC version must be 2.0");
+        }
+        if (request.getMethod() == null || request.getMethod().isBlank()) {
             return McpJsonRpcResponse.error(null, INVALID_PARAMS, "MCP method cannot be empty");
         }
 
         return switch (request.getMethod()) {
             case "initialize" -> McpJsonRpcResponse.success(request.getId(), initializeResult());
+            case "ping" -> McpJsonRpcResponse.success(request.getId(), Map.of());
             case "tools/list" -> McpJsonRpcResponse.success(request.getId(), toolsListResult());
             case "tools/call" -> McpJsonRpcResponse.success(
                     request.getId(),

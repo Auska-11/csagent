@@ -35,10 +35,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(properties = {
         "smartcs.xianyu.enabled=true",
         "smartcs.xianyu.service-token=test-sidecar-service-token-32-bytes-long!!",
-        "smartcs.xianyu.item-snapshot-dir=target/xianyu-item-drafts-test"
+        "smartcs.xianyu.buyer-token-ttl-seconds=86400"
 })
 @AutoConfigureMockMvc
 class XianyuSidecarControllerIntegrationTest {
+    @org.junit.jupiter.api.io.TempDir static Path directory;
+    @org.springframework.test.context.DynamicPropertySource
+    static void properties(org.springframework.test.context.DynamicPropertyRegistry registry) {
+        registry.add("smartcs.xianyu.item-snapshot-dir", () -> directory.toString());
+    }
+
 
     private static final String SERVICE_TOKEN = "test-sidecar-service-token-32-bytes-long!!";
     private static final Pattern USER_ID_PATTERN = Pattern.compile("USER-XY-[0-9a-f]{8}");
@@ -130,7 +136,7 @@ class XianyuSidecarControllerIntegrationTest {
     void itemSnapshotShouldCreateDraftExactlyOnce() throws Exception {
         String itemId = "987654999";
         // target/ 下的草稿可能来自上一次测试运行，先清掉保证“首次创建”语义可重复验证。
-        Files.deleteIfExists(Path.of("target/xianyu-item-drafts-test", itemId + ".md"));
+        Files.deleteIfExists(directory.resolve("profiles/" + itemId + ".json"));
         String snapshot = """
                 {"title":"蓝牙耳机 Pro Max","desc":"支持主动降噪","price_range":"¥39 - ¥59",\
                 "total_stock":8,"sku_details":[{"spec":"黑色","price":39,"stock":5},{"spec":"白色","price":59,"stock":3}]}
@@ -155,14 +161,12 @@ class XianyuSidecarControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.itemKnowledge").value("existing"));
 
-        Path draft = Path.of("target/xianyu-item-drafts-test", itemId + ".md");
+        Path draft = directory.resolve("profiles/" + itemId + ".json");
         assertTrue(Files.exists(draft), "草稿文件应存在: " + draft);
-        String markdown = Files.readString(draft);
-        assertTrue(markdown.contains("documentid: product/" + itemId + ".md"));
-        assertTrue(markdown.contains("蓝牙耳机 Pro Max"));
-        assertTrue(markdown.contains("¥39 - ¥59"));
-        assertTrue(markdown.contains("黑色：¥39"));
-        assertTrue(markdown.contains("人工审校后移动到"));
+        JsonNode saved = JSON.readTree(Files.readString(draft));
+        assertEquals("蓝牙耳机 Pro Max", saved.path("draft").path("title").asText());
+        assertEquals("支持主动降噪", saved.path("draft").path("description").asText());
+        assertTrue(saved.path("published").isNull(), "自动快照只能生成审核草稿");
     }
 
     private JsonNode register(String buyerId, String itemId) throws Exception {

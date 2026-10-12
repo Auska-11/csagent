@@ -9,6 +9,7 @@ import java.time.LocalDate;
 public class KnowledgeMetadataFilter {
 
     public boolean matches(KnowledgeChunk chunk, KnowledgeQueryPlan plan) {
+        if (!chunk.channel().equalsIgnoreCase(plan.channel())) return false;
         if (chunk.knowledgeType() != plan.knowledgeType()) {
             return false;
         }

@@ -53,7 +53,10 @@ public class KnowledgeSearchService {
                                   RagProperties properties,
                                   TextEmbeddingClient embeddingClient,
                                   KnowledgeVectorStore vectorStore) {
-        List<KnowledgeChunk> chunks = new KnowledgeChunker().chunk(documents);
+        // Current-item facts have their own exact-key store; stale listing prices must never become RAG evidence.
+        List<KnowledgeChunk> chunks = new KnowledgeChunker().chunk(documents.stream()
+                .filter(document -> !("xianyu".equals(document.getChannel()) && "product".equals(document.getCategory())))
+                .toList());
         KnowledgeMetadataFilter metadataFilter = new KnowledgeMetadataFilter();
         KeywordRetriever keywordRetriever = new KeywordRetriever(chunks, metadataFilter);
         KnowledgeReranker reranker = new KnowledgeReranker();

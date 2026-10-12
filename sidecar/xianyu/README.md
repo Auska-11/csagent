@@ -1,74 +1,80 @@
 # 闲鱼侧车（Xianyu Sidecar）
 
-把闲鱼真实买家消息接入 Java 客服 Agent 的独立 Python 进程。**无脑转发器**：
-只负责协议层（cookie 登录、WebSocket 收发、心跳、token 刷新），不做任何
-LLM 决策——回复全部来自主项目 `/api/chat/send`。
+独立 Python 进程，承接闲鱼登录、WebSocket 消息、心跳与重连。BRIDGE 模式将买家消息交给 Java 客服 Agent，业务判断和话术生成由 Java 完成。
 
-> 来源与逐条改动记录见 [PROVENANCE.md](PROVENANCE.md)（基于
-> XianyuAutoAgent@`540bbc2` 裁剪，GPL-3.0）。设计动机见
-> `docs/客服Agent/客服Agent-76-...md` §5。
+协议来源、改动与许可证保留在 [PROVENANCE.md](PROVENANCE.md) 和 [LICENSE](LICENSE)。
 
 ## 运行
 
 ```bash
 cd sidecar/xianyu
-python3 -m venv .venv && . .venv/bin/activate
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env        # 填入 COOKIES_STR（获取方式见 .env.example 注释）
+cp .env.example .env
 python main.py
 ```
 
-| 模式 | SIDECAR_MODE | 依赖 | 用途 |
-| --- | --- | --- | --- |
-| ECHO | `ECHO` | 仅 cookie | X1：验证协议链路，买家消息原样回显 |
-| BRIDGE | `BRIDGE` | cookie + Java 服务（X2 端点） | X3+：真消息 → Java Agent → 回复回闲鱼 |
+`.env` 填入有效的 `COOKIES_STR`。ECHO 模式会回显买家消息，仍会连接真实平台；离线测试无需 Cookie，也不加载用户的 BRIDGE 配置。
 
-## 转发契约（BRIDGE 模式，Java 侧 X2 已实现）
+| 配置 | BRIDGE 用途 |
+| --- | --- |
+| `SIDECAR_MODE=BRIDGE` | 启用 Java 业务处理 |
+| `CS_AGENT_URL` | Java 地址；本地或 SSH 隧道均可 |
+| `CS_AGENT_TOKEN` | 与 Java 私有 `SMARTCS_XIANYU_SERVICE_TOKEN` 一致，至少 32 字节 |
+| `SIDECAR_STATE_FILE` | 买家映射、暂停状态与待同步事实；默认 `data/sidecar-state.json` |
+| `SIDECAR_JOURNAL_FILE` | SQLite 收件箱；默认与状态文件同目录的 `message-journal.sqlite3` |
+| `SIDECAR_QUEUE_CAPACITY=256` | 在途消息容量，预留 16 条给卖家控制 |
+| `SIDECAR_WORKERS=4` | 固定买家任务数量，另设一个卖家控制任务 |
+| `CS_AGENT_TIMEOUT=45` | Java HTTP 超时，覆盖默认 30 秒整轮预算 |
 
-```
-① POST /api/xianyu/sessions        Authorization: Bearer <侧车服务令牌>
-   {"buyerId": "...", "itemId": "...", "itemSnapshot": "..."(仅首次)}
-→ {"userId": "USER-XY-xxxx", "token": "<买家JWT>", "conversationId": "xianyu_{buyerId}_{itemId}",
-   "expiresAt": ..., "tenantId": "xianyu", "itemKnowledge": "created|existing|none"}
-   幂等：同 buyerId 恒返回同一合成用户；首次收到 itemSnapshot 时生成商品知识草稿
-   （data/xianyu-items/{itemId}.md，人工审校后移入 resources/knowledge/product/ 并重启生效）
+Java 需配置私有 JWT 密钥、`SMARTCS_XIANYU_ENABLED=true` 和服务令牌。真实接入使用 JDBC 持久化，挂载 Java 商品资料目录和侧车数据目录；Java 内存回执不能跨重启保留。
 
-② POST /api/chat/send              Authorization: Bearer <买家JWT>
-   {"conversationId": "...", "message": "..."}
-→ {"reply": "...", "handoffRequested": true|false}
-   与现有聊天端点同构；身份只信 JWT，conversationId 原样透传。
-   handoffRequested=true 表示 Java 侧工单创建成功、会话终态 HANDED_OFF，
-   侧车据此暂停该会话自动回复（见下节）
-```
+## 单一消息处理路径
 
-Java 侧开关（`application.yml` 的 `smartcs.xianyu.*`）：`SMARTCS_XIANYU_ENABLED=true` 且
-`SMARTCS_XIANYU_SERVICE_TOKEN`（≥32 字节，与本侧车 `CS_AGENT_TOKEN` 一致）；未启用时端点为 404。
-买家 JWT 过期后侧车凭 401 自动重注册，`expiresAt` 仅供参考。
+- `protocol.py`：逐条解码同步包，生成不可变消息事件。事件键基于解密后的业务消息、卖家身份和平台时间戳；外层包 `mid` 仅用于协议应答，买家相同正文不被合并。
+- `delivery.py`：SQLite 入站记录、有界容量、固定工作任务、会话顺序及发送状态。整包有效消息入库后才应答；容量满不应答为成功，等待重新连接和投递。
+- `client.py`：线程独立的 HTTP Session、买家 JWT 缓存和认证刷新；重试保持同一 `messageId`。
+- `main.py`：平台连接、商品事实同步、人工模式协调与出站发送。接收循环不等待模型或节流，发送前重新检查卖家接管和新控制事件。
 
-## 人工接管（双层）
+入站时限默认 5 分钟；超过时限的自动回复取消。同一会话买家消息按顺序执行，不同会话有限并行；卖家指令可及时阻断等待中的自动回复。
 
-- **协议层（本侧车）**：卖家本人在闲鱼 App 的会话里发 `。`（`TOGGLE_KEYWORDS`）
-  → 该会话暂停/恢复自动回复，消息不进 Java。
-- **业务层（Java，X4 已实现）**：HANDOFF Workflow → 工单转人工。`/api/chat/send`
-  返回 `handoffRequested: true` 时，侧车把该会话置入人工接管（复用同一开关），
-  之后的消息不再自动回复；卖家发 `。` 恢复。两层共用一个暂停集合，
-  句号对两种来源的暂停都有效。
+## Java 契约
 
-## 免责话术与出站加固（X4）
+1. `POST /api/xianyu/sessions` 使用侧车服务令牌，传入平台数字 `buyerId`、`itemId` 和可选 `itemSnapshot`，返回合成买家 JWT 及 `xianyu_{buyerId}_{itemId}` 会话 ID。
+2. `POST /api/chat/send` 使用买家 JWT，传入 `conversationId`、`message`、稳定 `messageId`。Java 按租户、身份、会话与消息 ID 保存结果，重复请求直接回放。
+3. 平台快照只创建 `profiles/{itemId}.json` 中的待审核资料。卖家在 `/#/admin/xianyu` 保存草稿并审核发布；无需移动 Markdown 或重启。`itemKnowledge=created|existing|skipped|none` 字段名保留兼容接入契约。
+4. 平台现势价格和库存通过 `/api/xianyu/items/{itemId}/facts` 独立同步；已读到但 Java 未确认的改价、售出事实会拦截自动报价并保留待同步记录。
 
-- 每个会话的**首条**自动回复末尾追加一次 `DISCLAIMER_TEXT`
-  （默认"（本条由智能助手自动回复，如需人工服务请直接说明）"，置空关闭）。
-- 站外联系方式过滤在 **Java 出站侧**实现（`OutboundSafetyFilter`，对所有渠道
-  生效，不只闲鱼）：最终回复命中"加微信/支付宝转账/线下面交"等联系方式交换
-  意图时整条替换为安全提示，trace 只记命中模式不记原文。
+平台事实默认缓存 5 分钟，属于最近一次同步结果，并非平台订单状态实时订阅。接口提供热更新，业务确认时重新检查 Java 已确认事实。
 
-## 安全边界（v1）
+## 人工接管
 
-不自动接单/下单；订单状态消息只记录日志；Java 侧对 xianyu 租户关闭副作用
-能力（`return.apply` 屏蔽，`handoff.request` 放行）；站外联系方式过滤见上节。
+卖家在闲鱼 App 发送完整指令 `。`（可配置）切换状态：暂停先在侧车生效，恢复等待 Java 确认。重复投递的句号不会切换两次。BRIDGE 不因超时自动恢复。
 
-## 离线测试
+Java `handoffRequested=true` 同样暂停会话，允许本轮转接提示发出；之后等待卖家处理。卖家人工回复携带独立事件 ID 写入 Java 历史，保持暂停；恢复后机器人能读取卖家口径。工作台也可查询、暂停或恢复已建立的买家/商品会话。
+
+## 重启与结果未知
+
+- `PROCESSING` 在重启后恢复入站处理，继续使用原事件 ID 查询 Java 回执；不会因 HTTP 超时自动重新执行已完成业务。
+- Java 返回 `MESSAGE_PROCESSING` 时有限退避；`MESSAGE_RESULT_UNKNOWN` 或内容冲突停止自动处理。
+- Java 已完成回复保存在 `READY`，恢复发送前仍检查人工接管与消息时效。
+- 在 WebSocket 写入前记 `SENDING`；写入异常或此阶段重启记 `UNKNOWN`，不盲目补发。
+- `SENT` 仅表示已写入本地连接或已完成控制事件，不能作为平台或买家已收到的证明。没有平台级投递确认，不能宣称端到端 exactly-once。
+
+排查未知状态可在本机只读查询：
 
 ```bash
-python tests/test_offline.py   # 不触网、不需要 cookie
+sqlite3 data/message-journal.sqlite3 \
+  "SELECT event_id, kind, status, attempts, error FROM messages WHERE status='UNKNOWN';"
 ```
+
+卖家先在闲鱼客户端核对实际消息；需要补充回复时人工发送。不要删除回执或把 UNKNOWN 直接改回 RECEIVED 来强行重放。未知记录保留供核查，SENT/CANCELLED 在后续入站时清理一天前记录。
+
+## 离线回归
+
+```bash
+.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+```
+
+覆盖批量解码、重投去重、容量限制、会话顺序、卖家接管打断、重启恢复、发送结果未知与事实同步失败。测试只使用临时目录和本地模拟服务。

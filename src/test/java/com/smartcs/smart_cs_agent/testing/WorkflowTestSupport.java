@@ -18,6 +18,7 @@ import com.smartcs.smart_cs_agent.capability.local.LocalReturnApplyCapabilityPro
 import com.smartcs.smart_cs_agent.capability.local.LocalReturnLookupCapabilityProvider;
 import com.smartcs.smart_cs_agent.capability.local.LocalUserProfileCapabilityProvider;
 import com.smartcs.smart_cs_agent.channel.xianyu.XianyuSidecarProperties;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuItemFactService;
 import com.smartcs.smart_cs_agent.domain.returnservice.ReturnApplicationService;
 import com.smartcs.smart_cs_agent.repository.OrderRepository;
 import com.smartcs.smart_cs_agent.repository.ProductRepository;
@@ -90,13 +91,17 @@ public final class WorkflowTestSupport {
 
     /** 使用全新的内存 Repository 装配一套完整本地 Capability，适合只验证协议和目录的测试。 */
     public static CapabilityGateway localCapabilityGateway() {
+        return localCapabilityGateway(org.mockito.Mockito.mock(XianyuItemFactService.class));
+    }
+
+    public static CapabilityGateway localCapabilityGateway(XianyuItemFactService itemFacts) {
         return localCapabilityGateway(
                 new OrderRepository(),
                 new ProductRepository(),
                 new ReturnRepository(),
                 new UserRepository(),
                 new KnowledgeTools(),
-                new HandoffTools()
+                new HandoffTools(), itemFacts
         );
     }
 
@@ -112,6 +117,17 @@ public final class WorkflowTestSupport {
                                                             UserRepository userRepository,
                                                             KnowledgeTools knowledgeTools,
                                                             HandoffTools handoffTools) {
+        return localCapabilityGateway(orderRepository, productRepository, returnRepository, userRepository,
+                knowledgeTools, handoffTools, org.mockito.Mockito.mock(XianyuItemFactService.class));
+    }
+
+    public static CapabilityGateway localCapabilityGateway(OrderRepository orderRepository,
+                                                            ProductRepository productRepository,
+                                                            ReturnRepository returnRepository,
+                                                            UserRepository userRepository,
+                                                            KnowledgeTools knowledgeTools,
+                                                            HandoffTools handoffTools,
+                                                            XianyuItemFactService itemFacts) {
         ReturnApplicationService returnApplicationService = new ReturnApplicationService(
                 returnRepository,
                 orderRepository,
@@ -121,13 +137,12 @@ public final class WorkflowTestSupport {
                 new LocalOrderCapabilityProvider(orderRepository, productRepository),
                 new LocalProductCatalogCapabilityProvider(
                         productRepository,
-                        knowledgeTools,
-                        new XianyuSidecarProperties()
+                        itemFacts
                 ),
                 new LocalReturnApplyCapabilityProvider(returnApplicationService),
                 new LocalReturnLookupCapabilityProvider(returnRepository, orderRepository, productRepository),
                 new LocalUserProfileCapabilityProvider(userRepository),
-                new LocalKnowledgeSearchCapabilityProvider(knowledgeTools, new XianyuSidecarProperties()),
+                new LocalKnowledgeSearchCapabilityProvider(knowledgeTools, new XianyuSidecarProperties(), itemFacts),
                 new LocalHandoffCapabilityProvider(handoffTools)
         ));
     }

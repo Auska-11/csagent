@@ -40,6 +40,10 @@ public class ChatApiRequest {
     @Size(max = 128, message = "ConversationId is too long")
     private String conversationId;
 
+    /** Stable channel event identity; scoped by authenticated tenant, user and conversation. */
+    @Size(max = 128, message = "MessageId is too long")
+    private String messageId;
+
     /**
      * 旧前端兼容字段。HTTP 认证已经统一改用 Authorization: Bearer JWT，服务端不再读取这里的值。
      */
@@ -86,4 +90,7 @@ public class ChatApiRequest {
     public void setToken(String token) {
         this.token = token;
     }
+
+    public String getMessageId() { return messageId; }
+    public void setMessageId(String messageId) { this.messageId = messageId; }
 }

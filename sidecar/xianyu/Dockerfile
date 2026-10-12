@@ -11,7 +11,7 @@ ENV TZ=Asia/Shanghai \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py XianyuApis.py LICENSE README.md PROVENANCE.md ./
+COPY main.py client.py protocol.py delivery.py XianyuApis.py LICENSE README.md PROVENANCE.md ./
 COPY utils ./utils
 
 # 进程内自动重连（main 循环），容器层面只需保证前台运行与自动重启。

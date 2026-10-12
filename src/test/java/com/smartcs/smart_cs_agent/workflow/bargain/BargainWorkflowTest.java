@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.workflow.bargain;
 
+import com.smartcs.smart_cs_agent.testing.XianyuTestSupport;
 import com.smartcs.smart_cs_agent.agent.action.AskUserAction;
 import com.smartcs.smart_cs_agent.agent.action.CancelWorkflowAction;
 import com.smartcs.smart_cs_agent.agent.action.FinalAnswerAction;
@@ -12,6 +13,9 @@ import com.smartcs.smart_cs_agent.channel.xianyu.XianyuItemFactService;
 import com.smartcs.smart_cs_agent.channel.xianyu.XianyuItemFactService.ItemFacts;
 import com.smartcs.smart_cs_agent.channel.xianyu.XianyuItemFactService.PriceRange;
 import com.smartcs.smart_cs_agent.channel.xianyu.XianyuScenarioProperties;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuSellerRuleService;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuItemProfileStore;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuWorkflowEligibilityPolicy;
 import com.smartcs.smart_cs_agent.channel.xianyu.XianyuScenarioProperties.SellerRules;
 import com.smartcs.smart_cs_agent.channel.xianyu.XianyuSidecarProperties;
 import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
@@ -172,7 +176,7 @@ class BargainWorkflowTest {
         // 商品知识未同步：不得凭全局底线价答应出价，必须暂停转卖家确认。
         StubItemFactService emptyFacts = new StubItemFactService(null);
         BargainWorkflow workflow = new BargainWorkflow(
-                new GlobalInterruptPolicy(), emptyFacts, authorizedScenario());
+                new GlobalInterruptPolicy(), emptyFacts, XianyuTestSupport.sellerRules(authorizedScenario()));
         ConversationState state = startedState("250卖吗");
         HandoffAction handoff = handoff(workflow, state, "250卖吗");
 
@@ -193,7 +197,7 @@ class BargainWorkflowTest {
                 new PriceRange(new BigDecimal("265"), new BigDecimal("265")),
                 0, "", "");
         BargainWorkflow workflow = new BargainWorkflow(
-                new GlobalInterruptPolicy(), new StubItemFactService(soldOut), authorizedScenario());
+                new GlobalInterruptPolicy(), new StubItemFactService(soldOut), XianyuTestSupport.sellerRules(authorizedScenario()));
         ConversationState state = startedState("250卖吗");
 
         WorkflowDecision decision = workflow.nextAction(turn(state, "250卖吗"));
@@ -301,7 +305,7 @@ class BargainWorkflowTest {
         rules.setAllowedDiscount(new BigDecimal("5"));
         XianyuScenarioProperties scenario = XianyuScenarioProperties.of(
                 new LinkedHashSet<>(XianyuScenarioProperties.defaultExcludedWorkflowIds()), rules);
-        BargainWorkflow workflow = new BargainWorkflow(new GlobalInterruptPolicy(), facts, scenario);
+        BargainWorkflow workflow = new BargainWorkflow(new GlobalInterruptPolicy(), facts, XianyuTestSupport.sellerRules(scenario));
         ConversationState state = startedState("240卖吗");
         AskUserAction first = respond(workflow, state, "240卖吗");
         assertTrue(first.getQuestion().contains("¥240"));
@@ -326,7 +330,7 @@ class BargainWorkflowTest {
         // 确认分支必须与首次报价过同一套库存校验。
         StubItemFactService facts = new StubItemFactService(FACTS);
         BargainWorkflow workflow = new BargainWorkflow(
-                new GlobalInterruptPolicy(), facts, authorizedScenario());
+                new GlobalInterruptPolicy(), facts, XianyuTestSupport.sellerRules(authorizedScenario()));
         ConversationState state = startedState("250卖吗");
         AskUserAction quote = respond(workflow, state, "250卖吗");
         assertTrue(quote.getQuestion().contains("¥250"));
@@ -354,7 +358,7 @@ class BargainWorkflowTest {
         rules.setAllowedDiscount(new BigDecimal("20"));
         XianyuScenarioProperties scenario = XianyuScenarioProperties.of(
                 new LinkedHashSet<>(XianyuScenarioProperties.defaultExcludedWorkflowIds()), rules);
-        BargainWorkflow workflow = new BargainWorkflow(new GlobalInterruptPolicy(), factService, scenario);
+        BargainWorkflow workflow = new BargainWorkflow(new GlobalInterruptPolicy(), factService, XianyuTestSupport.sellerRules(scenario));
         ConversationState state = startedState("250卖吗");
         respond(workflow, state, "250卖吗");
 
@@ -442,8 +446,8 @@ class BargainWorkflowTest {
                 new WorkflowRegistry(List.of(bargain, fallback), List.of()),
                 properties,
                 new GlobalInterruptPolicy(),
-                factService,
-                XianyuScenarioProperties.defaults()
+                List.of(new XianyuWorkflowEligibilityPolicy(
+                        factService, XianyuScenarioProperties.defaults()))
         );
 
         WorkflowRouteResult xianyu = router.route(
@@ -462,7 +466,7 @@ class BargainWorkflowTest {
     }
 
     private BargainWorkflow workflow(XianyuScenarioProperties scenario) {
-        return new BargainWorkflow(new GlobalInterruptPolicy(), factService, scenario);
+        return new BargainWorkflow(new GlobalInterruptPolicy(), factService, XianyuTestSupport.sellerRules(scenario));
     }
 
     /** 授权场景：接受议价、底线 240、单次让价 20（还价 = max(265-20, 240) = 245）。 */
@@ -510,7 +514,7 @@ class BargainWorkflowTest {
         private ItemFacts facts;
 
         StubItemFactService(ItemFacts facts) {
-            super(null, new XianyuSidecarProperties());
+            super(null, null, new XianyuSidecarProperties());
             this.facts = facts;
         }
 
@@ -552,4 +556,6 @@ class BargainWorkflowTest {
             return WorkflowDecision.next(new FinalAnswerAction("测试兜底"), "测试兜底");
         }
     }
+
+
 }

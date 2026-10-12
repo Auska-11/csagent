@@ -23,6 +23,7 @@ import java.util.Set;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -255,6 +256,48 @@ class HttpSecurityIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.feedback.userId").value("USER-002"))
                 .andExpect(jsonPath("$.feedback.assistantReply").value("verified assistant reply"));
+    }
+
+    @Test
+    void mcpNotificationsMustHaveNoJsonRpcReplyAndPingMustHaveOnlyResult() throws Exception {
+        String mcpToken = tokenService.issueMcpClientToken("mcp-lifecycle-client").token();
+        for (String notification : List.of("notifications/initialized", "notifications/unknown", "tools/call")) {
+            mockMvc.perform(post("/mcp")
+                            .with(bearer(mcpToken))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"jsonrpc\":\"2.0\",\"method\":\"" + notification + "\"}"))
+                    .andExpect(status().isAccepted())
+                    .andExpect(content().string(""));
+        }
+        mockMvc.perform(post("/mcp")
+                        .with(bearer(mcpToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"ping\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.result").isMap())
+                .andExpect(jsonPath("$.error").doesNotExist());
+        mockMvc.perform(post("/mcp")
+                        .with(bearer(mcpToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"unknown/method\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.error.code").value(-32601))
+                .andExpect(jsonPath("$.result").doesNotExist());
+    }
+
+    @Test
+    void missingOrWrongJsonRpcVersionMustReturnInvalidRequest() throws Exception {
+        String mcpToken = tokenService.issueMcpClientToken("mcp-version-client").token();
+        for (String body : List.of("{\"id\":1,\"method\":\"ping\"}",
+                "{\"jsonrpc\":\"1.0\",\"id\":1,\"method\":\"ping\"}")) {
+            mockMvc.perform(post("/mcp")
+                            .with(bearer(mcpToken))
+                            .contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.error.code").value(-32600))
+                    .andExpect(jsonPath("$.result").doesNotExist());
+        }
     }
 
     @Test

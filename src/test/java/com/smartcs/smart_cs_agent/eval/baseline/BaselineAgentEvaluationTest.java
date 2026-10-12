@@ -39,6 +39,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * （LLM 失败整轮 503）。真实模型的对照数字由 M4 跑批产出，不在本类范围。</p>
  */
 @SpringBootTest(properties = {
+        "smartcs.eval.baseline.enabled=true",
+        "smartcs.persistence.mode=memory",
+        "smartcs.capability.provider-mode=local",
+        "smartcs.handoff.mode=memory",
         "smartcs.llm.execution.call-timeout-ms=600",
         "smartcs.security.demo-issuer-enabled=true",
         "smartcs.security.jwt-secret=test-only-smart-cs-jwt-secret-32-bytes-ok"
@@ -169,6 +173,19 @@ class BaselineAgentEvaluationTest {
         JsonNode second = sendTurn(userToken, "继续", conversationId);
         assertTrue(second.path("reply").asText().contains("ORD-001"),
                 "第二轮回复应引用第一轮工具结果：" + second.path("reply").asText());
+    }
+
+    @Test
+    void anotherUserReusingConversationIdMustNotReceivePrivateToolHistory() throws Exception {
+        String conversationId = "bl-shared-" + UUID.randomUUID();
+        String ownerToken = tokenOf("USER-001");
+        sendTurn(ownerToken, "帮我查一下订单 ORD-001 的物流", conversationId);
+
+        JsonNode other = sendTurn(tokenOf("USER-002"), "继续", conversationId);
+        assertFalse(other.path("reply").asText().contains("ORD-001"));
+        assertFalse(other.path("reply").asText().contains("SF1234567890"));
+        assertTrue(sendTurn(ownerToken, "继续", conversationId)
+                .path("reply").asText().contains("ORD-001"));
     }
 
     @Test

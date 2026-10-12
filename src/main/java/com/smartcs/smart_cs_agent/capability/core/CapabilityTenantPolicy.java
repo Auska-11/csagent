@@ -41,7 +41,10 @@ public class CapabilityTenantPolicy {
         if (tenantId == null || tenantId.isBlank() || capabilityId == null || capabilityId.isBlank()) {
             return false;
         }
-        TenantRules rules = tenantPolicies.get(tenantId.trim().toLowerCase(Locale.ROOT));
+        TenantRules rules = tenantPolicies.entrySet().stream()
+                .filter(entry -> (entry.getValue().getTenantId().isBlank() ? entry.getKey() : entry.getValue().getTenantId())
+                        .equalsIgnoreCase(tenantId.trim()))
+                .map(Map.Entry::getValue).findFirst().orElse(null);
         return rules != null && rules.isBlocked(CapabilityIds.canonicalize(capabilityId));
     }
 
@@ -52,6 +55,18 @@ public class CapabilityTenantPolicy {
 
     /** 单个租户的屏蔽名单。ID 比较不区分大小写。 */
     public static class TenantRules {
+        private String tenantId = "";
+        public String getTenantId() { return tenantId; }
+        public void setTenantId(String tenantId) { this.tenantId = tenantId == null ? "" : tenantId.trim(); }
+
+
+        /** null preserves the unrestricted policy of non-channel tenants; empty explicitly denies all. */
+        private java.util.Set<String> allowedCapabilities;
+
+        public java.util.Set<String> getAllowedCapabilities() { return allowedCapabilities; }
+        public void setAllowedCapabilities(java.util.Set<String> allowedCapabilities) {
+            this.allowedCapabilities = allowedCapabilities == null ? null : new java.util.LinkedHashSet<>(allowedCapabilities);
+        }
 
         private java.util.Set<String> blockedCapabilities = new java.util.LinkedHashSet<>();
 
@@ -66,6 +81,9 @@ public class CapabilityTenantPolicy {
         }
 
         boolean isBlocked(String canonicalCapabilityId) {
+            if (allowedCapabilities != null && allowedCapabilities.stream()
+                    .noneMatch(allowed -> allowed != null && CapabilityIds.canonicalize(allowed.trim())
+                            .equalsIgnoreCase(canonicalCapabilityId))) return true;
             for (String blocked : blockedCapabilities) {
                 if (blocked != null && blocked.trim().equalsIgnoreCase(canonicalCapabilityId)) {
                     return true;

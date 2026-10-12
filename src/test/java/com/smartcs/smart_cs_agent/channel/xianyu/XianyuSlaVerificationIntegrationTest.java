@@ -25,6 +25,7 @@ import com.smartcs.smart_cs_agent.workflow.api.WorkflowDecision;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowDescriptor;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowMatchResult;
 import com.smartcs.smart_cs_agent.workflow.bargain.BargainWorkflow;
+import com.smartcs.smart_cs_agent.testing.XianyuTestSupport;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRegistry;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRouter;
@@ -221,7 +222,7 @@ class XianyuSlaVerificationIntegrationTest {
 
         ChatResponse response = fixture.agent().chatWithTrace(request("我要投诉，太过分了"));
 
-        assertEquals("complaint_escalation", routedWorkflow(response));
+        assertEquals("escalation", routedWorkflow(response));
         assertTrue(response.isHandoffRequested());
         assertTrue(response.getReply().contains("转接人工客服"),
                 "普通投诉仍是道歉式转人工口径: " + response.getReply());
@@ -251,7 +252,7 @@ class XianyuSlaVerificationIntegrationTest {
     private TestFixture fixture(StubItemFactService factService, XianyuScenarioProperties scenario) {
         InMemorySlaIntegrationStore slaStore = new InMemorySlaIntegrationStore();
         SlaVerificationQueryService verificationQueryService = new SlaVerificationQueryService(slaStore);
-        BargainWorkflow bargain = new BargainWorkflow(new GlobalInterruptPolicy(), factService, scenario);
+        BargainWorkflow bargain = new BargainWorkflow(new GlobalInterruptPolicy(), factService, XianyuTestSupport.sellerRules(scenario));
         GeneralCustomerServiceWorkflow fallback =
                 new GeneralCustomerServiceWorkflow(factService, verificationQueryService);
         ProductAdvisoryWorkflow advisory = new ProductAdvisoryWorkflow(
@@ -263,7 +264,8 @@ class XianyuSlaVerificationIntegrationTest {
         WorkflowRouterProperties routerProperties = new WorkflowRouterProperties();
         routerProperties.setFallbackWorkflowId(fallback.descriptor().getId());
         WorkflowRouter router = new WorkflowRouter(
-                registry, routerProperties, new GlobalInterruptPolicy(), factService, scenario);
+                registry, routerProperties, new GlobalInterruptPolicy(),
+                List.of(new XianyuWorkflowEligibilityPolicy(factService, scenario)));
 
         SkillConfig skillConfig = new SkillConfig() {
             @Override
@@ -381,7 +383,7 @@ class XianyuSlaVerificationIntegrationTest {
         private final ItemFacts facts;
 
         StubItemFactService(ItemFacts facts) {
-            super(null, new XianyuSidecarProperties());
+            super(null, null, new XianyuSidecarProperties());
             this.facts = facts;
         }
 
@@ -405,7 +407,7 @@ class XianyuSlaVerificationIntegrationTest {
     private static final class StubComplaintWorkflow implements AgentWorkflow {
 
         private final WorkflowDescriptor descriptor =
-                new WorkflowDescriptor("complaint_escalation", "1.0.0", "测试投诉升级", 5);
+                new WorkflowDescriptor("escalation", "1.0.0", "测试投诉升级", 5);
 
         @Override
         public WorkflowDescriptor descriptor() {

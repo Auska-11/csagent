@@ -54,6 +54,9 @@ class HttpMcpClientTransportTest {
                 .andExpect(method(POST))
                 .andExpect(header("Authorization", "Bearer service-secret"))
                 .andExpect(jsonPath("$.method").value("initialize"))
+                .andExpect(jsonPath("$.params.protocolVersion").value("2024-11-05"))
+                .andExpect(jsonPath("$.params.clientInfo.name").value("smart-cs-agent-mcp-client"))
+                .andExpect(jsonPath("$.params.capabilities").isMap())
                 .andRespond(withSuccess("""
                         {
                           "jsonrpc":"2.0",
@@ -64,6 +67,13 @@ class HttpMcpClientTransportTest {
                           }
                         }
                         """, MediaType.APPLICATION_JSON));
+
+        fixture.server.expect(requestTo(fixture.properties.getBaseUrl()))
+                .andExpect(method(POST))
+                .andExpect(header("Authorization", "Bearer service-secret"))
+                .andExpect(jsonPath("$.method").value("notifications/initialized"))
+                .andExpect(jsonPath("$.id").doesNotExist())
+                .andRespond(withStatus(HttpStatus.ACCEPTED));
 
         fixture.server.expect(requestTo(fixture.properties.getBaseUrl()))
                 .andExpect(method(POST))
@@ -132,6 +142,17 @@ class HttpMcpClientTransportTest {
         assertTrue(result.isReplayed());
         assertEquals("remote-knowledge", result.getProviderId());
         assertTrue(result.getMetadata().containsKey("diagnostics"));
+        fixture.server.verify();
+    }
+
+    @Test
+    void unsupportedProtocolVersionMustStopBeforeInitializedNotification() {
+        Fixture fixture = fixture();
+        fixture.server.expect(requestTo(fixture.properties.getBaseUrl()))
+                .andRespond(withSuccess(initializeResponse().replace("2024-11-05", "2099-01-01"),
+                        MediaType.APPLICATION_JSON));
+        assertThrows(McpTransportException.class, fixture.transport::initialize);
+        assertEquals(1, fixture.transport.health().consecutiveFailures());
         fixture.server.verify();
     }
 
@@ -221,6 +242,9 @@ class HttpMcpClientTransportTest {
                 .andRespond(withServerError());
         fixture.server.expect(requestTo(fixture.properties.getBaseUrl()))
                 .andRespond(withSuccess(initializeResponse(), MediaType.APPLICATION_JSON));
+        fixture.server.expect(requestTo(fixture.properties.getBaseUrl()))
+                .andExpect(jsonPath("$.method").value("notifications/initialized"))
+                .andRespond(withStatus(HttpStatus.ACCEPTED));
 
         assertThrows(McpTransportException.class, fixture.transport::initialize);
         assertFalse(fixture.transport.health().available());

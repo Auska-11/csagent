@@ -39,6 +39,7 @@ public class KnowledgeDocument {
     private final String source;
     private final String version;
     private final LocalDate effectiveDate;
+    private final String channel;
 
     public KnowledgeDocument(String id, String category, String title, String content, List<String> keywords) {
         this(
@@ -67,6 +68,20 @@ public class KnowledgeDocument {
                              String source,
                              String version,
                              LocalDate effectiveDate) {
+        this(id, category, title, content, keywords, knowledgeType, productCategory, productModel, source, version, effectiveDate, "");
+    }
+
+    public KnowledgeDocument(String id,
+                             String category,
+                             String title,
+                             String content,
+                             List<String> keywords,
+                             KnowledgeType knowledgeType,
+                             String productCategory,
+                             String productModel,
+                             String source,
+                             String version,
+                             LocalDate effectiveDate, String channel) {
         this.id = id;
         this.category = category;
         this.title = title;
@@ -78,7 +93,10 @@ public class KnowledgeDocument {
         this.source = safe(source);
         this.version = safe(version);
         this.effectiveDate = effectiveDate;
+        this.channel = safe(channel).toLowerCase(java.util.Locale.ROOT);
     }
+
+    public String getChannel() { return channel; }
 
     public String getId() {
         return id;

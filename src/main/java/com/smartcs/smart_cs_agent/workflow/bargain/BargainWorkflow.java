@@ -7,7 +7,7 @@ import com.smartcs.smart_cs_agent.agent.action.HandoffAction;
 import com.smartcs.smart_cs_agent.agent.context.TurnContext;
 import com.smartcs.smart_cs_agent.channel.xianyu.XianyuItemFactService;
 import com.smartcs.smart_cs_agent.channel.xianyu.XianyuItemFactService.ItemFacts;
-import com.smartcs.smart_cs_agent.channel.xianyu.XianyuScenarioProperties;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuSellerRuleService;
 import com.smartcs.smart_cs_agent.channel.xianyu.XianyuScenarioProperties.SellerRules;
 import com.smartcs.smart_cs_agent.skill.CustomerServiceIntentRules;
 import com.smartcs.smart_cs_agent.workflow.api.AgentWorkflow;
@@ -72,15 +72,15 @@ public class BargainWorkflow implements AgentWorkflow {
     private final CustomerServiceIntentRules intentRules = new CustomerServiceIntentRules();
     private final GlobalInterruptPolicy interruptPolicy;
     private final XianyuItemFactService xianyuItemFactService;
-    private final XianyuScenarioProperties xianyuScenarioProperties;
+    private final XianyuSellerRuleService sellerRuleService;
 
     @Autowired
     public BargainWorkflow(GlobalInterruptPolicy interruptPolicy,
                            XianyuItemFactService xianyuItemFactService,
-                           XianyuScenarioProperties xianyuScenarioProperties) {
+                           XianyuSellerRuleService sellerRuleService) {
         this.interruptPolicy = interruptPolicy;
         this.xianyuItemFactService = xianyuItemFactService;
-        this.xianyuScenarioProperties = xianyuScenarioProperties;
+        this.sellerRuleService = sellerRuleService;
     }
 
     /** 兼容旧测试装配：不注入闲鱼服务时恒为 noMatch。 */
@@ -604,10 +604,10 @@ public class BargainWorkflow implements AgentWorkflow {
 
     /** 按商品取卖家规则：item-rules 优先，缺省回落全局 seller-rules。 */
     private SellerRules sellerRulesFor(String itemId) {
-        if (xianyuScenarioProperties == null) {
+        if (sellerRuleService == null) {
             return new SellerRules();
         }
-        return xianyuScenarioProperties.sellerRulesFor(itemId);
+        return sellerRuleService.forItem(itemId);
     }
 
     /** 议价/砍价/包邮/发货协商的入口信号。 */

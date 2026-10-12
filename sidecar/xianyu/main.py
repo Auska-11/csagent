@@ -1,5 +1,5 @@
 """
-闲鱼侧车（csagent 项目第三阶段 X1/X3）：无脑协议转发器。
+闲鱼侧车：平台连接、消息收件箱与 Java 业务桥接。
 
 本文件从 XianyuAutoAgent (https://github.com/shaxiu/XianyuAutoAgent, GPL-3.0)
 的 main.py 移植协议层骨架：WebSocket 连接/注册、心跳、token 刷新与重连、
@@ -14,9 +14,9 @@ BRIDGE 契约（Java 侧 X2 实现）：
   1) POST {CS_AGENT_URL}/api/xianyu/sessions     Authorization: Bearer <服务令牌>
        body  {"buyerId": "...", "itemId": "...", "itemSnapshot": "..."(可选,首次)}
        resp  {"userId": "USER-XY-xxxx", "token": "<该买家 JWT>", "conversationId": "xianyu_..._..."}
-     —— buyerId 幂等映射为合成用户；itemSnapshot 首次携带时 Java 侧生成商品知识文档。
+     —— buyerId 幂等映射为合成用户；itemSnapshot 首次携带时 Java 侧生成待审核商品资料。
   2) POST {CS_AGENT_URL}/api/chat/send           Authorization: Bearer <该买家 JWT>
-       body  {"conversationId": "...", "message": "..."}
+       body  {"conversationId": "...", "message": "...", "messageId": "稳定事件 ID"}
        resp  {"reply": "..."}
      —— 与现有聊天端点同构：conversationId 原样透传，身份只信 JWT（body userId 可省略）。
      —— 409 {errorCode: "XIANYU_CONVERSATION_PAUSED"}：Java 侧人工模式（卖家接管/
@@ -48,12 +48,16 @@ BRIDGE 契约（Java 侧 X2 实现）：
 
 import asyncio
 import base64
-import hashlib  # noqa: F401  (X2 若改为侧车本地映射时使用，当前映射在 Java 侧)
+import hashlib
 import json
+import math
 import os
 import random
 import sys
+import threading
 import time
+from dataclasses import replace
+from pathlib import Path
 
 import websockets
 from dotenv import load_dotenv
@@ -64,182 +68,18 @@ from utils.xianyu_utils import (
     generate_mid,
     generate_uuid,
     trans_cookies,
-    decrypt,
 )
 from XianyuApis import XianyuApis
-
-
-class ConversationPausedError(Exception):
-    """Java 侧会话处于人工模式（409 XIANYU_CONVERSATION_PAUSED），卖家已接管。
-
-    抛给调用方后侧车应静默并把本地状态对齐为人工模式，
-    直到卖家句号恢复（经 Java 确认）为止。
-    """
-
-
-class CsAgentClient:
-    """Java 客服 Agent 的 HTTP 客户端（BRIDGE 模式）。
-
-    会话注册结果按 (buyerId, itemId) 缓存；买家 JWT 过期时自动重注册一次。
-    本类的方法是同步阻塞的，调用方须用 asyncio.to_thread 包裹，避免饿死心跳任务。
-    """
-
-    def __init__(self, base_url, service_token, timeout=30.0):
-        import requests
-
-        self.base_url = base_url.rstrip("/")
-        self.service_token = service_token
-        self.timeout = timeout
-        self.session = requests.Session()
-        self._sessions = {}  # (buyer_id, item_id) -> {"userId","token","conversationId"}
-
-    def _post(self, path, payload, token):
-        resp = self.session.post(
-            self.base_url + path,
-            json=payload,
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=self.timeout,
-        )
-        if resp.status_code in (401, 403):
-            raise PermissionError(f"{path} 认证失败({resp.status_code})")
-        if resp.status_code == 404:
-            raise ConnectionError(f"{path} 不存在（X2 会话端点未部署或路径不符）")
-        if resp.status_code == 409:
-            error_code = ""
-            try:
-                error_code = resp.json().get("errorCode", "")
-            except Exception:
-                pass
-            if error_code == "XIANYU_CONVERSATION_PAUSED":
-                raise ConversationPausedError(f"{path} 会话处于人工模式（卖家接管中）")
-            raise ConnectionError(f"{path} 冲突({error_code or resp.status_code})")
-        resp.raise_for_status()
-        return resp.json()
-
-    def _get(self, path, token):
-        """GET 服务令牌端点；404 返回 None（调用方按"无此会话"语义处理），其余失败抛。"""
-        resp = self.session.get(
-            self.base_url + path,
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=self.timeout,
-        )
-        if resp.status_code == 404:
-            return None
-        if resp.status_code in (401, 403):
-            raise PermissionError(f"{path} 认证失败({resp.status_code})")
-        resp.raise_for_status()
-        return resp.json()
-
-    def get_manual_mode(self, buyer_id, item_id):
-        """查询 Java 侧人工模式（GET /conversations/manual-mode）。
-
-        返回 True/False；404（会话从未到达 Java）返回 None；网络/服务异常返回
-        None 并记 WARN——调用方把 None 视为"查询失败"，保留本地状态不翻转。
-        """
-        try:
-            data = self._get(
-                f"/api/xianyu/conversations/manual-mode?buyerId={buyer_id}&itemId={item_id}",
-                self.service_token,
-            )
-        except Exception as exc:
-            logger.warning(f"查询 Java 人工模式失败（buyer={buyer_id}, item={item_id}）: {exc}")
-            return None
-        if data is None:
-            return None
-        return bool(data.get("manualMode", False))
-
-    def ensure_session(self, buyer_id, item_id, item_snapshot=None):
-        key = (buyer_id, item_id)
-        cached = self._sessions.get(key)
-        if cached:
-            return cached
-        body = {"buyerId": buyer_id, "itemId": item_id}
-        if item_snapshot:
-            body["itemSnapshot"] = item_snapshot
-        data = self._post("/api/xianyu/sessions", body, self.service_token)
-        session = {
-            "userId": data["userId"],
-            "token": data["token"],
-            "conversationId": data["conversationId"],
-        }
-        self._sessions[key] = session
-        logger.info(f"会话注册成功: {session['userId']} / {session['conversationId']}")
-        return session
-
-    def chat(self, buyer_id, item_id, message, item_snapshot=None):
-        """注册（如需）→ /api/chat/send → 完整响应 dict（reply + handoffRequested）。
-
-        handoffRequested=true 表示 Java 侧工单创建成功、会话终态 HANDED_OFF，
-        侧车据此暂停该会话自动回复（X4 双层转人工，docs-76 §5.2）。
-        """
-        try:
-            session = self.ensure_session(buyer_id, item_id, item_snapshot)
-            data = self._post(
-                "/api/chat/send",
-                {"conversationId": session["conversationId"], "message": message},
-                session["token"],
-            )
-        except PermissionError:
-            # 买家 JWT 过期或服务令牌失效：丢缓存后重注册一次
-            self._sessions.pop((buyer_id, item_id), None)
-            session = self.ensure_session(buyer_id, item_id)
-            data = self._post(
-                "/api/chat/send",
-                {"conversationId": session["conversationId"], "message": message},
-                session["token"],
-            )
-        reply = data.get("reply")
-        if not isinstance(reply, str) or not reply.strip():
-            raise ValueError(f"/api/chat/send 返回异常: {data}")
-        return data
-
-    def set_manual_mode(self, buyer_id, item_id, enabled):
-        """同步人工模式到 Java（服务令牌端点）。返回是否成功（bool），失败不抛。"""
-        try:
-            self._post(
-                "/api/xianyu/conversations/manual-mode",
-                {"buyerId": buyer_id, "itemId": item_id, "enabled": bool(enabled)},
-                self.service_token,
-            )
-            return True
-        except Exception as exc:
-            logger.warning(f"人工模式同步 Java 失败（buyer={buyer_id}, item={item_id}, "
-                           f"enabled={enabled}）: {exc}")
-            return False
-
-    def add_seller_message(self, buyer_id, item_id, text, resume_bot=False):
-        """卖家人工回复同步进 Java 会话历史（买家在闲鱼侧已看到原文，这步失败不重试）。"""
-        try:
-            self._post(
-                "/api/xianyu/conversations/seller-messages",
-                {"buyerId": buyer_id, "itemId": item_id, "text": text,
-                 "resumeBot": bool(resume_bot)},
-                self.service_token,
-            )
-            return True
-        except Exception as exc:
-            logger.warning(f"卖家消息同步 Java 失败（buyer={buyer_id}, item={item_id}）: {exc}")
-            return False
-
-    def push_item_facts(self, item_id, price=None, stock=None):
-        """商品事实热更新推送（改价/售出对齐现势），失败不阻塞回复链路。"""
-        if not price and stock is None:
-            return False
-        body = {}
-        if price:
-            body["price"] = price
-        if stock is not None:
-            body["stock"] = int(stock)
-        try:
-            self._post(f"/api/xianyu/items/{item_id}/facts", body, self.service_token)
-            return True
-        except Exception as exc:
-            logger.warning(f"商品事实推送 Java 失败（item={item_id}）: {exc}")
-            return False
+from client import CsAgentClient, ConversationPausedError, MessagePendingError, MessageResultUnknownError
+from protocol import decode_sync_messages, parse_chat_event
+from delivery import MessageJournal, MessageDispatcher, InboxFullError
 
 
 class XianyuLive:
     def __init__(self, cookies_str):
+        self._platform_lock = threading.RLock()
+        self._state_lock = threading.RLock()
+        self._item_locks = [threading.RLock() for _ in range(32)]
         self.xianyu = XianyuApis()
         self.base_url = "wss://wss-goofish.dingtalk.com/"
         self.cookies_str = cookies_str
@@ -250,7 +90,6 @@ class XianyuLive:
 
         # 运行模式与 Java 端点
         self.mode = os.getenv("SIDECAR_MODE", "ECHO").upper()
-        self.fallback_reply = os.getenv("FALLBACK_REPLY", "").strip()
 
         # 心跳相关配置
         self.heartbeat_interval = int(os.getenv("HEARTBEAT_INTERVAL", "15"))  # 心跳间隔，默认15秒
@@ -326,12 +165,21 @@ class XianyuLive:
             if not service_token:
                 raise SystemExit("BRIDGE 模式必须配置 CS_AGENT_TOKEN（X2 签发的侧车服务令牌）")
             self.cs_client = CsAgentClient(
-                base_url, service_token, timeout=float(os.getenv("CS_AGENT_TIMEOUT", "30"))
+                base_url, service_token, timeout=float(os.getenv("CS_AGENT_TIMEOUT", "45"))
             )
         elif self.mode != "ECHO":
             raise SystemExit(f"未知的 SIDECAR_MODE: {self.mode}（可选 ECHO / BRIDGE）")
 
         self._load_state()
+        self._requested_manual = {}
+        self._connected = asyncio.Event()
+        self._send_locks = [asyncio.Lock() for _ in range(64)]
+        journal_path = os.getenv("SIDECAR_JOURNAL_FILE", str(Path(self.state_file).with_name("message-journal.sqlite3"))) if self.state_file else ":memory:"
+        self.journal = MessageJournal(journal_path,
+                                      capacity=int(os.getenv("SIDECAR_QUEUE_CAPACITY", "256")),
+                                      lanes=int(os.getenv("SIDECAR_WORKERS", "4")))
+        self.dispatcher = MessageDispatcher(self.journal, self._process_event, self._deliver_event,
+                                            self.is_manual_mode, self.message_expire_time)
 
     # ------------------------------------------------------------------
     # 状态落盘（chat_id→买家映射 + 人工模式集合），侧车重启恢复
@@ -381,19 +229,20 @@ class XianyuLive:
         """把映射与人工模式集合原子写盘（BRIDGE 才启用；失败不阻塞消息链路）。"""
         if not self.state_file:
             return
-        payload = {
-            "chatBuyers": self._chat_buyers,
-            "manualMode": sorted(self.manual_mode_conversations),
-            "pendingFacts": self.pending_facts,
-        }
-        try:
-            os.makedirs(os.path.dirname(self.state_file) or ".", exist_ok=True)
-            tmp_path = f"{self.state_file}.tmp"
-            with open(tmp_path, "w", encoding="utf-8") as fh:
-                json.dump(payload, fh, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, self.state_file)
-        except Exception as exc:
-            logger.warning(f"侧车状态文件写入失败: {exc}")
+        with self._state_lock:
+            payload = {
+                "chatBuyers": self._chat_buyers,
+                "manualMode": sorted(self.manual_mode_conversations),
+                "pendingFacts": self.pending_facts,
+            }
+            try:
+                os.makedirs(os.path.dirname(self.state_file) or ".", exist_ok=True)
+                tmp_path = f"{self.state_file}.tmp"
+                with open(tmp_path, "w", encoding="utf-8") as fh:
+                    json.dump(payload, fh, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, self.state_file)
+            except Exception as exc:
+                logger.warning(f"侧车状态文件写入失败: {exc}")
 
     async def align_manual_state_with_java(self):
         """侧车重启恢复后，把本地人工模式对齐 Java 暂停状态（Java 是事实源）。
@@ -432,7 +281,7 @@ class XianyuLive:
             logger.info("开始刷新token...")
 
             # 获取新token（如果Cookie失效，get_token会直接退出程序）
-            token_result = self.xianyu.get_token(self.device_id)
+            token_result = await asyncio.to_thread(self._platform_call, self.xianyu.get_token, self.device_id)
             if "data" in token_result and "accessToken" in token_result["data"]:
                 new_token = token_result["data"]["accessToken"]
                 self.current_token = new_token
@@ -440,7 +289,7 @@ class XianyuLive:
                 logger.info("Token刷新成功")
                 return new_token
             else:
-                logger.error(f"Token刷新失败: {token_result}")
+                logger.error("Token刷新失败（平台未返回有效令牌）")
                 return None
 
         except Exception as e:
@@ -557,33 +406,6 @@ class XianyuLive:
         await ws.send(json.dumps(msg))
         logger.info("连接注册完成")
 
-    def is_chat_message(self, message):
-        """判断是否为用户聊天消息"""
-        try:
-            return (
-                isinstance(message, dict)
-                and "1" in message
-                and isinstance(message["1"], dict)  # 确保是字典类型
-                and "10" in message["1"]
-                and isinstance(message["1"]["10"], dict)  # 确保是字典类型
-                and "reminderContent" in message["1"]["10"]
-            )
-        except Exception:
-            return False
-
-    def is_sync_package(self, message_data):
-        """判断是否为同步包消息"""
-        try:
-            return (
-                isinstance(message_data, dict)
-                and "body" in message_data
-                and "syncPushPackage" in message_data["body"]
-                and "data" in message_data["body"]["syncPushPackage"]
-                and len(message_data["body"]["syncPushPackage"]["data"]) > 0
-            )
-        except Exception:
-            return False
-
     def is_typing_status(self, message):
         """判断是否为用户正在输入状态消息"""
         try:
@@ -630,9 +452,9 @@ class XianyuLive:
             return False
 
     def check_toggle_keywords(self, message):
-        """检查消息是否包含切换关键词"""
+        """只有完整的非空指令才切换，普通句子中的标点不会触发。"""
         message_stripped = message.strip()
-        return message_stripped in self.toggle_keywords
+        return bool(message_stripped) and message_stripped in self.toggle_keywords.split()
 
     def is_manual_mode(self, chat_id):
         """检查特定会话是否处于人工接管模式"""
@@ -641,7 +463,7 @@ class XianyuLive:
 
         # 检查是否超时
         current_time = time.time()
-        if chat_id in self.manual_mode_timestamps:
+        if self.mode != "BRIDGE" and chat_id in self.manual_mode_timestamps:
             if current_time - self.manual_mode_timestamps[chat_id] > self.manual_mode_timeout:
                 # 超时，自动退出人工模式
                 self.exit_manual_mode(chat_id)
@@ -675,16 +497,23 @@ class XianyuLive:
     # 回复生成（替代上游 XianyuReplyBot.generate_reply + ChatContextManager）
     # ------------------------------------------------------------------
 
-    def format_price(self, price):
-        """处理逻辑：标准化价格（分转元）"""
+    def format_price(self, price, minor_units=True):
+        """SKU 价格分转元；商品主价格保留原元口径，缺失或脏值保持未知。"""
         try:
-            return round(float(price) / 100, 2)
+            value = float(price)
+            if not math.isfinite(value) or value <= 0:
+                return None
+            rounded = round(value / 100 if minor_units else value, 2)
+            return rounded if rounded > 0 else None
         except (ValueError, TypeError):
-            # 遇到 None 或脏数据，默认返回 0
-            return 0.0
+            return None
+
+    @staticmethod
+    def known_stock(value):
+        return int(value) if not isinstance(value, bool) and str(value).isdigit() else None
 
     def build_item_description(self, item_info):
-        """构建商品描述快照（仅供 Java 侧生成商品知识文档，不塞进聊天消息正文）"""
+        """构建商品描述快照，供 Java 建立待审核商品资料，不塞进聊天消息正文。"""
         # 处理 SKU 列表
         clean_skus = []
         raw_sku_list = item_info.get("skuList", [])
@@ -696,12 +525,12 @@ class XianyuLive:
 
             clean_skus.append({
                 "spec": spec_text,
-                "price": self.format_price(sku.get("price", 0)),
-                "stock": sku.get("quantity", 0)
+                "price": self.format_price(sku.get("price")),
+                "stock": self.known_stock(sku.get("quantity"))
             })
 
         # 获取价格
-        valid_prices = [s["price"] for s in clean_skus if s["price"] > 0]
+        valid_prices = [s["price"] for s in clean_skus if s["price"] is not None]
 
         if valid_prices:
             min_price = min(valid_prices)
@@ -712,14 +541,14 @@ class XianyuLive:
                 price_display = f"¥{min_price} - ¥{max_price}"  # 价格区间
         else:
             # 如果没有SKU价格，回退使用商品主价格
-            main_price = round(float(item_info.get("soldPrice", 0)), 2)
-            price_display = f"¥{main_price}"
+            main_price = self.format_price(item_info.get("soldPrice"), minor_units=False)
+            price_display = None if main_price is None else f"¥{main_price}"
 
         summary = {
             "title": item_info.get("title", ""),
             "desc": item_info.get("desc", ""),
             "price_range": price_display,
-            "total_stock": item_info.get("quantity", 0),
+            "total_stock": self.known_stock(item_info.get("quantity")),
             "sku_details": clean_skus
         }
 
@@ -730,15 +559,26 @@ class XianyuLive:
 
         pending_facts 的存在本身就是拦截状态——只在推送成功时清除。
         """
-        if pushed:
-            if self.pending_facts.pop(item_id, None) is not None:
+        with self._state_lock:
+            if pushed:
+                if self.pending_facts.pop(item_id, None) is not None:
+                    self._save_state()
+            else:
+                self.pending_facts[item_id] = facts
                 self._save_state()
-        else:
-            self.pending_facts[item_id] = facts
-            self._save_state()
-        self.item_facts_synced[item_id] = pushed
+            self.item_facts_synced[item_id] = pushed
+
+    def _platform_call(self, method, *args):
+        # The upstream requests.Session and cookie refresh are shared; serialize their access.
+        with self._platform_lock:
+            return method(*args)
 
     def get_item_snapshot(self, item_id):
+        lock = self._item_locks[int(hashlib.sha256(item_id.encode()).hexdigest(), 16) % len(self._item_locks)]
+        with lock:
+            return self._get_item_snapshot(item_id)
+
+    def _get_item_snapshot(self, item_id):
         """商品信息快照（带 TTL 的进程内缓存；失败返回 None，不阻塞回复链路）。
 
         TTL 过期后重新拉取平台现势；BRIDGE 模式下把快照里的价格/库存作为热更新
@@ -755,7 +595,7 @@ class XianyuLive:
         if time.time() - fetched_at < self.item_cache_ttl:
             # TTL 未到：命中缓存（含上次失败的 None 占位，避免反复打闲鱼 API）。
             return cached
-        api_result = self.xianyu.get_item_info(item_id)
+        api_result = self._platform_call(self.xianyu.get_item_info, item_id)
         if "data" in api_result and "itemDO" in api_result["data"]:
             item_info = api_result["data"]["itemDO"]
             snapshot = self.build_item_description(item_info)
@@ -772,7 +612,7 @@ class XianyuLive:
                 )
                 self._record_facts_sync(item_id, facts, pushed)
             return snapshot
-        logger.warning(f"获取商品信息失败（继续无快照回复）: {api_result}")
+        logger.warning("获取商品信息失败（继续无快照回复）: item={}", item_id)
         if item_id in self.pending_facts:
             # 读取失败但仍有未同步事实：旧快照与拦截状态原样保留待重试。
             self.item_cache_at[item_id] = time.time()
@@ -785,6 +625,11 @@ class XianyuLive:
         return None
 
     def ensure_facts_synced(self, item_id):
+        lock = self._item_locks[int(hashlib.sha256(item_id.encode()).hexdigest(), 16) % len(self._item_locks)]
+        with lock:
+            return self._ensure_facts_synced(item_id)
+
+    def _ensure_facts_synced(self, item_id):
         """买家消息出站前的同步闸门：存在未同步事实则先重试，失败一律拦截。
 
         pending_facts（跨重启持久化）里有该商品 = 平台已读到但 Java 尚未确认的
@@ -817,7 +662,7 @@ class XianyuLive:
             return f"{reply}\n{self.disclaimer_text}"
         return reply
 
-    async def compose_reply(self, buyer_id, item_id, send_message):
+    async def compose_reply(self, buyer_id, item_id, send_message, message_id=None):
         """ECHO 本地回显；BRIDGE 转发 Java 客服 Agent（HTTP 放线程池，避免饿死心跳）。
 
         返回 (reply, handoff_requested)：
@@ -832,19 +677,21 @@ class XianyuLive:
         # 事实同步闸门：平台读到但 Java 未收到的商品事实先重试；已售（库存 0）
         # 仍未同步成功时暂缓本轮回复，绝不按旧库存转发报价。
         if not await asyncio.to_thread(self.ensure_facts_synced, item_id):
-            return None, False
+            raise ConnectionError("Current item facts have not been acknowledged by Java")
         try:
             data = await asyncio.to_thread(
-                self.cs_client.chat, buyer_id, item_id, send_message, snapshot
+                self.cs_client.chat, buyer_id, item_id, send_message, snapshot, message_id
             )
         except ConversationPausedError:
             # Java 侧人工模式（卖家接管/SELLER_CONFIRM 暂停）：静默等待，并让调用方
             # 把本地状态对齐为人工模式——句号经 Java 确认恢复后自动回复才继续。
             logger.info(f"会话 xianyu_{buyer_id}_{item_id} 处于 Java 人工模式，静默等待卖家")
             return None, True
+        except (MessagePendingError, MessageResultUnknownError):
+            raise
         except Exception as exc:
-            logger.error(f"转发客服 Agent 失败: {exc}")
-            return self.fallback_reply or None, False
+            logger.error("转发客服 Agent 失败: exceptionType={}", type(exc).__name__)
+            raise
         handoff = bool(data.get("handoffRequested", False))
         return data["reply"], handoff
 
@@ -856,251 +703,98 @@ class XianyuLive:
             await asyncio.sleep(min(wait, 10.0))
         self._last_reply_at[buyer_id] = time.monotonic()
 
-    async def handle_seller_toggle(self, chat_id, item_id):
-        """卖家句号：切换本地人工接管，并同步 Java（双层转人工的真实闭环）。
-
-        同步规则（保守方向：宁可让卖家重发一次句号，也不让买家消息石沉大海）：
-        - 进入 manual：本地先进入；Java 同步尽力而为（失败无害——本地 manual
-          仍会挡住自动转发，买家消息由 Java 正常处理）。
-        - 恢复 auto：必须 Java 确认成功才本地恢复；失败回滚为 manual，卖家重试。
-          Java 404（该会话从未进过 Java）时仅本地恢复即可。
-        """
-        mode = self.toggle_manual_mode(chat_id)
-
-        if self.mode != "BRIDGE" or not self.cs_client:
-            # ECHO/无客户端：纯协议层行为（X1 遗留语义）
-            if mode == "manual":
-                logger.info(f"🔴 已接管会话 {chat_id} (商品: {item_id})")
-            else:
-                logger.info(f"🟢 已恢复会话 {chat_id} 的自动回复 (商品: {item_id})")
-            return
-
-        buyer_id = (self._chat_buyers.get(chat_id) or {}).get("buyerId")
-        if not buyer_id:
-            logger.warning(f"会话 {chat_id} 尚无买家映射，无法同步 Java 人工模式（仅本地生效）")
-            return
-
-        ok = await asyncio.to_thread(
-            self.cs_client.set_manual_mode, buyer_id, item_id, mode == "manual"
-        )
-        if mode == "manual":
-            logger.info(f"🔴 已接管会话 {chat_id} (商品: {item_id}, Java同步: {'成功' if ok else '失败，本地仍为人工'})")
-        elif ok:
-            logger.info(f"🟢 已恢复会话 {chat_id} 的自动回复 (商品: {item_id}，Java 已确认)")
-        else:
-            # 恢复未被 Java 确认：无条件回滚为人工模式，保持暂停，卖家重发句号重试。
-            # （mode=="auto" 意味着切换前就是人工，回滚不会误伤自动态会话。）
-            self.enter_manual_mode(chat_id)
-            logger.warning(f"🟡 会话 {chat_id} 的自动回复恢复未被 Java 确认，保持人工模式（请重发句号重试）")
-
-    async def handle_seller_message(self, chat_id, item_id, text):
-        """卖家人工回复：闲鱼侧已送达买家；BRIDGE 下同步进 Java 会话历史，
-        机器人恢复后模型可见卖家口径（resumeBot=false，恢复只由句号/消息端点触发）。"""
-        logger.info(f"卖家人工回复 (会话: {chat_id}, 商品: {item_id}): {text}")
-        if self.mode != "BRIDGE" or not self.cs_client:
-            return
-        buyer_id = (self._chat_buyers.get(chat_id) or {}).get("buyerId")
-        if not buyer_id:
-            return
-        await asyncio.to_thread(self.cs_client.add_seller_message, buyer_id, item_id, text, False)
-
     async def handle_message(self, message_data, websocket):
-        """处理所有类型的消息"""
-        try:
+        """Durably admit every child before ACK; never await a model from the receive loop."""
+        for decoded in decode_sync_messages(message_data):
+            if self.is_system_message(decoded) or self.is_typing_status(decoded):
+                continue
+            event = parse_chat_event(decoded, self.myid, self.message_expire_time)
+            if event is None or (event.kind == "buyer" and self.is_bracket_system_message(event.text)):
+                continue
+            if event.kind == "seller" and self.journal.is_own_echo(event):
+                continue
+            if event.kind == "seller" and self.check_toggle_keywords(event.text):
+                requested = self._requested_manual.get(event.chat_id)
+                current = requested[0] if requested else self.is_manual_mode(event.chat_id)
+                event = replace(event, kind="toggle", desired_manual=not current)
+            if not self.journal.accept(event):
+                continue
+            if event.kind == "buyer":
+                self._chat_buyers[event.chat_id] = {"buyerId": event.sender_id, "itemId": event.item_id}
+                self._save_state()
+            elif event.kind == "toggle":
+                self._requested_manual[event.chat_id] = (event.desired_manual, event.event_id)
+                if event.desired_manual:
+                    self.enter_manual_mode(event.chat_id)
+            logger.info("消息已接收: event={} kind={} chars={}", event.event_id[:12], event.kind, len(event.text))
+        headers = message_data.get("headers", {})
+        if headers.get("mid"):
+            ack_headers = {key: headers[key] for key in ("mid", "sid", "app-key", "ua", "dt") if key in headers}
+            await websocket.send(json.dumps({"code": 200, "headers": ack_headers}))
 
-            try:
-                message = message_data
-                ack = {
-                    "code": 200,
-                    "headers": {
-                        "mid": message["headers"]["mid"] if "mid" in message["headers"] else generate_mid(),
-                        "sid": message["headers"]["sid"] if "sid" in message["headers"] else "",
-                    }
-                }
-                if "app-key" in message["headers"]:
-                    ack["headers"]["app-key"] = message["headers"]["app-key"]
-                if "ua" in message["headers"]:
-                    ack["headers"]["ua"] = message["headers"]["ua"]
-                if "dt" in message["headers"]:
-                    ack["headers"]["dt"] = message["headers"]["dt"]
-                await websocket.send(json.dumps(ack))
-            except Exception:
-                pass
-
-            # 如果不是同步包消息，直接返回
-            if not self.is_sync_package(message_data):
-                return
-
-            # 获取并解密数据
-            sync_data = message_data["body"]["syncPushPackage"]["data"][0]
-
-            # 检查是否有必要的字段
-            if "data" not in sync_data:
-                logger.debug("同步包中无data字段")
-                return
-
-            # 解密数据
-            try:
-                data = sync_data["data"]
-                try:
-                    data = base64.b64decode(data).decode("utf-8")
-                    data = json.loads(data)
-                    # logger.info(f"无需解密 message: {data}")
-                    return
-                except Exception:
-                    decrypted_data = decrypt(data)
-                    message = json.loads(decrypted_data)
-            except Exception as e:
-                logger.error(f"消息解密失败: {e}")
-                return
-
-            try:
-                # 判断是否为订单状态消息（拍下/关闭/发货）：v1 只记录，绝不自动接单或下单
-                if message["3"]["redReminder"] == "等待买家付款":
-                    user_id = message["1"].split("@")[0]
-                    user_url = f"https://www.goofish.com/personal?userId={user_id}"
-                    logger.info(f"等待买家 {user_url} 付款（人工处理，v1 不自动接单）")
-                    return
-                elif message["3"]["redReminder"] == "交易关闭":
-                    user_id = message["1"].split("@")[0]
-                    user_url = f"https://www.goofish.com/personal?userId={user_id}"
-                    logger.info(f"买家 {user_url} 交易关闭")
-                    return
-                elif message["3"]["redReminder"] == "等待卖家发货":
-                    user_id = message["1"].split("@")[0]
-                    user_url = f"https://www.goofish.com/personal?userId={user_id}"
-                    logger.info(f"交易成功 {user_url} 等待卖家发货（人工处理）")
-                    return
-
-            except Exception:
-                pass
-
-            # 判断消息类型
-            if self.is_typing_status(message):
-                logger.debug("用户正在输入")
-                return
-            elif not self.is_chat_message(message):
-                logger.debug("其他非聊天消息")
-                logger.debug(f"原始消息: {message}")
-                return
-
-            # 处理聊天消息
-            create_time = int(message["1"]["5"])
-            send_user_name = message["1"]["10"]["reminderTitle"]
-            send_user_id = message["1"]["10"]["senderUserId"]
-            send_message = message["1"]["10"]["reminderContent"]
-
-            # 时效性验证（过滤5分钟前消息）
-            if (time.time() * 1000 - create_time) > self.message_expire_time:
-                logger.debug("过期消息丢弃")
-                return
-
-            # 获取商品ID和会话ID
-            url_info = message["1"]["10"]["reminderUrl"]
-            item_id = url_info.split("itemId=")[1].split("&")[0] if "itemId=" in url_info else None
-            chat_id = message["1"]["2"].split("@")[0]
-
-            if not item_id:
-                logger.warning("无法获取商品ID")
-                return
-
-            # 检查是否为卖家（自己）发送的控制命令
-            if send_user_id == self.myid:
-                logger.debug("检测到卖家消息，检查是否为控制命令")
-
-                # 检查切换命令（句号）：本地切换 + 同步 Java（见 handle_seller_toggle）
-                if self.check_toggle_keywords(send_message):
-                    await self.handle_seller_toggle(chat_id, item_id)
-                    return
-
-                # 卖家人工回复：闲鱼侧已送达，同步进 Java 会话历史（失败不影响送达）
-                await self.handle_seller_message(chat_id, item_id, send_message)
-                return
-
-            # 买家消息到达：记录 chat_id -> {buyerId, itemId} 映射并落盘，卖家
-            # 句号/人工回复据此同步 Java（侧车重启后从磁盘恢复，无需买家再发消息）。
-            self._chat_buyers[chat_id] = {"buyerId": send_user_id, "itemId": item_id}
-            self._save_state()
-
-            logger.info(
-                f"用户: {send_user_name} (ID: {send_user_id}), 商品: {item_id}, "
-                f"会话: {chat_id}, 消息: {send_message}"
-            )
-
-            # 如果当前会话处于人工接管模式，不进行自动回复
-            if self.is_manual_mode(chat_id):
-                logger.info(f"🔴 会话 {chat_id} 处于人工接管模式，跳过自动回复")
-                return
-            # 检查是否为带中括号的系统消息
-            if self.is_bracket_system_message(send_message):
-                logger.info(f"检测到系统消息：'{send_message}'，跳过自动回复")
-                return
-            if self.is_system_message(message):
-                logger.debug("系统消息，跳过处理")
-                return
-
-            # 生成回复（ECHO 回显 / BRIDGE 转发 Java），并获知本轮是否转人工
-            bot_reply, handoff_requested = await self.compose_reply(send_user_id, item_id, send_message)
-
-            # 无需回复：Java 409 人工模式（handoff_requested=True 静默等待卖家），
-            # 或 Java 故障且未配置兜底话术。
-            if not bot_reply:
-                if handoff_requested:
-                    self.enter_manual_mode(chat_id)
-                    logger.info(f"🔴 会话 {chat_id} 对齐 Java 人工模式，静默等待卖家（句号恢复需经 Java 确认）")
+    async def _process_event(self, event):
+        if event.kind == "buyer":
+            if self.mode == "BRIDGE":
+                mode = await asyncio.to_thread(self.cs_client.get_manual_mode, event.sender_id, event.item_id)
+                if mode is True:
+                    self.enter_manual_mode(event.chat_id)
+                    return {"reply": None, "handoffRequested": True}
+            reply, handoff = await self.compose_reply(event.sender_id, event.item_id, event.text, event.event_id)
+            if handoff:
+                self.enter_manual_mode(event.chat_id)
+            return {"reply": reply, "handoffRequested": handoff}
+        mapping = self._chat_buyers.get(event.chat_id)
+        if event.kind == "toggle":
+            if self.mode == "BRIDGE" and mapping:
+                ok = await asyncio.to_thread(self.cs_client.set_manual_mode, mapping["buyerId"],
+                                            event.item_id, event.desired_manual)
+                if not ok:
+                    self.enter_manual_mode(event.chat_id)
+                    raise ConnectionError("Java manual mode was not confirmed")
+            latest = self._requested_manual.get(event.chat_id)
+            if latest is None or latest[1] == event.event_id:
+                if event.desired_manual:
+                    self.enter_manual_mode(event.chat_id)
                 else:
-                    logger.info(f"[无需回复] 买家 {send_user_name} 的消息未生成回复")
+                    self.manual_mode_conversations.discard(event.chat_id)
+                    self.manual_mode_timestamps.pop(event.chat_id, None)
+                    self._save_state()
+                self._requested_manual.pop(event.chat_id, None)
+        elif self.mode == "BRIDGE" and mapping:
+            await asyncio.to_thread(self.cs_client.add_seller_message, mapping["buyerId"], event.item_id,
+                                    event.text, False, event.event_id)
+        return {}
+
+    async def _deliver_event(self, event, response, superseded):
+        await self._connected.wait()
+        if self.simulate_human_typing:
+            await asyncio.sleep(min(1 + len(response["reply"]) * 0.1, 10))
+        lock = self._send_locks[int(hashlib.sha256(event.sender_id.encode()).hexdigest(), 16) % len(self._send_locks)]
+        async with lock:
+            await self.pace_reply(event.sender_id)
+            if superseded() or (self.is_manual_mode(event.chat_id) and not response.get("handoffRequested")):
+                self.journal.set_status(event.event_id, "CANCELLED", error="SELLER_TAKEOVER")
                 return
-
-            # X4 双层转人工：Java 侧工单创建成功（handoffRequested=true）时暂停该会话
-            # 自动回复，进入人工接管集合；卖家在闲鱼 App 发句号（经 Java 确认）恢复。
-            if handoff_requested:
-                self.enter_manual_mode(chat_id)
-                logger.info(f"🟠 会话 {chat_id} 触发转人工，已暂停自动回复（卖家发句号恢复）")
-
-            # X4 免责话术：每个会话仅首条自动回复追加
-            bot_reply = self.apply_disclaimer(chat_id, bot_reply)
-
-            logger.info(f"机器人回复: {bot_reply}")
-
-            # 模拟人工输入延迟
-            if self.simulate_human_typing:
-                # 基础延迟 0-1秒 + 每字 0.1-0.3秒
-                base_delay = random.uniform(0, 1)
-                typing_delay = len(bot_reply) * random.uniform(0.1, 0.3)
-                total_delay = base_delay + typing_delay
-                # 设置最大延迟上限，防止过长回复等待太久
-                total_delay = min(total_delay, 10.0)
-
-                logger.info(f"模拟人工输入，延迟发送 {total_delay:.2f} 秒...")
-                await asyncio.sleep(total_delay)
-
-            # 出站节流（风控缓解）：补足与该买家上次回复的最小间隔后再发送
-            await self.pace_reply(send_user_id)
-
-            await self.send_msg(websocket, chat_id, send_user_id, bot_reply)
-
-        except Exception as e:
-            logger.error(f"处理消息时发生错误: {str(e)}")
-            logger.debug(f"原始消息: {message_data}")
-
-    async def send_heartbeat(self, ws):
-        """发送心跳包并等待响应"""
-        try:
-            heartbeat_mid = generate_mid()
-            heartbeat_msg = {
-                "lwp": "/!",
-                "headers": {
-                    "mid": heartbeat_mid
-                }
-            }
-            await ws.send(json.dumps(heartbeat_msg))
-            self.last_heartbeat_time = time.time()
-            logger.debug("心跳包已发送")
-            return heartbeat_mid
-        except Exception as e:
-            logger.error(f"发送心跳包失败: {e}")
-            raise
+            if self.mode == "BRIDGE" and not response.get("handoffRequested"):
+                paused = await asyncio.to_thread(self.cs_client.get_manual_mode, event.sender_id, event.item_id)
+                if paused is None:
+                    raise ConnectionError("Java manual state could not be verified")
+                if paused:
+                    self.enter_manual_mode(event.chat_id)
+                    self.journal.set_status(event.event_id, "CANCELLED", error="SELLER_TAKEOVER")
+                    return
+            # Last check follows all awaits, so a seller command cannot be raced by delayed output.
+            if superseded():
+                self.journal.set_status(event.event_id, "CANCELLED", error="SELLER_TAKEOVER")
+                return
+            if self.ws is None:
+                raise ConnectionError("Platform connection unavailable")
+            reply = self.apply_disclaimer(event.chat_id, response["reply"])
+            self.journal.record_outbound(event.event_id, reply)
+            self.journal.set_status(event.event_id, "SENDING")
+            await self.send_msg(self.ws, event.chat_id, event.sender_id, reply)
+            self.journal.set_status(event.event_id, "SENT")
+            logger.info("回复已写入连接: event={} chars={}", event.event_id[:12], len(reply))
 
     async def heartbeat_loop(self, ws):
         """心跳维护循环"""
@@ -1140,9 +834,17 @@ class XianyuLive:
         return False
 
     async def main(self):
+        await self.align_manual_state_with_java()
+        self.dispatcher.start()
+        try:
+            await self._listen_forever()
+        finally:
+            await self.dispatcher.close()
+            self.journal.close()
+
+    async def _listen_forever(self):
         # 侧车（可能刚重启）先对齐 Java 暂停状态：落盘恢复的会话里，Java 侧
         # 已接管/已恢复的，本地跟着翻转；对齐失败保留本地状态（下次句号再同步）。
-        await self.align_manual_state_with_java()
         while True:
             try:
                 # 重置连接重启标志
@@ -1161,8 +863,9 @@ class XianyuLive:
                 }
 
                 async with websockets.connect(self.base_url, extra_headers=headers) as websocket:
-                    self.ws = websocket
                     await self.init(websocket)
+                    self.ws = websocket
+                    self._connected.set()
 
                     # 初始化心跳时间
                     self.last_heartbeat_time = time.time()
@@ -1189,29 +892,17 @@ class XianyuLive:
                             if await self.handle_heartbeat_response(message_data):
                                 continue
 
-                            # 发送通用ACK响应
-                            if "headers" in message_data and "mid" in message_data["headers"]:
-                                ack = {
-                                    "code": 200,
-                                    "headers": {
-                                        "mid": message_data["headers"]["mid"],
-                                        "sid": message_data["headers"].get("sid", "")
-                                    }
-                                }
-                                # 复制其他可能的header字段
-                                for key in ["app-key", "ua", "dt"]:
-                                    if key in message_data["headers"]:
-                                        ack["headers"][key] = message_data["headers"][key]
-                                await websocket.send(json.dumps(ack))
-
                             # 处理其他消息
                             await self.handle_message(message_data, websocket)
 
+                        except InboxFullError:
+                            logger.warning("消息队列已满，未确认该同步包，准备重连")
+                            break
                         except json.JSONDecodeError:
                             logger.error("消息解析失败")
                         except Exception as e:
                             logger.error(f"处理消息时发生错误: {str(e)}")
-                            logger.debug(f"原始消息: {message}")
+
 
             except websockets.exceptions.ConnectionClosed:
                 logger.warning("WebSocket连接已关闭")
@@ -1220,6 +911,8 @@ class XianyuLive:
                 logger.error(f"连接发生错误: {e}")
 
             finally:
+                self._connected.clear()
+                self.ws = None
                 # 清理任务
                 if self.heartbeat_task:
                     self.heartbeat_task.cancel()

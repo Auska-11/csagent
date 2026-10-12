@@ -9,6 +9,11 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSearchResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSummary;
 import com.smartcs.smart_cs_agent.channel.xianyu.XianyuSidecarProperties;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuItemFactService;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuItemProfileStore;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuReviewedItemCatalog;
+import org.junit.jupiter.api.io.TempDir;
+import java.nio.file.Path;
 import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeType;
 import com.smartcs.smart_cs_agent.repository.ProductRepository;
 import com.smartcs.smart_cs_agent.tools.KnowledgeDocument;
@@ -27,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 演示目录不再对 xianyu 租户可见（X3“商品文档生效”）。
  */
 class XianyuTenantProductCatalogTest {
+    @TempDir Path snapshotDir;
 
     private static final String ITEM_CONTENT = """
             # 森海塞尔MOMENTUM二代头戴耳机
@@ -61,7 +67,7 @@ class XianyuTenantProductCatalogTest {
         ProductSummary item = products.getProducts().get(0);
         assertEquals("1079979582985", item.getProductId());
         assertEquals("森海塞尔MOMENTUM二代头戴耳机", item.getName());
-        assertEquals(265, item.getPrice());
+        assertEquals(new java.math.BigDecimal("265.0"), item.getPrice());
         assertEquals(1, item.getStock());
         assertTrue(item.isInStock());
         assertTrue(item.getDescription().contains("支持蓝牙和有线连接"));
@@ -118,7 +124,7 @@ class XianyuTenantProductCatalogTest {
     }
 
     @Test
-    void xianyuTenantDegradesToZeroWhenPriceOrStockLineMissing() {
+    void unknownFactsDoNotBecomeZeroPriceOrSoldOut() {
         KnowledgeDocument degraded = new KnowledgeDocument(
                 "product/9001.md",
                 "product",
@@ -130,7 +136,7 @@ class XianyuTenantProductCatalogTest {
                 "",
                 "xianyu-item-snapshot",
                 "",
-                null
+                null, "xianyu"
         );
         LocalProductCatalogCapabilityProvider provider = provider(degraded);
 
@@ -142,8 +148,8 @@ class XianyuTenantProductCatalogTest {
         ProductSummary item = ((ProductSearchResult) result.getData()).getProducts().get(0);
         assertTrue(result.isSuccess());
         assertEquals("9001", item.getProductId());
-        assertEquals(0, item.getPrice());
-        assertEquals(0, item.getStock());
+        org.junit.jupiter.api.Assertions.assertNull(item.getPrice());
+        assertEquals(-1, item.getStock());
     }
 
     @Test
@@ -188,11 +194,11 @@ class XianyuTenantProductCatalogTest {
                 duplicated,
                 List.of("森海塞尔MOMENTUM二代头戴耳机", "1079979582985"),
                 KnowledgeType.POLICY,
-                XianyuKnowledgeProductCatalog.PRODUCT_CATEGORY,
+                "headphones",
                 "",
                 "xianyu-item-snapshot",
                 "1",
-                null
+                null, "xianyu"
         );
         LocalProductCatalogCapabilityProvider provider = provider(duplicatedDoc);
 
@@ -216,20 +222,25 @@ class XianyuTenantProductCatalogTest {
                 ITEM_CONTENT,
                 List.of("森海塞尔MOMENTUM二代头戴耳机", "1079979582985"),
                 KnowledgeType.POLICY,
-                XianyuKnowledgeProductCatalog.PRODUCT_CATEGORY,
+                "headphones",
                 "",
                 "xianyu-item-snapshot",
                 "1",
-                null
+                null, "xianyu"
         );
     }
 
     private LocalProductCatalogCapabilityProvider provider(KnowledgeDocument... documents) {
         return new LocalProductCatalogCapabilityProvider(
                 new ProductRepository(),
-                new KnowledgeTools(List.of(documents)),
-                new XianyuSidecarProperties()
+                facts(documents)
         );
+    }
+
+    private XianyuItemFactService facts(KnowledgeDocument... documents) {
+        XianyuSidecarProperties properties = new XianyuSidecarProperties();
+        properties.setItemSnapshotDir(snapshotDir.toString());
+        return new XianyuItemFactService(new XianyuReviewedItemCatalog(List.of(documents)), new XianyuItemProfileStore(properties), properties);
     }
 
     private ExecutionContext xianyuContext() {

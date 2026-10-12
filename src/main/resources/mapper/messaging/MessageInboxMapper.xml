@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smartcs.smart_cs_agent.persistence.mybatis.mapper.MessageInboxMapper">
+    <update id="createTable">
+        CREATE TABLE IF NOT EXISTS cs_message_inbox (
+            receipt_key VARCHAR(64) NOT NULL PRIMARY KEY,
+            payload_hash VARCHAR(64) NOT NULL,
+            status VARCHAR(16) NOT NULL,
+            response_json LONGTEXT NULL,
+            created_at BIGINT NOT NULL
+        )
+    </update>
+    <insert id="insert">
+        INSERT INTO cs_message_inbox (receipt_key, payload_hash, status, created_at)
+        VALUES (#{key}, #{hash}, 'PROCESSING', #{now})
+    </insert>
+    <select id="find" resultType="com.smartcs.smart_cs_agent.messaging.MessageInboxStore$Entry">
+        SELECT payload_hash, status, response_json, created_at FROM cs_message_inbox WHERE receipt_key = #{key}
+    </select>
+    <update id="complete">
+        UPDATE cs_message_inbox SET status = 'COMPLETED', response_json = #{response}
+        WHERE receipt_key = #{key} AND status = 'PROCESSING'
+    </update>
+    <update id="markUnknown">
+        UPDATE cs_message_inbox SET status = 'UNKNOWN' WHERE receipt_key = #{key} AND status = 'PROCESSING'
+    </update>
+</mapper>

@@ -163,6 +163,7 @@ public class UserProfileWorkflow implements AgentWorkflow {
                                                 String preference) {
         String userId = context.getRequest().getPrincipal().getUserId();
         UserMemoryWriteResult writeResult = userMemoryStore.rememberProductPreferenceSafely(
+                context.getRequest().getPrincipal().getTenantId(),
                 userId,
                 preference
         );
@@ -175,7 +176,7 @@ public class UserProfileWorkflow implements AgentWorkflow {
         }
 
         String storedPreference = writeResult.storedPreference();
-        UserMemorySnapshot snapshot = userMemoryStore.getSnapshot(userId);
+        UserMemorySnapshot snapshot = userMemoryStore.getSnapshot(context.getRequest().getPrincipal().getTenantId(), userId);
         state.setPreference(storedPreference);
         state.transitionTo(UserProfileStep.COMPLETED);
 
@@ -194,7 +195,7 @@ public class UserProfileWorkflow implements AgentWorkflow {
 
     private WorkflowDecision showPreferences(TurnContext context, UserProfileState state) {
         String userId = context.getRequest().getPrincipal().getUserId();
-        UserMemorySnapshot snapshot = userMemoryStore.getSnapshot(userId);
+        UserMemorySnapshot snapshot = userMemoryStore.getSnapshot(context.getRequest().getPrincipal().getTenantId(), userId);
         state.transitionTo(UserProfileStep.COMPLETED);
         if (!snapshot.hasProductPreferences()) {
             return WorkflowDecision.next(

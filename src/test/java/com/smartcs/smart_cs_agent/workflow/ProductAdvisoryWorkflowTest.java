@@ -88,8 +88,8 @@ class ProductAdvisoryWorkflowTest {
 
     @Test
     void shouldUseLatestLongTermPreferenceForGenericRecommendation() {
-        userMemoryStore.rememberProductPreference("USER-001", "蓝牙耳机");
-        userMemoryStore.rememberProductPreference("USER-001", "智能手表");
+        userMemoryStore.rememberProductPreference("default", "USER-001", "蓝牙耳机");
+        userMemoryStore.rememberProductPreference("default", "USER-001", "智能手表");
         ConversationState state = startedState("给我推荐一下", "USER-001");
         TurnContext context = turn(state, "给我推荐一下", "USER-001");
 

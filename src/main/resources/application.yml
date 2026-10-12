@@ -31,6 +31,10 @@ mybatis:
     map-underscore-to-camel-case: true
 
 smartcs:
+  eval:
+    baseline:
+      # 仅用于隔离的内存模式对照实验。默认不注册实验 Bean 和 HTTP 入口。
+      enabled: ${SMARTCS_EVAL_BASELINE_ENABLED:false}
   agent:
     # 防止错误 Workflow/Handler 无限返回 CONTINUE；这是步骤预算，不替代 HTTP/JDBC 超时。
     max-iterations: ${SMARTCS_AGENT_MAX_ITERATIONS:10}
@@ -54,9 +58,9 @@ smartcs:
     issuer: ${SMARTCS_SECURITY_ISSUER:smart-cs-agent}
     audience: ${SMARTCS_SECURITY_AUDIENCE:smart-cs-api}
     default-tenant-id: ${SMARTCS_SECURITY_DEFAULT_TENANT_ID:default}
-    # HS256 至少需要 32 字节。默认值只服务于本地裸跑 JAR 且不开 demo 签发的场景；
-    # compose 部署强制显式提供密钥；开启 demo 签发时使用该公开默认值会直接启动失败。
-    jwt-secret: ${SMARTCS_SECURITY_JWT_SECRET:dev-only-smart-cs-agent-change-this-secret-32bytes}
+    # HS256 至少需要 32 字节。JAR、IDE 和 Compose 都必须显式提供私有随机密钥；
+    # 关闭 Demo 签发器也不会允许缺失密钥或使用已知开发密钥。
+    jwt-secret: ${SMARTCS_SECURITY_JWT_SECRET:}
     token-ttl-seconds: ${SMARTCS_SECURITY_TOKEN_TTL_SECONDS:28800}
     clock-skew-seconds: ${SMARTCS_SECURITY_CLOCK_SKEW_SECONDS:30}
   memory:
@@ -73,6 +77,12 @@ smartcs:
     # handoff.request 不屏蔽——它是双层转人工的业务层出口（设计点 4）。
     tenant-policies:
       xianyu:
+        tenant-id: ${SMARTCS_XIANYU_TENANT_ID:xianyu}
+        allowed-capabilities:
+          - product.search
+          - product.lookup
+          - knowledge.search
+          - handoff.request
         blocked-capabilities:
           - return.apply
     execution:
@@ -179,12 +189,12 @@ smartcs:
     # 侧车 .env 的 CS_AGENT_TOKEN 一致（不少于 32 字节，启动期校验）。
     enabled: ${SMARTCS_XIANYU_ENABLED:false}
     service-token: ${SMARTCS_XIANYU_SERVICE_TOKEN:}
-    # 闲鱼买家合成用户所属租户；X4 将按该租户关闭副作用类能力（只读 + 问答）。
+    # 闲鱼买家合成用户所属租户；工作台 ADMIN 必须属于同一租户，业务能力按白名单准入。
     tenant-id: ${SMARTCS_XIANYU_TENANT_ID:xianyu}
     buyer-token-ttl-seconds: ${SMARTCS_XIANYU_BUYER_TOKEN_TTL_SECONDS:86400}
-    # 商品快照与知识文档草稿落盘目录；草稿需人工审校后移入 resources/knowledge/product/ 并重启生效。
+    # 商品资料 profiles 与现势 facts overrides 的持久化目录；草稿通过卖家工作台审核发布，即时生效。
     item-snapshot-dir: ${SMARTCS_XIANYU_ITEM_SNAPSHOT_DIR:data/xianyu-items}
-    # 议价授权（场景规则）。未配置 = 未授权：买家出价一律转卖家本人确认，绝不自行答应或回绝。
+    # 议价授权的配置兜底；已发布的逐商品授权优先。未配置 = 未授权，由卖家本人确认。
     # 金额为空字符串时不绑定（保持 null），即"未授权该维度"；服务器经 SMARTCS_XIANYU_SCENARIO_* 注入。
     scenario:
       seller-rules:

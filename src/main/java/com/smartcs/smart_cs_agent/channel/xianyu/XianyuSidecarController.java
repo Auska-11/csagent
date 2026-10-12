@@ -2,7 +2,9 @@ package com.smartcs.smart_cs_agent.channel.xianyu;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.smartcs.smart_cs_agent.controller.ApiNotFoundException;
+import com.smartcs.smart_cs_agent.messaging.MessageReceiptExecutor;
 import com.smartcs.smart_cs_agent.security.AuthenticationException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -18,7 +20,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.Optional;
 import java.util.regex.Matcher;
@@ -43,7 +44,7 @@ import java.util.regex.Pattern;
 public class XianyuSidecarController {
 
     /** 闲鱼买家/商品 ID 都是平台数字 ID；限制字符集防止它们进入文件名或会话键。 */
-    private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
+    private static final Pattern SAFE_ID = Pattern.compile("[0-9]{1,64}");
 
     /** 快照里的库存可能是数字，也可能是“5 件”这类文本，取首个数字串。 */
     private static final Pattern STOCK_DIGITS = Pattern.compile("(\\d+)");
@@ -52,23 +53,26 @@ public class XianyuSidecarController {
 
     private final XianyuSidecarProperties properties;
     private final XianyuBuyerTokenService tokenService;
-    private final XianyuItemKnowledgeWriter itemKnowledgeWriter;
+    private final XianyuItemSnapshotImporter itemSnapshotImporter;
     private final XianyuItemFactService itemFactService;
     private final XianyuManualModeService manualModeService;
     private final ObjectMapper objectMapper;
+    private final MessageReceiptExecutor receipts;
 
     public XianyuSidecarController(XianyuSidecarProperties properties,
                                    XianyuBuyerTokenService tokenService,
-                                   XianyuItemKnowledgeWriter itemKnowledgeWriter,
+                                   XianyuItemSnapshotImporter itemSnapshotImporter,
                                    XianyuItemFactService itemFactService,
                                    XianyuManualModeService manualModeService,
-                                   ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper,
+                                   MessageReceiptExecutor receipts) {
         this.properties = properties;
         this.tokenService = tokenService;
-        this.itemKnowledgeWriter = itemKnowledgeWriter;
+        this.itemSnapshotImporter = itemSnapshotImporter;
         this.itemFactService = itemFactService;
         this.manualModeService = manualModeService;
         this.objectMapper = objectMapper == null ? new ObjectMapper() : objectMapper;
+        this.receipts = receipts;
     }
 
     /** 商品事实热更新请求：price 为裸价格文本（“265”/“265-280”/“¥265”），两字段均可空表示不变。 */
@@ -88,7 +92,10 @@ public class XianyuSidecarController {
     }
 
     /** 卖家人工消息请求；resumeBot=true 时随消息一起恢复机器人自动回复。 */
-    public record XianyuSellerMessageRequest(String buyerId, String itemId, String text, Boolean resumeBot) {
+    public record XianyuSellerMessageRequest(String buyerId, String itemId, String text, Boolean resumeBot, String messageId) {
+        public XianyuSellerMessageRequest(String buyerId, String itemId, String text, Boolean resumeBot) {
+            this(buyerId, itemId, text, resumeBot, null);
+        }
     }
 
     /** 卖家消息写入结果。 */
@@ -112,12 +119,8 @@ public class XianyuSidecarController {
         String conversationId = XianyuIdentity.conversationId(buyerId, itemId);
         String itemKnowledge = request.itemSnapshot() == null || request.itemSnapshot().isBlank()
                 ? "none"
-                : itemKnowledgeWriter.writeDraft(
-                        itemId,
-                        request.itemSnapshot(),
-                        Path.of(properties.getItemSnapshotDir())
-                );
-        // 注册即建立现势事实：知识文档要走人工审校（慢），改价/售出对买家必须即时生效。
+                : itemSnapshotImporter.importDraft(itemId, request.itemSnapshot());
+        // 注册即建立现势事实；商品描述和卖家授权经工作台审核后发布。
         applySnapshotOverride(itemId, request.itemSnapshot());
         LOGGER.info(
                 "闲鱼侧车会话注册: buyer={} item={} -> {} / {} (itemKnowledge={})",
@@ -244,16 +247,19 @@ public class XianyuSidecarController {
             throw new IllegalArgumentException("text too long (max 2000 chars)");
         }
         boolean resumeBot = Boolean.TRUE.equals(request.resumeBot());
-        if (!manualModeService.addSellerMessage(buyerId, request.itemId(), request.text().strip(), resumeBot)) {
-            throw new ApiNotFoundException("Xianyu conversation not found");
-        }
+        String conversationId = XianyuIdentity.conversationId(buyerId, request.itemId());
+        XianyuSellerMessageResponse result = receipts.execute(
+                MessageReceiptExecutor.scope("seller", properties.getTenantId(), conversationId),
+                request.messageId(), request.text().strip() + "\n" + resumeBot,
+                XianyuSellerMessageResponse.class, () -> {
+                    if (!manualModeService.addSellerMessage(buyerId, request.itemId(), request.text().strip(), resumeBot)) {
+                        throw new ApiNotFoundException("Xianyu conversation not found");
+                    }
+                    return new XianyuSellerMessageResponse(conversationId, request.text().strip(), resumeBot);
+                });
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
-                .body(new XianyuSellerMessageResponse(
-                        XianyuIdentity.conversationId(buyerId, request.itemId()),
-                        request.text().strip(),
-                        resumeBot
-                ));
+                .body(result);
     }
 
     private void requireEnabled() {
@@ -271,19 +277,25 @@ public class XianyuSidecarController {
         if (itemSnapshot == null || itemSnapshot.isBlank()) {
             return;
         }
+        JsonNode snapshot;
         try {
-            JsonNode snapshot = objectMapper.readTree(itemSnapshot);
-            Optional<XianyuItemFactService.PriceRange> price =
-                    XianyuItemFactService.parsePriceRangeText(snapshot.path("price_range").asText());
-            Integer stock = parseStock(snapshot.path("total_stock"));
-            if (price.isPresent() || stock != null) {
-                boolean seeded = itemFactService.seedLiveOverride(itemId, price.orElse(null), stock);
-                if (!seeded) {
-                    LOGGER.info("闲鱼商品已有更新的覆盖事实，注册快照不覆盖: item={}", itemId);
-                }
+            snapshot = objectMapper.readTree(itemSnapshot);
+        } catch (JsonProcessingException invalid) {
+            LOGGER.warn("闲鱼商品快照 JSON 无效，跳过事实初始化: item={}", itemId);
+            return;
+        }
+        if (snapshot == null || !snapshot.isObject()) {
+            return;
+        }
+        Optional<XianyuItemFactService.PriceRange> price =
+                XianyuItemFactService.parsePriceRangeText(snapshot.path("price_range").asText());
+        Integer stock = parseStock(snapshot.path("total_stock"));
+        if (price.isPresent() || stock != null) {
+            // Persistence failures must reach the caller; registration cannot acknowledge stale facts.
+            boolean seeded = itemFactService.seedLiveOverride(itemId, price.orElse(null), stock);
+            if (!seeded) {
+                LOGGER.info("闲鱼商品已有更新的覆盖事实，注册快照不覆盖: item={}", itemId);
             }
-        } catch (Exception exception) {
-            LOGGER.warn("闲鱼商品快照事实解析失败（item={}），跳过覆盖层更新", itemId, exception);
         }
     }
 
@@ -292,10 +304,16 @@ public class XianyuSidecarController {
             return null;
         }
         if (node.canConvertToInt()) {
-            return node.asInt();
+            return node.asInt() >= 0 ? node.asInt() : null;
         }
-        Matcher matcher = STOCK_DIGITS.matcher(node.asText());
-        return matcher.find() ? Integer.parseInt(matcher.group(1)) : null;
+        String text = node.asText().strip();
+        if (text.startsWith("-")) return null;
+        Matcher matcher = STOCK_DIGITS.matcher(text);
+        try {
+            return matcher.find() ? Integer.parseInt(matcher.group(1)) : null;
+        } catch (NumberFormatException tooLarge) {
+            return null;
+        }
     }
 
     private XianyuItemFactsResponse currentFactsResponse(String itemId) {
@@ -331,7 +349,7 @@ public class XianyuSidecarController {
 
     private String requireSafeId(String value, String field) {
         if (value == null || !SAFE_ID.matcher(value).matches()) {
-            throw new IllegalArgumentException(field + " must match [A-Za-z0-9_-]{1,64}");
+            throw new IllegalArgumentException(field + " must be a numeric platform ID of 1..64 digits");
         }
         return value;
     }

@@ -36,6 +36,8 @@ import java.util.function.Supplier;
 @ConditionalOnExpression("'${smartcs.capability.provider-mode:local}' != 'local'")
 public class HttpMcpClientTransport implements McpClientTransport {
 
+    private static final String PROTOCOL_VERSION = "2024-11-05";
+
     private final McpClientProperties properties;
     private final RestClient restClient;
     private final LongSupplier clock;
@@ -62,9 +64,21 @@ public class HttpMcpClientTransport implements McpClientTransport {
 
     @Override
     public McpRemoteServerInfo initialize() {
-        Map<String, Object> response = rpc("initialize", Map.of(), "init-" + UUID.randomUUID());
+        Map<String, Object> response = rpc("initialize", Map.of(
+                "protocolVersion", PROTOCOL_VERSION,
+                "capabilities", Map.of(),
+                "clientInfo", Map.of("name", "smart-cs-agent-mcp-client", "version", "0.2.0")
+        ), "init-" + UUID.randomUUID());
         Map<String, Object> result = map(response.get("result"));
         Map<String, Object> serverInfo = map(result.get("serverInfo"));
+        executeWithRetry(() -> {
+            restClient.post()
+                    .uri(properties.getBaseUrl())
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getServiceToken())
+                    .body(Map.of("jsonrpc", "2.0", "method", "notifications/initialized"))
+                    .retrieve().toBodilessEntity();
+            return null;
+        });
         return new McpRemoteServerInfo(
                 text(result.get("protocolVersion")),
                 text(serverInfo.get("name")),
@@ -269,6 +283,9 @@ public class HttpMcpClientTransport implements McpClientTransport {
                 if (text(result.get("protocolVersion")).isBlank()
                         || !(result.get("serverInfo") instanceof Map<?, ?>)) {
                     throw new McpTransportException("Remote MCP initialize result is incomplete");
+                }
+                if (!PROTOCOL_VERSION.equals(text(result.get("protocolVersion")))) {
+                    throw new McpTransportException("Remote MCP negotiated an unsupported protocol version");
                 }
             }
             case "tools/list" -> {

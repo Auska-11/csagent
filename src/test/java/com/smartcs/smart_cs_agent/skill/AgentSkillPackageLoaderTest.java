@@ -41,7 +41,7 @@ class AgentSkillPackageLoaderTest {
                 new AgentSkillManifestParser()
         ).load();
 
-        assertEquals(10, packages.size());
+        assertEquals(11, packages.size());
         AgentSkillPackage skillPackage = packages.stream()
                 .filter(candidate -> "customer-service".equals(candidate.getDefinition().getId()))
                 .findFirst()
@@ -59,6 +59,12 @@ class AgentSkillPackageLoaderTest {
                 .orElseThrow();
         assertEquals("escalation", escalation.getDefinition().getWorkflowId());
         assertEquals(Set.of("handoff.request"), escalation.getDefinition().getAllowedCapabilities());
+        AgentSkillPackage trade = packages.stream()
+                .filter(candidate -> "xianyu-trade".equals(candidate.getDefinition().getId()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("xianyu_trade", trade.getDefinition().getWorkflowId());
+        assertEquals(Set.of("handoff.request"), trade.getDefinition().getAllowedCapabilities());
     }
 
     @Test

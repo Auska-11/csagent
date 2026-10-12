@@ -85,10 +85,19 @@ class McpJsonRpcControllerTest {
 
     private McpJsonRpcRequest request(Object id, String method, Map<String, Object> params) {
         McpJsonRpcRequest request = new McpJsonRpcRequest();
+        request.setJsonrpc("2.0");
         request.setId(id);
         request.setMethod(method);
         request.setParams(params);
         return request;
+    }
+
+    @Test
+    void shouldAcknowledgePingWithEmptyResult() {
+        McpJsonRpcController controller = new McpJsonRpcController(createAdapter());
+        McpJsonRpcResponse response = controller.handle(request(6, "ping", Map.of()), adminCustomer());
+        assertNull(response.getError());
+        assertEquals(Map.of(), response.getResult());
     }
 
     private Map<String, Object> authenticatedMeta() {

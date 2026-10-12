@@ -56,7 +56,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 因此可以验证 @Valid、@RequestBody、全局异常处理器是否真的按 HTTP 方式工作。
  */
 @WebMvcTest(ChatApiController.class)
-@Import({HttpSecurityConfiguration.class, SecurityProperties.class, SecurityErrorWriter.class})
+@Import({HttpSecurityConfiguration.class, SecurityProperties.class, SecurityErrorWriter.class,
+        com.smartcs.smart_cs_agent.agent.ChatTurnService.class,
+        com.smartcs.smart_cs_agent.messaging.MessageReceiptExecutor.class,
+        com.smartcs.smart_cs_agent.messaging.InMemoryMessageInboxStore.class})
 class ChatApiControllerMvcTest {
 
     @Autowired
@@ -245,7 +248,7 @@ class ChatApiControllerMvcTest {
 
     @Test
     void shouldClearUserMemory() throws Exception {
-        when(userMemoryStore.clear("USER-001")).thenReturn(true);
+        when(userMemoryStore.clear("default", "USER-001")).thenReturn(true);
 
         mockMvc.perform(delete("/api/chat/users/USER-001/memory")
                         .with(customer("USER-001")))
@@ -300,7 +303,7 @@ class ChatApiControllerMvcTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.errorCode").value("NOT_FOUND"));
 
-        verify(userMemoryStore, never()).getSnapshot(any());
+        verify(userMemoryStore, never()).getSnapshot(any(), any());
     }
 
     private RequestPostProcessor customer(String userId) {

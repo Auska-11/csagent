@@ -1,5 +1,7 @@
 package com.smartcs.smart_cs_agent.controller;
 
+import com.smartcs.smart_cs_agent.messaging.MessageReceiptException;
+
 import com.smartcs.smart_cs_agent.agent.context.ConversationBusyException;
 import com.smartcs.smart_cs_agent.channel.xianyu.XianyuConversationPausedException;
 import com.smartcs.smart_cs_agent.handoff.admin.PendingHandoffAdminCursorException;
@@ -41,6 +43,17 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(com.smartcs.smart_cs_agent.channel.xianyu.XianyuProfileConflictException.class)
+    public ResponseEntity<ApiErrorResponse> handleItemProfileConflict() {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ApiErrorResponse("ITEM_PROFILE_VERSION_CONFLICT", "Item profile changed; reload before saving"));
+    }
+
+    @ExceptionHandler(MessageReceiptException.class)
+    public ResponseEntity<ApiErrorResponse> handleMessageReceipt(MessageReceiptException exception) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ApiErrorResponse(exception.getErrorCode(), "Message is pending, conflicts with an earlier event, or requires review"));
+    }
 
     /**
      * 认证凭据缺失或无效时统一返回 401。

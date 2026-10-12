@@ -25,6 +25,7 @@ public class QdrantVectorRetriever {
     private final KnowledgeVectorStore vectorStore;
     private final RagProperties properties;
     private volatile boolean indexReady;
+    private final KnowledgeMetadataFilter metadataFilter = new KnowledgeMetadataFilter();
 
     public QdrantVectorRetriever(List<KnowledgeChunk> chunks,
                                  TextEmbeddingClient embeddingClient,
@@ -64,7 +65,8 @@ public class QdrantVectorRetriever {
                     plan.knowledgeType(),
                     plan.productCategory(),
                     plan.productModel(),
-                    plan.version()
+                    plan.version(),
+                    plan.channel()
             );
             List<KnowledgeCandidate> candidates = new ArrayList<>();
             for (VectorKnowledgeHit hit : vectorStore.search(queryEmbedding, limit, filter)) {
@@ -72,7 +74,7 @@ public class QdrantVectorRetriever {
                     continue;
                 }
                 KnowledgeChunk chunk = chunksById.get(hit.chunkId());
-                if (chunk == null) {
+                if (chunk == null || !metadataFilter.matches(chunk, plan)) {
                     continue;
                 }
                 KnowledgeCandidate candidate = new KnowledgeCandidate(chunk);

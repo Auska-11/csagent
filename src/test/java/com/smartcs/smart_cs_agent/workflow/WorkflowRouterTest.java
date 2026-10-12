@@ -9,6 +9,7 @@ import com.smartcs.smart_cs_agent.workflow.api.RoutingContext;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowDecision;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowDescriptor;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowMatchResult;
+import com.smartcs.smart_cs_agent.workflow.api.WorkflowEligibilityPolicy;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRegistry;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRouteResult;
@@ -139,14 +140,55 @@ class WorkflowRouterTest {
         assertTrue(error.getMessage().contains("Duplicate Workflow id"));
     }
 
+    @Test
+    void deniedWorkflowMustNotBeScoredOrResumed() {
+        AtomicInteger matchCalls = new AtomicInteger();
+        StubWorkflow blocked = new StubWorkflow("blocked", 100, 1.0, matchCalls);
+        StubWorkflow generic = new StubWorkflow("generic", 10, 0.5);
+        WorkflowEligibilityPolicy policy = (workflow, context) ->
+                !"blocked".equals(workflow.descriptor().getId());
+        WorkflowRouter router = router(List.of(blocked, generic), "generic", 0.25, List.of(policy));
+        ChatRequest request = new ChatRequest("conv-policy", "USER-001", "办理业务");
+        ConversationState state = new ConversationState("办理业务", "USER-001");
+
+        assertEquals("generic", router.route(request, state).getSelectedWorkflow().descriptor().getId());
+        state.startOrResumeWorkflow("blocked", "1.0.0");
+        state.markWorkflowWaiting();
+        WorkflowRouteResult resumed = router.route(request, state);
+        assertFalse(resumed.isResumed());
+        assertEquals("generic", resumed.getSelectedWorkflow().descriptor().getId());
+        assertEquals(0, matchCalls.get());
+        assertEquals(1, resumed.getCandidates().size());
+    }
+
+    @Test
+    void everyPolicyMustAllowWorkflowAndFallbackCannotBypassRestrictions() {
+        StubWorkflow generic = new StubWorkflow("generic", 10, 0.1);
+        List<WorkflowEligibilityPolicy> policies = List.of(
+                (workflow, context) -> true,
+                (workflow, context) -> false);
+        WorkflowRouter router = router(List.of(generic), "generic", 0.5, policies);
+        ConversationState state = new ConversationState("不明确", "USER-001");
+        assertThrows(IllegalStateException.class, () -> router.route(
+                new ChatRequest("conv-blocked-fallback", "USER-001", "不明确"), state));
+        assertFalse(state.hasActiveNonTerminalWorkflow());
+    }
+
     private WorkflowRouter router(List<AgentWorkflow> workflows,
                                   String fallbackId,
                                   double minimumScore) {
+        return router(workflows, fallbackId, minimumScore, List.of());
+    }
+
+    private WorkflowRouter router(List<AgentWorkflow> workflows,
+                                  String fallbackId,
+                                  double minimumScore,
+                                  List<WorkflowEligibilityPolicy> policies) {
         WorkflowRegistry registry = new WorkflowRegistry(workflows, List.of());
         WorkflowRouterProperties properties = new WorkflowRouterProperties();
         properties.setFallbackWorkflowId(fallbackId);
         properties.setMinimumScore(minimumScore);
-        return new WorkflowRouter(registry, properties, new GlobalInterruptPolicy());
+        return new WorkflowRouter(registry, properties, new GlobalInterruptPolicy(), policies);
     }
 
     private static class StubWorkflow implements AgentWorkflow {

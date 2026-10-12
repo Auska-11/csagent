@@ -54,7 +54,8 @@ public class MarkdownKnowledgeDocumentLoader {
                 metadata.getOrDefault("productmodel", ""),
                 metadata.getOrDefault("source", "classpath:/knowledge/" + pathId),
                 metadata.getOrDefault("version", ""),
-                parseDate(metadata.get("effectivedate"))
+                parseDate(metadata.get("effectivedate")),
+                metadata.getOrDefault("channel", "")
         );
     }
 

@@ -17,6 +17,7 @@ import com.smartcs.smart_cs_agent.workflow.api.RoutingContext;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowDecision;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowMatchResult;
 import com.smartcs.smart_cs_agent.workflow.bargain.BargainWorkflow;
+import com.smartcs.smart_cs_agent.testing.XianyuTestSupport;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRegistry;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRouter;
@@ -74,7 +75,7 @@ class XianyuSoldGuardIntegrationTest {
             PriceRange.of(new BigDecimal("265")),
             0,
             "森海塞尔 MOMENTUM 2 代头戴式蓝牙耳机。",
-            "功能未测试；使用痕迹"
+            "功能未测试；使用痕迹", "headphones", "MOMENTUM 2", ""
     );
 
     private static final ItemFacts IN_STOCK_FACTS = new ItemFacts(
@@ -83,7 +84,7 @@ class XianyuSoldGuardIntegrationTest {
             PriceRange.of(new BigDecimal("265")),
             1,
             "森海塞尔 MOMENTUM 2 代头戴式蓝牙耳机。",
-            "功能未测试；使用痕迹"
+            "功能未测试；使用痕迹", "headphones", "MOMENTUM 2", ""
     );
 
     @Test
@@ -233,8 +234,8 @@ class XianyuSoldGuardIntegrationTest {
         assertEquals("troubleshooting", routedWorkflow(response),
                 "售后求助必须照常路由排查，不因已售一律回售出");
         assertFalse(response.getReply().contains("售出"));
-        assertTrue(response.getReply().contains("排查"), "排查流程照常追问: "
-                + response.getReply());
+        // With channel-scoped guidance available, this path now reaches the fixed LLM fixture instead of asking for missing evidence.
+        assertEquals(DRIFTING_REPLY, response.getReply(), "已有排查证据时，已售状态不能阻断故障求助的模型步骤");
     }
 
     @Test
@@ -278,7 +279,7 @@ class XianyuSoldGuardIntegrationTest {
     }
 
     private TestFixture fixture(StubItemFactService factService, XianyuScenarioProperties scenario) {
-        BargainWorkflow bargain = new BargainWorkflow(new GlobalInterruptPolicy(), factService, scenario);
+        BargainWorkflow bargain = new BargainWorkflow(new GlobalInterruptPolicy(), factService, XianyuTestSupport.sellerRules(scenario));
         GeneralCustomerServiceWorkflow fallback = new GeneralCustomerServiceWorkflow(factService);
         ProductAdvisoryWorkflow advisory = new ProductAdvisoryWorkflow(
                 new GlobalInterruptPolicy(), new com.smartcs.smart_cs_agent.memory.UserMemoryStore(), factService);
@@ -289,7 +290,8 @@ class XianyuSoldGuardIntegrationTest {
         WorkflowRouterProperties routerProperties = new WorkflowRouterProperties();
         routerProperties.setFallbackWorkflowId(fallback.descriptor().getId());
         WorkflowRouter router = new WorkflowRouter(
-                registry, routerProperties, new GlobalInterruptPolicy(), factService, scenario);
+                registry, routerProperties, new GlobalInterruptPolicy(),
+                List.of(new XianyuWorkflowEligibilityPolicy(factService, scenario)));
 
         SkillConfig skillConfig = new SkillConfig() {
             @Override
@@ -303,7 +305,7 @@ class XianyuSoldGuardIntegrationTest {
         var runtime = new com.smartcs.smart_cs_agent.agent.AgentRuntime(
                 skillManager,
                 WorkflowTestSupport.actionHandlerRegistry(
-                        skillManager, new FixedReplyChatLanguageModel(), WorkflowTestSupport.localCapabilityGateway()));
+                        skillManager, new FixedReplyChatLanguageModel(), WorkflowTestSupport.localCapabilityGateway(factService)));
         ConversationStore conversationStore = new ConversationStore(new InMemorySessionStore());
         var agent = new CustomerServiceAgent(runtime, conversationStore);
         return new TestFixture(agent, conversationStore);
@@ -348,7 +350,7 @@ class XianyuSoldGuardIntegrationTest {
         private ItemFacts facts;
 
         StubItemFactService(ItemFacts facts) {
-            super(null, new XianyuSidecarProperties());
+            super(null, null, new XianyuSidecarProperties());
             this.facts = facts;
         }
 

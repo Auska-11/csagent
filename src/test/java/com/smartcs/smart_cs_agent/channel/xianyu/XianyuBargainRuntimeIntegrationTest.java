@@ -18,6 +18,7 @@ import com.smartcs.smart_cs_agent.workflow.api.RoutingContext;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowDecision;
 import com.smartcs.smart_cs_agent.workflow.api.WorkflowMatchResult;
 import com.smartcs.smart_cs_agent.workflow.bargain.BargainWorkflow;
+import com.smartcs.smart_cs_agent.testing.XianyuTestSupport;
 import com.smartcs.smart_cs_agent.workflow.core.GlobalInterruptPolicy;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRegistry;
 import com.smartcs.smart_cs_agent.workflow.core.WorkflowRouter;
@@ -301,7 +302,7 @@ class XianyuBargainRuntimeIntegrationTest {
                                 XianyuScenarioProperties scenario,
                                 InMemorySessionStore sessionStore,
                                 StubItemFactService factService) {
-        BargainWorkflow bargain = new BargainWorkflow(new GlobalInterruptPolicy(), factService, scenario);
+        BargainWorkflow bargain = new BargainWorkflow(new GlobalInterruptPolicy(), factService, XianyuTestSupport.sellerRules(scenario));
         GeneralCustomerServiceWorkflow fallback = new GeneralCustomerServiceWorkflow();
 
         WorkflowRegistry registry = new WorkflowRegistry(
@@ -309,7 +310,8 @@ class XianyuBargainRuntimeIntegrationTest {
         WorkflowRouterProperties routerProperties = new WorkflowRouterProperties();
         routerProperties.setFallbackWorkflowId(fallback.descriptor().getId());
         WorkflowRouter router = new WorkflowRouter(
-                registry, routerProperties, new GlobalInterruptPolicy(), factService, scenario);
+                registry, routerProperties, new GlobalInterruptPolicy(),
+                List.of(new XianyuWorkflowEligibilityPolicy(factService, scenario)));
 
         SkillConfig skillConfig = new SkillConfig() {
             @Override
@@ -357,7 +359,7 @@ class XianyuBargainRuntimeIntegrationTest {
         private ItemFacts facts;
 
         StubItemFactService(ItemFacts facts) {
-            super(null, new XianyuSidecarProperties());
+            super(null, null, new XianyuSidecarProperties());
             this.facts = facts;
         }
 

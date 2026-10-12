@@ -1,6 +1,7 @@
 package com.smartcs.smart_cs_agent.eval.baseline;
 
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -18,6 +19,7 @@ import java.nio.charset.StandardCharsets;
  * 模型——这正是对照实验要测量的差异（提示纪律 vs 结构强制），不是基线的缺陷。</p>
  */
 @Component
+@ConditionalOnProperty(name = "smartcs.eval.baseline.enabled", havingValue = "true")
 public class BaselineSystemPrompt {
 
     private static final String[] POLICY_RESOURCES = {

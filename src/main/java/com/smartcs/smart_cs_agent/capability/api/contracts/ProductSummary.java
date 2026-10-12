@@ -1,5 +1,6 @@
 package com.smartcs.smart_cs_agent.capability.api.contracts;
 
+import java.math.BigDecimal;
 import java.util.Map;
 
 /**
@@ -12,7 +13,7 @@ public final class ProductSummary {
 
     private final String productId;
     private final String name;
-    private final int price;
+    private final BigDecimal price;
     private final int stock;
     private final String description;
 
@@ -21,10 +22,14 @@ public final class ProductSummary {
                           int price,
                           int stock,
                           String description) {
+        this(productId, name, BigDecimal.valueOf(price), stock, description);
+    }
+
+    public ProductSummary(String productId, String name, BigDecimal price, int stock, String description) {
         this.productId = safeText(productId);
         this.name = safeText(name);
-        this.price = Math.max(0, price);
-        this.stock = Math.max(0, stock);
+        this.price = price == null || price.signum() <= 0 ? null : price;
+        this.stock = Math.max(-1, stock);
         this.description = safeText(description);
     }
 
@@ -36,7 +41,7 @@ public final class ProductSummary {
         return new ProductSummary(
                 text(map, "product_id", "productId"),
                 text(map, "name"),
-                integer(map, "price"),
+                decimal(map.get("price")),
                 integer(map, "stock"),
                 text(map, "description", "desc")
         );
@@ -50,7 +55,7 @@ public final class ProductSummary {
         return name;
     }
 
-    public int getPrice() {
+    public BigDecimal getPrice() {
         return price;
     }
 
@@ -76,18 +81,31 @@ public final class ProductSummary {
         return "";
     }
 
+    public String displayPrice() {
+        return price == null ? "以商品页为准" : price.stripTrailingZeros().toPlainString() + " 元";
+    }
+
+    public String displayStock() {
+        return stock < 0 ? "待卖家确认" : stock == 0 ? "暂时无货" : stock + " 件";
+    }
+
+    private static BigDecimal decimal(Object value) {
+        try { return value == null ? null : new BigDecimal(value.toString()); }
+        catch (NumberFormatException invalid) { return null; }
+    }
+
     private static int integer(Map<?, ?> map, String key) {
         Object value = map.get(key);
         if (value instanceof Number number) {
             return number.intValue();
         }
         if (value == null) {
-            return 0;
+            return -1;
         }
         try {
             return Integer.parseInt(value.toString());
         } catch (NumberFormatException ignored) {
-            return 0;
+            return -1;
         }
     }
 

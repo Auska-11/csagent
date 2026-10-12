@@ -1,5 +1,8 @@
 package com.smartcs.smart_cs_agent.agent.context;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import com.smartcs.smart_cs_agent.observability.trace.TraceDataSanitizer;
 
 import java.util.Map;
@@ -40,7 +43,12 @@ public class TraceEvent {
         this(eventType, step, message, data, System.currentTimeMillis());
     }
 
-    public TraceEvent(String eventType, int step, String message, Map<String, Object> data, long timestamp) {
+    @JsonCreator
+    public TraceEvent(@JsonProperty("eventType") String eventType,
+                      @JsonProperty("step") int step,
+                      @JsonProperty("message") String message,
+                      @JsonProperty("data") Map<String, Object> data,
+                      @JsonProperty("timestamp") long timestamp) {
         this.eventType = eventType;
         this.step = step;
         this.message = TraceDataSanitizer.sanitizeMessage(message);

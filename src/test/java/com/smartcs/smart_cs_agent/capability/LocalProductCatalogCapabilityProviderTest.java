@@ -12,6 +12,7 @@ import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSummary;
 import com.smartcs.smart_cs_agent.capability.core.DefaultCapabilityGateway;
 import com.smartcs.smart_cs_agent.capability.local.LocalProductCatalogCapabilityProvider;
 import com.smartcs.smart_cs_agent.channel.xianyu.XianyuSidecarProperties;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuItemFactService;
 import com.smartcs.smart_cs_agent.repository.ProductRepository;
 import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
 import org.junit.jupiter.api.Test;
@@ -37,7 +38,7 @@ class LocalProductCatalogCapabilityProviderTest {
                 definitions.stream().map(CapabilityDefinition::getId).toList()
         );
         for (CapabilityDefinition definition : definitions) {
-            assertEquals("1.0.0", definition.getVersion());
+            assertEquals("2.0.0", definition.getVersion());
             assertFalse(definition.isRequiresIdentity());
             assertFalse(definition.isRequiresAuthentication());
             assertFalse(definition.isSideEffect());
@@ -83,7 +84,7 @@ class LocalProductCatalogCapabilityProviderTest {
         ProductSummary product = (ProductSummary) found.getData();
         assertTrue(found.isSuccess());
         assertEquals("PROD-002", product.getProductId());
-        assertEquals(1299, product.getPrice());
+        assertEquals(new java.math.BigDecimal("1299"), product.getPrice());
         assertEquals(CapabilityOutcome.BUSINESS_REJECTED, missing.getOutcome());
         assertEquals("PRODUCT_NOT_FOUND", missing.getErrorCode());
         assertNull(missing.getData());
@@ -92,8 +93,7 @@ class LocalProductCatalogCapabilityProviderTest {
     private LocalProductCatalogCapabilityProvider provider() {
         return new LocalProductCatalogCapabilityProvider(
                 new ProductRepository(),
-                new KnowledgeTools(List.of()),
-                new XianyuSidecarProperties()
+                org.mockito.Mockito.mock(XianyuItemFactService.class)
         );
     }
 

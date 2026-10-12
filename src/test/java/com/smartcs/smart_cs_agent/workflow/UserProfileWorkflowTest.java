@@ -88,7 +88,7 @@ class UserProfileWorkflowTest {
 
         assertTrue(profile.getAnswer().contains("需要先登录"));
         assertTrue(preference.getAnswer().contains("需要先登录"));
-        assertFalse(userMemoryStore.getSnapshot("USER-001").hasProductPreferences());
+        assertFalse(userMemoryStore.getSnapshot("default", "USER-001").hasProductPreferences());
     }
 
     @Test
@@ -103,7 +103,7 @@ class UserProfileWorkflowTest {
         assertTrue(written.getAnswer().contains("记住了"));
         assertEquals(
                 "蓝牙耳机",
-                userMemoryStore.getSnapshot("USER-001").getProductPreferences().get(0)
+                userMemoryStore.getSnapshot("default", "USER-001").getProductPreferences().get(0)
         );
         assertTrue(writeTurn.getTraceEvents().stream()
                 .anyMatch(event -> "user_memory_updated".equals(event.getEventType())));
@@ -138,7 +138,7 @@ class UserProfileWorkflowTest {
     @Test
     void shouldRejectSensitiveOnlyPreferenceWithoutWritingOrTracingIt() {
         UserMemoryStore rejectingStore = mock(UserMemoryStore.class);
-        when(rejectingStore.rememberProductPreferenceSafely(anyString(), anyString()))
+        when(rejectingStore.rememberProductPreferenceSafely(anyString(), anyString(), anyString()))
                 .thenReturn(UserMemoryWriteResult.rejected());
         UserProfileWorkflow rejectingWorkflow = new UserProfileWorkflow(
                 new GlobalInterruptPolicy(),
@@ -154,7 +154,7 @@ class UserProfileWorkflowTest {
 
         assertTrue(answer.getQuestion().contains("保护隐私"));
         assertFalse(answer.getQuestion().contains("13800138000"));
-        verify(rejectingStore, never()).getSnapshot(anyString());
+        verify(rejectingStore, never()).getSnapshot(anyString(), anyString());
         assertTrue(context.getTraceEvents().stream()
                 .noneMatch(event -> event.toString().contains("13800138000")));
     }

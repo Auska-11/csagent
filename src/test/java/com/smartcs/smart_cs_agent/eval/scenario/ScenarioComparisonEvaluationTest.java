@@ -40,6 +40,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 由 M4 真实模型跑批生成，本测试落盘的 scenario-comparison 报告用于验证管道与结构。</p>
  */
 @SpringBootTest(properties = {
+        "smartcs.eval.baseline.enabled=true",
+        "smartcs.persistence.mode=memory",
+        "smartcs.capability.provider-mode=local",
+        "smartcs.handoff.mode=memory",
         "smartcs.llm.execution.call-timeout-ms=600",
         "smartcs.security.demo-issuer-enabled=true",
         "smartcs.security.jwt-secret=test-only-smart-cs-jwt-secret-32-bytes-ok"

@@ -75,6 +75,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </pre>
  */
 @SpringBootTest(properties = {
+        "smartcs.eval.baseline.enabled=true",
+        "smartcs.persistence.mode=memory",
+        "smartcs.capability.provider-mode=local",
+        "smartcs.handoff.mode=memory",
         "smartcs.security.demo-issuer-enabled=true",
         "smartcs.security.jwt-secret=test-only-smart-cs-jwt-secret-32-bytes-ok"
 })

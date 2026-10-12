@@ -130,6 +130,7 @@ public class QdrantKnowledgeVectorStore implements KnowledgeVectorStore {
         payload.put("chunkId", chunk.chunkId());
         payload.put("knowledgeType", chunk.knowledgeType().name());
         payload.put("category", chunk.category());
+        payload.put("channel", chunk.channel());
         payload.put("productCategory", chunk.productCategory());
         payload.put("productModel", chunk.productModel());
         payload.put("title", chunk.title());
@@ -146,9 +147,10 @@ public class QdrantKnowledgeVectorStore implements KnowledgeVectorStore {
             return Map.of();
         }
         List<Map<String, Object>> must = new ArrayList<>();
+        must.add(Map.of("key", "channel", "match", Map.of("value", filter.channel())));
         addMatch(must, "knowledgeType", filter.knowledgeType() == null ? "" : filter.knowledgeType().name());
         addMatch(must, "productCategory", filter.productCategory());
-        addMatch(must, "productModel", filter.productModel());
+        // Generic guidance has an empty model. The shared post-filter checks exact models and generic guidance alike.
         addMatch(must, "version", filter.version());
         return must.isEmpty() ? Map.of() : Map.of("must", must);
     }

@@ -16,9 +16,15 @@ public record KnowledgeChunk(
         String version,
         LocalDate effectiveDate,
         String content,
-        List<String> keywords
+        List<String> keywords,
+        String channel
 ) {
+    public KnowledgeChunk(String documentId, String chunkId, KnowledgeType knowledgeType, String category, String productCategory, String productModel, String title, String source, String version, LocalDate effectiveDate, String content, List<String> keywords) {
+        this(documentId, chunkId, knowledgeType, category, productCategory, productModel, title, source, version, effectiveDate, content, keywords, "");
+    }
+
     public KnowledgeChunk {
+        channel = channel == null ? "" : channel.trim().toLowerCase(java.util.Locale.ROOT);
         documentId = safe(documentId);
         chunkId = safe(chunkId);
         knowledgeType = knowledgeType == null ? KnowledgeType.POLICY : knowledgeType;

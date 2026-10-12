@@ -11,6 +11,7 @@ import com.smartcs.smart_cs_agent.agent.context.AuthenticatedPrincipal;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -31,6 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 会把只有 CUSTOMER 角色的 persona（USER-002）挡在外面，破坏对照实验的身份公平性。</p>
  */
 @RestController
+@ConditionalOnProperty(name = "smartcs.eval.baseline.enabled", havingValue = "true")
 @RequestMapping("/api/chat/baseline")
 public class BaselineChatController {
 

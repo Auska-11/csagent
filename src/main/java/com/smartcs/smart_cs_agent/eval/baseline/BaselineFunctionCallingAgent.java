@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartcs.smart_cs_agent.agent.context.ChatRequest;
 import com.smartcs.smart_cs_agent.agent.context.ChatResponse;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
 import com.smartcs.smart_cs_agent.agent.context.ExecutionContext;
 import com.smartcs.smart_cs_agent.agent.context.TraceEvent;
 import com.smartcs.smart_cs_agent.agent.llm.LlmExecutionGuard;
@@ -19,6 +20,7 @@ import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -49,6 +51,7 @@ import java.util.UUID;
  * </ul></p>
  */
 @Component
+@ConditionalOnProperty(name = "smartcs.eval.baseline.enabled", havingValue = "true")
 public class BaselineFunctionCallingAgent {
 
     /** 无响应文本时的兜底回复；模型返回空轮（既无文本也无工具调用）视为失败。 */
@@ -71,9 +74,18 @@ public class BaselineFunctionCallingAgent {
                                         BaselineSystemPrompt systemPrompt,
                                         BaselineConversationStore conversationStore,
                                         @Value("${smartcs.eval.baseline.turn-budget-ms:30000}") long turnBudgetMs,
-                                        @Value("${smartcs.eval.baseline.max-iterations:8}") int maxIterations) {
+                                        @Value("${smartcs.eval.baseline.max-iterations:8}") int maxIterations,
+                                        @Value("${smartcs.persistence.mode:memory}") String persistenceMode,
+                                        @Value("${smartcs.capability.provider-mode:local}") String providerMode,
+                                        @Value("${smartcs.handoff.mode:memory}") String handoffMode) {
         if (turnBudgetMs <= 0 || maxIterations <= 0) {
             throw new IllegalArgumentException("Baseline turn-budget-ms and max-iterations must be positive");
+        }
+        if (!"memory".equals(persistenceMode) || !"local".equals(providerMode)
+                || !"memory".equals(handoffMode)) {
+            throw new IllegalStateException("Baseline experiments require persistence.mode=memory, "
+                    + "capability.provider-mode=local and handoff.mode=memory; "
+                    + "run experiments in a separate process with isolated demo data");
         }
         this.chatModel = chatModel;
         this.executionGuard = executionGuard;
@@ -88,6 +100,7 @@ public class BaselineFunctionCallingAgent {
     public ChatResponse chat(ChatRequest request) {
         List<TraceEvent> trace = new ArrayList<>();
         String conversationId = request.getConversationId();
+        ConversationKey conversationKey = ConversationKey.from(request);
         long deadlineNanos = System.nanoTime() + turnBudgetMs * 1_000_000L;
 
         trace.add(new TraceEvent("turn_started", 0, "基线单循环处理用户消息", Map.of(
@@ -96,8 +109,8 @@ public class BaselineFunctionCallingAgent {
         )));
 
         // 全量历史策略：system prompt 不入库，每次调用时拼在最前。
-        conversationStore.append(conversationId, UserMessage.from(request.getMessage()));
-        List<ChatMessage> history = conversationStore.historyOf(conversationId);
+        conversationStore.append(conversationKey, UserMessage.from(request.getMessage()));
+        List<ChatMessage> history = conversationStore.historyOf(conversationKey);
 
         List<ToolSpecification> tools = toolCatalog.toolSpecifications();
         List<ChatMessage> messages = new ArrayList<>();
@@ -133,7 +146,7 @@ public class BaselineFunctionCallingAgent {
                 String reply = aiMessage.text() == null || aiMessage.text().isBlank()
                         ? "（模型未返回内容）"
                         : aiMessage.text();
-                conversationStore.append(conversationId, AiMessage.from(reply));
+                conversationStore.append(conversationKey, AiMessage.from(reply));
                 trace.add(new TraceEvent("final_answer", iteration, "基线生成最终回复", Map.of(
                         "iterations", iteration,
                         "replyPreview", preview(reply, 160)
@@ -143,12 +156,12 @@ public class BaselineFunctionCallingAgent {
 
             // 模型请求工具：把 AI 消息入列，逐个执行，结果以 Tool 消息回填，继续下一轮生成。
             messages.add(aiMessage);
-            conversationStore.append(conversationId, aiMessage);
+            conversationStore.append(conversationKey, aiMessage);
             for (ToolExecutionRequest toolRequest : aiMessage.toolExecutionRequests()) {
                 ToolExecutionResultMessage resultMessage = executeToolCall(
                         request, conversationId, iteration, toolRequest, trace);
                 messages.add(resultMessage);
-                conversationStore.append(conversationId, resultMessage);
+                conversationStore.append(conversationKey, resultMessage);
             }
         }
 

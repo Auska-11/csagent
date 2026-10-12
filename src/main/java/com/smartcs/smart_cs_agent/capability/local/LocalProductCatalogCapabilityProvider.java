@@ -9,16 +9,14 @@ import com.smartcs.smart_cs_agent.capability.api.CapabilityResult;
 import com.smartcs.smart_cs_agent.capability.api.CapabilityRiskLevel;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSearchResult;
 import com.smartcs.smart_cs_agent.capability.api.contracts.ProductSummary;
-import com.smartcs.smart_cs_agent.channel.xianyu.XianyuSidecarProperties;
+import com.smartcs.smart_cs_agent.channel.xianyu.XianyuItemFactService;
 import com.smartcs.smart_cs_agent.model.Product;
 import com.smartcs.smart_cs_agent.repository.ProductRepository;
-import com.smartcs.smart_cs_agent.tools.KnowledgeTools;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -26,7 +24,7 @@ import java.util.Map;
  *
  * <p>职责：把商品数据源转换为稳定 ProductSummary/ProductSearchResult。数据源按租户选择：
  * 演示租户读 ProductRepository 种子数据；闲鱼租户读审校入库的商品知识文档
- * （{@link XianyuKnowledgeProductCatalog}），避免把演示目录的价格报给真实买家。</p>
+ * （{@link XianyuProductCatalog}），避免把演示目录的价格报给真实买家。</p>
  *
  * <p>不负责：不判断用户是不是在询价、不读取用户偏好、不组织客服话术。这些属于 Workflow。</p>
  */
@@ -37,16 +35,15 @@ public class LocalProductCatalogCapabilityProvider implements CapabilityProvider
     public static final String PROVIDER_ID = "local-product-catalog";
 
     private final ProductRepository productRepository;
-    private final XianyuSidecarProperties xianyuProperties;
-    private final XianyuKnowledgeProductCatalog xianyuCatalog;
+    private final XianyuItemFactService facts;
+    private final XianyuProductCatalog xianyuCatalog;
     private final List<CapabilityDefinition> definitions;
 
     public LocalProductCatalogCapabilityProvider(ProductRepository productRepository,
-                                                 KnowledgeTools knowledgeTools,
-                                                 XianyuSidecarProperties xianyuProperties) {
+                                                 XianyuItemFactService facts) {
         this.productRepository = productRepository;
-        this.xianyuProperties = xianyuProperties;
-        this.xianyuCatalog = new XianyuKnowledgeProductCatalog(knowledgeTools);
+        this.facts = facts;
+        this.xianyuCatalog = new XianyuProductCatalog(facts);
         this.definitions = List.of(searchDefinition(), lookupDefinition());
     }
 
@@ -131,10 +128,7 @@ public class LocalProductCatalogCapabilityProvider implements CapabilityProvider
 
     /** 闲鱼租户名来自 smartcs.xianyu.tenant-id，与买家 JWT 的 tenant_id 同源。 */
     private boolean isXianyuTenant(ExecutionContext context) {
-        String tenantId = context.getTenantId();
-        return tenantId != null
-                && !tenantId.isBlank()
-                && xianyuProperties.getTenantId().equalsIgnoreCase(tenantId.trim().toLowerCase(Locale.ROOT));
+        return facts.isXianyuTenant(context.getTenantId());
     }
 
     private ProductSummary toSummary(Product product) {
@@ -155,7 +149,7 @@ public class LocalProductCatalogCapabilityProvider implements CapabilityProvider
     private CapabilityDefinition searchDefinition() {
         return new CapabilityDefinition(
                 CapabilityIds.PRODUCT_SEARCH,
-                "1.0.0",
+                "2.0.0",
                 "按关键词搜索商品；空关键词表示列出全部商品",
                 Map.of(
                         "type", "object",
@@ -176,7 +170,7 @@ public class LocalProductCatalogCapabilityProvider implements CapabilityProvider
     private CapabilityDefinition lookupDefinition() {
         return new CapabilityDefinition(
                 CapabilityIds.PRODUCT_LOOKUP,
-                "1.0.0",
+                "2.0.0",
                 "查询单个商品的价格、库存和描述",
                 Map.of(
                         "type", "object",
@@ -212,7 +206,7 @@ public class LocalProductCatalogCapabilityProvider implements CapabilityProvider
                 "properties", Map.of(
                         "product_id", Map.of("type", "string"),
                         "name", Map.of("type", "string"),
-                        "price", Map.of("type", "integer"),
+                        "price", Map.of("type", List.of("number", "null")),
                         "stock", Map.of("type", "integer"),
                         "description", Map.of("type", "string")
                 )

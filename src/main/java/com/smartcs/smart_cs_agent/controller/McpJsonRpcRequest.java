@@ -21,8 +21,9 @@ import java.util.Map;
  */
 public class McpJsonRpcRequest {
 
-    private String jsonrpc = "2.0";
+    private String jsonrpc;
     private Object id;
+    private boolean idPresent;
     private String method;
     private Map<String, Object> params = Collections.emptyMap();
 
@@ -40,6 +41,12 @@ public class McpJsonRpcRequest {
 
     public void setId(Object id) {
         this.id = id;
+        this.idPresent = true;
+    }
+
+    /** 显式 id:null 仍是请求；只有省略 id 才是 JSON-RPC notification。 */
+    public boolean hasId() {
+        return idPresent;
     }
 
     public String getMethod() {

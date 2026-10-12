@@ -41,7 +41,8 @@ public class KnowledgeChunker {
                     document.getVersion(),
                     document.getEffectiveDate(),
                     section.content(),
-                    keywords
+                    keywords,
+                    document.getChannel()
             ));
         }
         return List.copyOf(chunks);
@@ -82,6 +83,7 @@ public class KnowledgeChunker {
     private boolean isFrontMatterLine(String line) {
         String normalized = line.toLowerCase(Locale.ROOT);
         return line.equals("---")
+                || normalized.startsWith("channel:")
                 || normalized.startsWith("documentid:")
                 || normalized.startsWith("knowledgetype:")
                 || normalized.startsWith("productcategory:")

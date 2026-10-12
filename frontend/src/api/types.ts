@@ -1,6 +1,8 @@
 export type Role = 'CUSTOMER' | 'ADMIN' | 'MCP_CLIENT';
 
 export interface DemoIdentity {
+  tenantId?: string;
+  channel?: string;
   userId: string;
   name: string;
   token: string;

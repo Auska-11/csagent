@@ -1,5 +1,8 @@
 package com.smartcs.smart_cs_agent.agent.context;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.List;
 
 /**
@@ -49,10 +52,20 @@ public class ChatResponse {
                         String reply,
                         List<TraceEvent> trace,
                         boolean handoffRequested) {
+        this(conversationId, userId, reply, trace, handoffRequested, System.currentTimeMillis());
+    }
+
+    @JsonCreator
+    public ChatResponse(@JsonProperty("conversationId") String conversationId,
+                        @JsonProperty("userId") String userId,
+                        @JsonProperty("reply") String reply,
+                        @JsonProperty("trace") List<TraceEvent> trace,
+                        @JsonProperty("handoffRequested") boolean handoffRequested,
+                        @JsonProperty("timestamp") long timestamp) {
         this.conversationId = conversationId;
         this.userId = userId;
         this.reply = reply;
-        this.timestamp = System.currentTimeMillis();
+        this.timestamp = timestamp;
         this.trace = trace == null ? List.of() : List.copyOf(trace);
         this.handoffRequested = handoffRequested;
     }

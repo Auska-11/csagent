@@ -35,7 +35,8 @@ public class KnowledgeQueryPlanner {
                 model,
                 profile.version(),
                 rewrite.variants(),
-                rewrite.terms()
+                rewrite.terms(),
+                profile.channel()
         );
     }
 

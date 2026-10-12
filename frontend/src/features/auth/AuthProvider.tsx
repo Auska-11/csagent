@@ -12,6 +12,7 @@ interface AuthContextValue {
   requestSignal: AbortSignal;
   selectIdentity: (userId: string) => void;
   refresh: () => Promise<void>;
+  loginWithToken: (token: string) => Promise<boolean>;
   hasRole: (role: Role) => boolean;
 }
 
@@ -31,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const requestController = useRef(new AbortController());
   const identitiesRef = useRef<DemoIdentity[]>([]);
   const selectedUserIdRef = useRef<string | null>(null);
+  const externalToken = useRef<string | null>(null);
   const refreshPromise = useRef<Promise<void> | null>(null);
 
   const resetRequestScope = useCallback(() => {
@@ -47,8 +49,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
     const request = (async () => {
       try {
-        const nextIdentities = await authApi.issueDemoTokens();
-        if (!nextIdentities.length) throw new Error('Demo 身份列表为空');
+        const token = externalToken.current;
+        const nextIdentities = token ? [{ ...(await authApi.me(token)), token }] : await authApi.issueDemoTokens();
+        if (!nextIdentities.length) throw new Error('可用身份列表为空');
+        if (token && nextIdentities[0]!.expiresAt <= Date.now()) throw new Error('凭据已过期，请重新登录');
         const currentUserId = selectedUserIdRef.current;
         const nextUserId = currentUserId && nextIdentities.some((item) => item.userId === currentUserId)
           ? currentUserId
@@ -61,17 +65,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSelectedUserId(nextUserId);
         setRefreshRetryAt(0);
       } catch (requestError) {
-        if (!hadSession) {
+        if (!hadSession || externalToken.current) {
           resetRequestScope();
           identitiesRef.current = [];
           selectedUserIdRef.current = null;
           setIdentities([]);
           setSelectedUserId(null);
         }
-        setError(requestError instanceof ApiError && requestError.status === 404
+        setError(externalToken.current ? toErrorMessage(requestError, '凭据无效或已过期，请重新登录') : requestError instanceof ApiError && requestError.status === 404
           ? '本地 Demo 登录未启用，需要接入真实身份系统'
           : toErrorMessage(requestError, '无法取得 Demo 登录凭据'));
-        if (hadSession && !(requestError instanceof ApiError && requestError.status === 404)) {
+        if (hadSession && !externalToken.current && !(requestError instanceof ApiError && requestError.status === 404)) {
           setRefreshRetryAt(Date.now() + 10_000);
         }
       } finally {
@@ -94,7 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!identity) return;
-    const refreshIn = isIdentityExpired(identity)
+    const refreshIn = externalToken.current ? Math.max(0, identity.expiresAt - Date.now()) : isIdentityExpired(identity)
       ? 0
       : identity.expiresAt - Date.now() - 30_000;
     const timer = window.setTimeout(() => void refresh(), refreshIn);
@@ -113,6 +117,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('smartcs:unauthorized', handleUnauthorized);
   }, [refresh]);
 
+  const loginWithToken = useCallback(async (token: string) => {
+    if (refreshPromise.current) await refreshPromise.current;
+    externalToken.current = token.trim();
+    resetRequestScope();
+    await refresh();
+    return identitiesRef.current.some((item) => item.token === externalToken.current);
+  }, [refresh, resetRequestScope]);
+
   const selectIdentity = useCallback((userId: string) => {
     if (userId === selectedUserIdRef.current) return;
     resetRequestScope();
@@ -129,9 +141,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       requestSignal: requestController.current.signal,
       selectIdentity,
       refresh,
+      loginWithToken,
       hasRole: (role) => Boolean(identity?.roles.includes(role)),
     }),
-    [error, generation, identities, identity, loading, refresh, selectIdentity],
+    [error, generation, identities, identity, loading, refresh, loginWithToken, selectIdentity],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -206,7 +206,7 @@ class McpCapabilityProviderTest {
         assertEquals(1, products.getCount());
         assertEquals("蓝牙耳机 Pro Max", products.getProducts().get(0).getName());
         assertEquals("PROD-001", product.getProductId());
-        assertEquals(599, product.getPrice());
+        assertEquals(new java.math.BigDecimal("599"), product.getPrice());
     }
 
     @Test

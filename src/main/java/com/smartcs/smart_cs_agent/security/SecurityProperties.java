@@ -17,8 +17,7 @@ public class SecurityProperties {
     /**
      * 仓库里公开可见的开发默认密钥。
      *
-     * <p>任何人在读到源码后都能用它们伪造 JWT，因此“开启 Demo 签发 + 仍是开发默认密钥”
-     * 这个组合必须直接启动失败，而不是带着可伪造的身份体系上线。</p>
+     * <p>已知签名密钥可用于伪造 JWT。无论 Demo 签发器是否开启，都拒绝这些值。</p>
      */
     private static final Set<String> KNOWN_DEV_SECRETS = Set.of(
             "dev-only-smart-cs-agent-change-this-secret-32bytes",
@@ -37,8 +36,8 @@ public class SecurityProperties {
     private String audience = "smart-cs-api";
     private String defaultTenantId = "default";
 
-    /** 仅供本地启动的默认值；部署时必须通过环境变量替换。 */
-    private String jwtSecret = "dev-only-smart-cs-agent-change-this-secret-32bytes";
+    /** 所有启动方式都必须显式提供私有密钥；没有公开开发默认值。 */
+    private String jwtSecret;
 
     private long tokenTtlSeconds = 28_800;
     private long clockSkewSeconds = 30;
@@ -80,7 +79,7 @@ public class SecurityProperties {
     }
 
     public void setJwtSecret(String jwtSecret) {
-        String normalized = requireText("jwtSecret", jwtSecret);
+        String normalized = requireText("SMARTCS_SECURITY_JWT_SECRET", jwtSecret);
         if (normalized.getBytes(StandardCharsets.UTF_8).length < HS256_MIN_SECRET_BYTES) {
             throw new IllegalArgumentException("jwtSecret must contain at least 32 UTF-8 bytes");
         }
@@ -106,19 +105,13 @@ public class SecurityProperties {
         this.clockSkewSeconds = clockSkewSeconds;
     }
 
-    /**
-     * 组合校验：Demo 签发对公网开放时，JWT 密钥绝不能仍是仓库里的开发默认值。
-     *
-     * <p>这是 compose 必填密钥之外的最后一道代码防线：即使有人绕过部署配置直接开
-     * demo-issuer-enabled，只要密钥还是公开已知的开发值，应用就拒绝启动。</p>
-     */
+    /** 裸跑 JAR、IDE 与 Compose 使用相同的启动校验，不能通过关闭签发器绕过。 */
     @PostConstruct
-    void rejectDemoIssuerWithKnownDevSecret() {
-        if (demoIssuerEnabled && KNOWN_DEV_SECRETS.contains(jwtSecret)) {
+    void validateJwtSecret() {
+        if (jwtSecret == null || jwtSecret.isBlank() || KNOWN_DEV_SECRETS.contains(jwtSecret)) {
             throw new IllegalStateException(
-                    "smartcs.security.demo-issuer-enabled=true 会公开签发 JWT，但 jwt-secret 仍是仓库公开的"
-                            + "开发默认值，任何人都能伪造管理员 Token。请设置 SMARTCS_SECURITY_JWT_SECRET"
-                            + " 为至少 32 字节的私有随机密钥，或保持 demo-issuer-enabled=false。"
+                    "请设置 SMARTCS_SECURITY_JWT_SECRET 为至少 32 字节的私有随机密钥；"
+                            + "缺失密钥或使用仓库公开的开发密钥时应用拒绝启动。"
             );
         }
     }

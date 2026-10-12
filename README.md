@@ -1,35 +1,28 @@
-# Smart CS Agent
+# Smart CS Agent｜闲鱼卖家智能客服
 
-Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 Spring Boot 和 LangChain4j 构建。
+面向闲鱼个人卖家的 Java 客服 Agent，支持当前二手商品咨询、受卖家授权约束的多轮议价、交易安排答复、卖家核实与人工接管。Python 侧车承接平台协议，Java 后端负责业务流程、身份权限和回复生成。
 
-这个项目不是简单的“大模型聊天 Demo”，而是把客服 Agent 拆成可解释、可测试、可扩展的任务执行系统：Agent 先判断用户意图，再根据需要追问信息、调用业务能力、检索知识库、生成客服回复，并把每一步执行过程记录到 Trace。
+仓库已有闲鱼真机消息收发记录；2026-10-07 的主线改造完成本地回归，尚未部署或重新连接闲鱼验证。验证范围见 [改造记录](docs/闲鱼主线改造-2026-10-07.md)。
 
-## 当前能力
+## 闲鱼主线能力
 
-- 订单查询：支持指定订单查询、查询当前用户全部订单、缺少订单号时主动追问。
-- 商品咨询：支持商品搜索、价格和库存咨询。
-- 退换货：支持退货进度查询，以及“我要退货 -> 追问订单号 -> 追问原因 -> 提交退货申请”的多轮流程。
-- 多轮记忆：支持短期消息窗口、任务记忆快照、规则摘要压缩；摘要默认限制为 2000 个 Unicode 字符，生成和旧快照恢复时都会脱敏，超限后优先保留最近内容。Trace 会记录 `memory_loaded` / `memory_compressed`，前端 Memory 面板可查看当前会话记忆。
-- 长期用户偏好：支持记录“我喜欢蓝牙耳机”等商品偏好，默认 30 天 TTL，重复表达会刷新有效期；内存实现限制用户总量、每用户偏好数和单条长度，并按用户访问顺序、偏好最后表达顺序淘汰旧数据。手机号、邮箱、证件号、长数字和常见凭据会在写入前脱敏，敏感信息-only 输入不会保存；同时支持查询和清空长期记忆。
-- 知识库问答：政策问题使用字段加权关键词检索、严格阈值和确定性回答；商品使用/故障问题使用关键词与可选 Qdrant 向量混合召回、RRF 去重融合、规则重排和证据约束 LLM 回答。Markdown 按标题切成带类型、品类、型号、来源和版本元数据的 Chunk，统一未命中继续记录 `knowledge_miss`。
-- Multi-Agent 路由：支持把用户消息路由到售前、售后、投诉和通用专家域，并在 Trace 中记录 `agent_routed`。
-- 人工转接：外部调用前先保存租户隔离的 Outbox，支持结果未知、短租约有限恢复和 ADMIN 列表/详情/审计/retry/confirm/reconcile/close；售后平台没有只读幂等查询协议时，reconcile 会安全返回 503，绝不把“查不了”伪装成“不存在”。
-- Agent Trace：接口和前端调试面板可以看到 Action、工具调用、LLM 调用、转人工、耗时等事件。
-- 前端调试工作台：支持多用户会话、典型 Demo 脚本、Trace 过滤/复制、Trace 指标摘要，以及工具 input/output schema 可视化。
-- 评测报告看板：前端 Eval 面板可以展示最新评测概览、历史趋势和核心指标变化。
-- LLM 降级：模型调用失败时不会直接中断接口，会基于工具结构化结果生成模板回复，并记录 `llm_failed` Trace。
-- Capability 与 MCP：统一 `CapabilityDefinition`、输入/输出 schema、三态结果、Gateway 和 Local/MCP Provider；9 个能力由 7 个独立 Local Provider 覆盖，`GET /api/mcp/tools`、`POST /api/mcp/tools/call` 与 `POST /mcp` 共用同一 Catalog 和 Server Adapter。
-- 独立 MCP Server 第一版：`POST /mcp` 支持 `initialize`、`tools/list` 和 `tools/call`；HTTP Client 每次请求使用 MCP_CLIENT Bearer JWT，JSON-RPC body 不再携带身份凭据。
-- 数据库持久化：支持 `memory` / `jdbc` 双模式，默认内存模式保证本地测试和 CI 稳定；`jdbc` 模式内部使用 MyBatis XML Mapper、HikariCP 和 Spring 事务，除业务数据外还持久化会话状态、Capability 幂等与 Handoff Outbox，并为连接、网络读取和 SQL 执行设置明确超时。
-- Capability 执行预算：能力默认超时与上游 deadline 取较早值，Provider 在有界线程池中执行；副作用开始后超时返回并回放 `CAPABILITY_RESULT_UNKNOWN`，不会把“停止等待”误写成“操作肯定失败”。
-- 整轮执行预算：每轮默认同时受 10 个 Action 和 30 秒 wall-clock 约束；LLM 有独立超时、有界线程池和总尝试次数上限，超时或队列饱和时结构化降级。
-- 状态演进：Workflow 私有状态支持按 Workflow ID 注册 `1 -> 2 -> 3` 逐版本迁移链；缺链、重复注册和未来版本都会失败关闭，不在 Runtime、Router 或 Codec 中堆业务分支。
-- 后端联调：`HandoffTools` 支持 `memory` / `after-sales-http` 双模式，可调用独立 `after-sales-sla-platform` 仓库的 `POST /api/tickets` 创建真实售后工单。
-- Monitor 指标与反馈闭环：支持 `GET /api/monitor/summary`、`POST /api/monitor/feedback`、`GET /api/monitor/feedback/candidates`、候选样本审核接口、Eval case 草稿导出接口和半自动合并正式评测集接口，基于 Trace 聚合整体/按工具成功率、LLM 失败率、转人工次数、平均耗时、用户反馈有用率、候选样本审核状态数量和负反馈问题类型分布，并能把无用反馈沉淀成 Eval 待审核候选样本；候选样本会持久化到本地 JSON 文件，服务重启后仍可继续审核；Monitor Summary 会进一步生成结构化风险告警，前端 Monitor 面板可以直接看到工具失败率、LLM 失败率、低有用反馈率、不安全承诺和内部实现泄露等风险。
-- 接口工程化：聊天接口使用明确 DTO、Spring Validation 和统一 `ApiErrorResponse`。
-- 统一认证与 RBAC：Spring Security Resource Server 校验 Bearer JWT 的 HS256 签名、issuer、audience、时间、subject 和 tenant；Chat/Memory、反馈、管理面板与 MCP 使用 CUSTOMER、ADMIN、MCP_CLIENT 角色隔离，未知地址默认拒绝。
-- 部署工程化：支持 Docker 多阶段构建、`docker compose` 一键启动、环境变量注入，并提供独立 liveness/readiness 健康探针。
-- 离线评测：覆盖路由、知识库召回、回复质量规则、Agent 链路回复、LLM-as-Judge 五类评测，并输出 JSON 总览、历史快照和趋势指标。
+- **真实渠道接入与消息处理：** 逐条解析 WebSocket 同步包，先写 SQLite 收件箱再应答；固定数量的工作任务按会话串行处理，卖家指令独立处理。事件 ID 传递到 Java，重复请求回放已保存结果。
+- **当前商品咨询与授权议价：** 精确读取当前商品资料和平台同步的价格、库存；卖家规则控制底价、让价与包邮口径，跨轮确认时复核现势事实和授权，商品售出后停止推进成交。
+- **商品审核：** 平台描述只生成草稿，卖家在工作台核对标题、品类、型号、成色、配件和授权后发布；草稿修改期间继续使用原发布内容，版本冲突返回 409，发布即时生效。
+- **交易安排与人工协作：** 按已发布授权回答发货安排、配件等问题；退货、保修或未核实承诺转卖家确认。暂停后停止自动回复，卖家人工消息同步会话历史，恢复需确认。
+- **知识与事实分离：** 商品价格、库存和成色由事实服务提供；RAG 分别按渠道、品类、型号筛选资料。型号说明不能证明这件二手商品功能正常，未知信息进入澄清或核实流程。
+- **卖家工作台：** `/#/admin/xianyu` 提供商品审核、授权编辑、指定买家/商品会话的暂停与恢复。浏览器使用经后端验证的 ADMIN JWT，服务令牌仅供侧车调用。
+
+## 通用工程能力与商城演示
+
+- Runtime、Workflow、Action Handler、Capability Gateway 分层，Spring 注册业务流程；闲鱼使用流程和能力白名单，新通用能力不会自动进入真实渠道。
+- 会话状态支持 Memory/JDBC、CAS、跨轮恢复和摘要压缩；会话及用户偏好按租户和用户隔离。
+- Capability 统一输入/输出契约，支持 Local/MCP Provider；副作用幂等、执行超时和结果未知有独立处理。人工工单 Outbox 提供有限恢复与 ADMIN 复核。
+- 每轮限制 Action 数和总执行时间，LLM 调用使用有界线程池、超时和有限重试，失败可结构化降级。
+- 知识检索支持关键词与可选 Embedding/Qdrant 混合召回、RRF 融合、规则重排及向量通道降级。
+- Spring Security 校验 JWT 的签名、issuer、audience、时间、身份与租户，按 CUSTOMER、ADMIN、MCP_CLIENT 控制接口权限。
+- Trace、Monitor、反馈审核、场景评测与 CI 支撑故障定位和回归；Docker/JAR 保持单体部署。
+- 原订单查询、商城政策、退货申请等保留为通用工程与演示能力，闲鱼默认不开放这些流程。下文中的 ORD 示例和商城脚本属于该演示范围。
 
 ## 架构概览
 
@@ -37,7 +30,15 @@ Smart CS Agent 是一个面向电商客服场景的 Java Agent 项目，基于 S
 flowchart TD
     Client["Browser / API Client"] --> Security["Spring Security + JWT/RBAC"]
     Security --> Chat["ChatApiController"]
-    Chat --> Agent["CustomerServiceAgent"]
+    Xianyu["闲鱼 WebSocket"] --> Inbox["Python: SQLite inbox + fixed workers"]
+    Inbox --> Security
+    Chat --> Receipt["MessageReceiptExecutor: Memory/JDBC"]
+    Receipt --> Turn["ChatTurnService"]
+    Turn --> Agent["CustomerServiceAgent"]
+    Seller["卖家 ADMIN 工作台"] --> Security
+    Security --> Profiles["商品草稿 / 发布版本 / 人工接管"]
+    Profiles --> Facts["商品事实 + 卖家授权"]
+    Workflow --> Facts
     Agent --> Session["ConversationStore -> SessionStore Memory/JDBC"]
     Agent --> Runtime["AgentRuntime: loop + turn budget"]
     Skill["Agent Skill Package Registry"] --> Router["WorkflowRouter + Registry"]
@@ -67,6 +68,24 @@ flowchart TD
 - 人工转接创建支持本地/售后 HTTP 双模式；售后结果查询使用独立三态 Port，当前默认明确 unavailable。
 - RAG 默认 `local`，只使用本地字段加权关键词检索；`hybrid` 仅为故障排查增加 Embedding/Qdrant 通道，向量通道失败时关键词结果仍继续。旧值 `embedding-qdrant` 暂作为 `hybrid` 兼容别名。
 - 先做稳定、可解释的规则评测，再补 LLM-as-Judge。
+
+## 闲鱼接口与配置
+
+| 接口 | 用途 | 身份 |
+| --- | --- | --- |
+| `POST /api/xianyu/sessions` | 买家身份注册、商品草稿与现势事实初始化 | 侧车服务令牌 |
+| `POST /api/chat/send` | 买家消息；侧车传入稳定 `messageId` | 买家 JWT |
+| `POST /api/xianyu/items/{itemId}/facts` | 平台价格、库存热更新 | 侧车服务令牌 |
+| `POST /api/xianyu/conversations/seller-messages` | 卖家消息幂等写入历史 | 侧车服务令牌 |
+| `GET /api/auth/me` | 验证工作台身份 | JWT |
+| `GET /api/admin/xianyu/items` | 查看商品、草稿与发布资料 | 闲鱼租户 ADMIN JWT |
+| `PUT /api/admin/xianyu/items/{itemId}/draft` | 保存草稿，携带 `expectedVersion` | 闲鱼租户 ADMIN JWT |
+| `POST /api/admin/xianyu/items/{itemId}/publish` | 审核发布，携带 `expectedVersion` | 闲鱼租户 ADMIN JWT |
+| `GET/POST /api/admin/xianyu/conversations/manual-mode` | 查询、暂停或恢复已建立的会话 | 闲鱼租户 ADMIN JWT |
+
+侧车接入默认关闭，开启时设置 `SMARTCS_XIANYU_ENABLED=true`、私有 `SMARTCS_XIANYU_SERVICE_TOKEN`，与侧车 `CS_AGENT_TOKEN` 一致；JWT 签名密钥另行配置。真实接入使用 `SMARTCS_PERSISTENCE_MODE=jdbc`，保证 Java 消息回执与会话可跨重启保存。商品发布资料与现势覆盖保存在 `SMARTCS_XIANYU_ITEM_SNAPSHOT_DIR`，需挂载持久化目录。
+
+当前支持单个配置卖家租户与单个 Java 实例。浏览器不签发凭据，也不持有侧车服务令牌；真实工作台需由身份系统签发该租户的 ADMIN JWT，在登录页验证后使用。侧车运行及结果未知的处理见 [侧车说明](sidecar/xianyu/README.md)。
 
 ## 主要接口
 
@@ -325,8 +344,13 @@ $env:OPENAI_BASE_URL="your-openai-compatible-base-url"
 $env:OPENAI_MODEL_NAME="your-model-name"
 ```
 
-Demo JWT 签发器默认关闭，部署配置不再携带开发密钥。本地要用调试工作台时显式开启（必须换成私有随机密钥，
-“Demo 开启 + 仓库公开开发密钥”会直接启动失败）：
+所有启动方式（IDE、JAR、Maven、Compose）都必须配置至少 32 字节的私有随机 JWT 密钥；缺失、过短或使用仓库公开的开发密钥时拒绝启动，与 Demo 签发器是否开启无关。先生成并设置密钥，例如 macOS/Linux：
+
+```bash
+export SMARTCS_SECURITY_JWT_SECRET="$(openssl rand -base64 48)"
+```
+
+Demo JWT 签发器默认关闭。本地要用调试工作台时再显式开启，Windows/PowerShell 可这样配置：
 
 ```powershell
 $env:SMARTCS_SECURITY_DEMO_ISSUER_ENABLED="true"
@@ -335,14 +359,14 @@ $env:SMARTCS_SECURITY_AUDIENCE="smart-cs-api"
 $env:SMARTCS_SECURITY_JWT_SECRET="<openssl rand -base64 48 生成的私有随机值>"
 ```
 
-Docker 部署时 `SMARTCS_SECURITY_JWT_SECRET` 为必填项（缺失拒绝启动）；本地演示也可叠加
-`docker-compose.demo.yml` 只开启 Demo 签发。
+本地 macOS/Linux 工作台还需要 `export SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=true`。
+Docker 部署时须先替换 `.env.example` 中的密钥占位值；本地演示可叠加 `docker-compose.demo.yml` 开启 Demo 签发。
 
 当前 HS256 方案是单体学习基线；跨服务生产架构建议改为独立 IdP 的 RS256/ES256，并让业务服务只
 持有验证公钥。完整角色矩阵与 MCP 服务身份边界见
 [JWT 统一认证与角色权限说明](docs/客服Agent/客服Agent-48-JWT统一认证与角色权限说明.md)。
 
-启动项目：
+启动项目（macOS/Linux 使用 `./mvnw spring-boot:run`）：
 
 ```powershell
 .\mvnw.cmd spring-boot:run
@@ -353,6 +377,8 @@ Docker 部署时 `SMARTCS_SECURITY_JWT_SECRET` 为必填项（缺失拒绝启动
 ```text
 http://localhost:8080
 ```
+
+基线 Function Calling 对照实验默认关闭，不注册 `/api/chat/baseline/send` 或相关 Bean。需要实验时，在独立进程中设置 `SMARTCS_EVAL_BASELINE_ENABLED=true`，并使用 `SMARTCS_PERSISTENCE_MODE=memory`、`SMARTCS_CAPABILITY_PROVIDER_MODE=local`、`SMARTCS_HANDOFF_MODE=memory`。混用 JDBC、远程 MCP 或售后 HTTP 模式会拒绝启动；基线历史同样按租户、用户和会话隔离。实验中的无确认工具调用只用于测量基线行为。
 
 使用 Docker Compose 启动完整依赖时，可复制 `.env.example` 后执行：
 
@@ -467,7 +493,7 @@ $env:SMARTCS_HANDOFF_RECOVERY_ENABLED="false"
 mvn "-Dmaven.repo.local=.m2\repository" test
 ```
 
-GitHub Actions 会在 push 或 Pull Request 时自动运行 Maven 测试，作为项目的基础质量门禁。CI 详情见 [客服Agent-27-CI质量门禁设计.md](docs/客服Agent/客服Agent-27-CI质量门禁设计.md)。
+GitHub Actions 会在 push 或 Pull Request 时运行 Maven 测试、前端类型检查/测试/构建、JAR 资源检查，以及独立 Python 3.13 job 的闲鱼侧车离线测试。侧车测试使用本地 mock 服务和临时状态文件，无需平台 Cookie、模型或 Java 服务。CI 详情见 [客服Agent-27-CI质量门禁设计.md](docs/客服Agent/客服Agent-27-CI质量门禁设计.md)。
 
 测试运行后，五类评测会自动输出 JSON 指标报告到：
 
@@ -524,7 +550,7 @@ OPENAI_MAX_RETRIES=1
 SMARTCS_AGENT_TURN_TIMEOUT_MS=30000
 SMARTCS_LLM_EXECUTION_CALL_TIMEOUT_MS=12000
 SMARTCS_SECURITY_DEMO_ISSUER_ENABLED=true
-SMARTCS_SECURITY_JWT_SECRET=<本地私有随机值，openssl rand -base64 48；仓库公开的开发密钥配 Demo 会拒绝启动>
+SMARTCS_SECURITY_JWT_SECRET=<本地私有随机值，openssl rand -base64 48；任何启动方式都拒绝仓库公开的开发密钥>
 SMARTCS_AGENT_PORT=8080
 ```
 
@@ -596,7 +622,7 @@ Phase 9 清理后的最终复验证据见
 - Agent 链路回复评测：3 条。
 - LLM-as-Judge 评测：3 条。
 
-最近一次 `clean test` 通过 492 个测试用例（0 失败、0 错误、0 跳过）。本轮 RAG 测试使用 Fake Embedding/Fake VectorStore，不代表真实 Qdrant 集成验证；真实 MySQL IT 和外部 Qdrant 均不包含在默认测试中。
+2026-10-07 默认后端测试实测 722 项：721 通过、1 跳过，0 失败、0 错误；跳过的是默认关闭的真实模型对照用例。前端 10 项测试和 TypeScript 检查通过，侧车 26 项离线测试通过。RAG 测试使用 Fake Embedding/Fake VectorStore，不代表真实 Qdrant 集成验证；真实 MySQL IT 和外部 Qdrant 均不包含在此次验证中。此次修复与回归范围见 [项目改进记录](docs/项目改进记录-简历方向-2026-10-07.md)。
 评测详情见 [客服Agent-08-评测报告.md](docs/客服Agent/客服Agent-08-评测报告.md)。
 
 ## 文档
@@ -664,21 +690,10 @@ Phase 9 清理后的最终复验证据见
 - [Phase 9 Maven Modules 决策与包边界说明](docs/客服Agent/客服Agent-72-Phase9MavenModules决策与包边界说明.md)
 - [Phase 9 最终验收与架构改造完成说明](docs/客服Agent/客服Agent-73-Phase9最终验收与架构改造完成说明.md)
 - [客服知识库 RAG 架构改造](docs/客服Agent/客服Agent-74-客服知识库RAG架构改造.md)
+- [简历方向项目改进记录（2026-10-07）](docs/项目改进记录-简历方向-2026-10-07.md)
 
 ## 简历表达参考
 
-智能客服 Agent：基于 Spring Boot + LangChain4j 实现电商客服 Agent，采用 Agent Skill Package、Workflow、Runtime、Capability Gateway 分层架构，支持多轮任务状态、MCP/JSON-RPC 能力调用、JWT 认证与 RBAC、RAG 知识库、Qdrant 向量检索、Agent Trace、Monitor 反馈闭环、LLM-as-Judge、数据库持久化和售后工单平台联调，提升客服场景下大模型应用的可控性、可观测性和可验证性。
+项目名建议为 **Smart CS Agent｜闲鱼卖家智能客服 Agent**。项目描述围绕真实消息接入、授权议价、商品事实与知识隔离、卖家协作展开；涉及商城退货的工程能力作为可选素材。
 
-可展开描述：
-
-- 设计 Agent Skill Package / Workflow / Runtime / Capability 分层架构，将指令与知识、任务状态机、通用执行循环和原子业务能力解耦，支持订单查询、商品咨询、退货申请、政策问答和人工转接等客服场景。
-- 实现多轮会话状态管理，使用 `ConversationState` 保存任务槽位、短期消息窗口和摘要记忆，支持退货申请等跨轮槽位填充流程。
-- 设计统一 Capability 契约，以 `CapabilityDefinition`、`CapabilityCall`、`CapabilityResult` 和输入/输出 schema 作为唯一协议；7 个独立 Local Provider 覆盖 9 个能力，Workflow 只依赖 `CapabilityGateway`。
-- 实现 `/mcp` JSON-RPC 风格入口，支持 `initialize`、`tools/list` 和 `tools/call`，REST 与 MCP 共用同一 Capability Catalog，并支持 Local/MCP Provider 配置替换。
-- 接入 Spring Security Resource Server，统一校验 JWT 签名、issuer、audience、有效期、租户和角色；区分 CUSTOMER、ADMIN 与 MCP_CLIENT，并禁止 MCP 服务通过普通元数据冒充最终用户。
-- 实现面向业务类型的 RAG：政策问题走字段加权精确检索、严格 Gate 和确定性 Workflow；故障问题走关键词/Qdrant 混合召回、RRF 去重、规则重排和证据约束 LLM Workflow。`local` 不访问外部服务，`hybrid` 的向量通道可独立降级。
-- 实现轻量 Multi-Agent 路由，将用户消息分配到售前、售后、投诉和通用专家域，并通过 Trace 记录路由原因和置信度。
-- 实现 Repository 层 `memory` / `jdbc` 双模式，默认内存模式保证测试稳定，开启 JDBC 模式后可将用户、商品、订单和退货记录持久化到 MySQL。
-- 实现人工转接 `memory` / `after-sales-http` 双模式，远端结果未知时写入租户隔离的 memory/JDBC Outbox；可选 Worker 使用短租约、原 Idempotency-Key 和有限退避恢复，ADMIN API 提供列表、详情、retry/confirm/reconcile/close 及追加式审计，查询不可用时明确返回 503。
-- 构建 Agent Trace、Monitor 指标和用户反馈闭环，将无用反馈沉淀为 Eval 候选样本，支持审核、导出、半自动合并正式评测集和回归测试。
-- 建设五类离线评测，包括路由评测、知识库召回评测、回复质量规则评测、Agent 链路评测和 LLM-as-Judge 评测，并输出 JSON 报告、历史快照和趋势指标；通过 GitHub Actions 在 push / PR 时自动运行 Maven 测试，形成基础 CI 质量门禁。
+可粘贴的四条项目经历与对应证据见 [秋招项目经历讨论稿](docs/秋招简历-项目经历-讨论稿.md)，文案仍待一起确定。历史真机成功、本次离线回归与待完成的线上复验分别注明，不使用未经核查的业务量或准确率数字。

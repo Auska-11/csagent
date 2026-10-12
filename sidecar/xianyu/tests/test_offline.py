@@ -7,11 +7,13 @@
 import asyncio
 import base64
 import json
+import itertools
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -19,6 +21,7 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from main import CsAgentClient, ConversationPausedError, XianyuLive  # noqa: E402
+from protocol import MessageEvent
 from utils.xianyu_utils import trans_cookies  # noqa: E402
 
 DUMMY_COOKIES = "unb=12345; cookie2=xyz; _m_h5_tk=abc_def"
@@ -154,18 +157,53 @@ class MockWebSocket:
         return [f for f in self.frames if f.get("lwp") == "/r/MessageSend/sendByReceiverScope"]
 
 
+_live_instances = []
+_seller_sequence = itertools.count()
+
+
+async def process_seller_event(live, chat_id, item_id, text):
+    """走生产收消息与控制队列，避免测试保留另一套卖家处理路径。"""
+    message = {"1": {"2": chat_id + "@goofish", "5": int(time.time() * 1000),
+        "fixtureSequence": next(_seller_sequence), "10": {
+            "reminderContent": text, "senderUserId": live.myid,
+            "reminderUrl": f"https://www.goofish.com/item?itemId={item_id}"}}}
+    packet = {"headers": {"mid": "offline-control"}, "body": {"syncPushPackage": {"data": [
+        {"data": base64.b64encode(json.dumps(message).encode()).decode()}]}}}
+    await live.handle_message(packet, MockWebSocket())
+    row = live.journal.claim(-1)
+    if row is None:
+        raise AssertionError("Seller event was not admitted")
+    event = MessageEvent(**json.loads(row["payload"]))
+    result = await live._process_event(event)
+    live.journal.set_status(event.event_id, "SENT")
+    return result
+
+
+class OfflineTestCase(unittest.TestCase):
+    def run(self, result=None):
+        try:
+            return super().run(result)
+        finally:
+            while _live_instances:
+                _live_instances.pop().journal.close()
+
+
 def make_live():
-    return XianyuLive(DUMMY_COOKIES)
+    # 不继承用户本地 BRIDGE 配置，离线测试只连接下面的本地 mock 服务。
+    with patch.dict("os.environ", {"SIDECAR_MODE": "ECHO"}):
+        live = XianyuLive(DUMMY_COOKIES)
+        _live_instances.append(live)
+        return live
 
 
-class TestUpstreamUtils(unittest.TestCase):
+class TestUpstreamUtils(OfflineTestCase):
     def test_trans_cookies(self):
         cookies = trans_cookies(DUMMY_COOKIES)
         self.assertEqual(cookies["unb"], "12345")
         self.assertEqual(cookies["cookie2"], "xyz")
 
 
-class TestEchoMode(unittest.TestCase):
+class TestEchoMode(OfflineTestCase):
     def test_compose_reply_echo(self):
         live = make_live()
         reply, handoff = asyncio.run(live.compose_reply("66001", "90111", "蓝牙耳机还在吗"))
@@ -188,7 +226,7 @@ class TestEchoMode(unittest.TestCase):
         self.assertEqual(text, {"contentType": 1, "text": {"text": "你好"}})
 
 
-class TestManualMode(unittest.TestCase):
+class TestManualMode(OfflineTestCase):
     def test_toggle_and_timeout(self):
         live = make_live()
         self.assertFalse(live.is_manual_mode("70001"))
@@ -201,7 +239,7 @@ class TestManualMode(unittest.TestCase):
         self.assertEqual(live.toggle_manual_mode("70001"), "auto")
 
 
-class TestPaceReply(unittest.TestCase):
+class TestPaceReply(OfflineTestCase):
     def test_min_interval(self):
         live = make_live()
         live.reply_min_interval = 0.3
@@ -212,7 +250,7 @@ class TestPaceReply(unittest.TestCase):
         self.assertGreaterEqual(elapsed, 0.28)
 
 
-class TestItemSnapshot(unittest.TestCase):
+class TestItemSnapshot(OfflineTestCase):
     def test_build_item_description(self):
         live = make_live()
         snapshot = json.loads(live.build_item_description({
@@ -226,8 +264,18 @@ class TestItemSnapshot(unittest.TestCase):
         self.assertEqual(snapshot["price_range"], "¥29.0")
         self.assertEqual(snapshot["sku_details"][0]["spec"], "黑色")
 
+    def test_missing_or_invalid_snapshot_values_cannot_invent_sold_stock_or_zero_price(self):
+        live = make_live()
+        for values in ({}, {"quantity": -1, "soldPrice": "invalid"}, {"quantity": None, "soldPrice": float("nan")}):
+            snapshot = json.loads(live.build_item_description({"title": "耳机", **values}))
+            self.assertIsNone(snapshot["total_stock"])
+            self.assertIsNone(snapshot["price_range"])
+        sold = json.loads(live.build_item_description({"quantity": 0, "soldPrice": "29.50"}))
+        self.assertEqual(sold["total_stock"], 0)
+        self.assertEqual(sold["price_range"], "¥29.5")
 
-class TestDisclaimer(unittest.TestCase):
+
+class TestDisclaimer(OfflineTestCase):
     def test_disclaimer_once_per_chat(self):
         live = make_live()
         first = live.apply_disclaimer("70001", "耳机有货")
@@ -245,7 +293,7 @@ class TestDisclaimer(unittest.TestCase):
         self.assertEqual(live.apply_disclaimer("70001", "耳机有货"), "耳机有货")
 
 
-class TestHandoffPause(unittest.TestCase):
+class TestHandoffPause(OfflineTestCase):
     def test_bridge_handoff_flag_pauses_auto_reply(self):
         """BRIDGE 模式收到 handoffRequested=true 时应暂停该会话自动回复。"""
         server = start_mock_server()
@@ -273,9 +321,10 @@ class TestHandoffPause(unittest.TestCase):
             self.assertFalse(live.is_manual_mode("70002"))
         finally:
             server.shutdown()
+            server.server_close()
 
 
-class TestCsAgentClient(unittest.TestCase):
+class TestCsAgentClient(OfflineTestCase):
     def setUp(self):
         self.server = start_mock_server()
         host, port = self.server.server_address
@@ -283,6 +332,7 @@ class TestCsAgentClient(unittest.TestCase):
 
     def tearDown(self):
         self.server.shutdown()
+        self.server.server_close()
 
     def test_register_and_chat(self):
         data = self.client.chat("66001", "90111", "在吗", item_snapshot='{"title":"耳机"}')
@@ -315,7 +365,7 @@ class TestCsAgentClient(unittest.TestCase):
             self.client._post("/api/nope", {}, "svc-token")
 
 
-class TestXianyuJavaIntegration(unittest.TestCase):
+class TestXianyuJavaIntegration(OfflineTestCase):
     """BRIDGE 闭环：409 静默对齐、句号经 Java 确认、卖家消息同步、事实推送。"""
 
     def setUp(self):
@@ -329,6 +379,7 @@ class TestXianyuJavaIntegration(unittest.TestCase):
 
     def tearDown(self):
         self.server.shutdown()
+        self.server.server_close()
 
     def test_chat_409_maps_to_silence_and_manual_alignment(self):
         """Java 409（卖家接管）：reply=None + handoff=True，侧车静默并对齐本地人工模式。"""
@@ -354,12 +405,12 @@ class TestXianyuJavaIntegration(unittest.TestCase):
         self.live._chat_buyers[chat_id] = {"buyerId": buyer_id, "itemId": item_id}
 
         # 进入人工：本地先进入，Java 同步成功
-        asyncio.run(self.live.handle_seller_toggle(chat_id, item_id))
+        asyncio.run(process_seller_event(self.live, chat_id, item_id, "。"))
         self.assertTrue(self.live.is_manual_mode(chat_id))
         self.assertTrue(self.server.state["manual_mode"])
 
         # 恢复自动：Java 确认成功 → 本地恢复
-        asyncio.run(self.live.handle_seller_toggle(chat_id, item_id))
+        asyncio.run(process_seller_event(self.live, chat_id, item_id, "。"))
         self.assertFalse(self.live.is_manual_mode(chat_id))
         self.assertFalse(self.server.state["manual_mode"])
 
@@ -373,14 +424,15 @@ class TestXianyuJavaIntegration(unittest.TestCase):
             return original_post(path, payload, token)
 
         self.live.cs_client._post = failing_manual_mode
-        asyncio.run(self.live.handle_seller_toggle(chat_id, item_id))
+        with self.assertRaises(ConnectionError):
+            asyncio.run(process_seller_event(self.live, chat_id, item_id, "。"))
         self.assertTrue(self.live.is_manual_mode(chat_id))  # 回滚：仍人工
 
     def test_seller_message_is_forwarded_to_java_history(self):
         """卖家人工回复同步进 Java 会话历史（买家在闲鱼侧已看到原文）。"""
         chat_id, buyer_id, item_id = "70003", "66002", "90112"
         self.live._chat_buyers[chat_id] = {"buyerId": buyer_id, "itemId": item_id}
-        asyncio.run(self.live.handle_seller_message(chat_id, item_id, "240拿走，已经改好价了"))
+        asyncio.run(process_seller_event(self.live, chat_id, item_id, "240拿走，已经改好价了"))
 
         messages = self.server.state["seller_messages"]
         self.assertEqual(len(messages), 1)
@@ -420,7 +472,7 @@ class TestXianyuJavaIntegration(unittest.TestCase):
             self.live.enter_manual_mode(chat_id)
 
 
-class TestRestartRecovery(unittest.TestCase):
+class TestRestartRecovery(OfflineTestCase):
     """侧车重启恢复（评审三轮问题 2）：映射与人工模式落盘，重启后卖家操作仍同步 Java。"""
 
     def setUp(self):
@@ -432,6 +484,7 @@ class TestRestartRecovery(unittest.TestCase):
 
     def tearDown(self):
         self.server.shutdown()
+        self.server.server_close()
         self.tmp.cleanup()
 
     def _make_bridge_live(self, base_url):
@@ -462,19 +515,19 @@ class TestRestartRecovery(unittest.TestCase):
         self.assertTrue(restarted.is_manual_mode(chat_id))
 
         # 重启后卖家人工回复：仍同步进 Java 历史
-        asyncio.run(restarted.handle_seller_message(chat_id, item_id, "240成交，我已经改好了"))
+        asyncio.run(process_seller_event(restarted, chat_id, item_id, "240成交，我已经改好了"))
         messages = self.server.state["seller_messages"]
         self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0]["buyerId"], buyer_id)
         self.assertEqual(messages[0]["text"], "240成交，我已经改好了")
 
         # 重启后卖家句号（人工→自动）：仍同步 Java 并本地恢复
-        asyncio.run(restarted.handle_seller_toggle(chat_id, item_id))
+        asyncio.run(process_seller_event(restarted, chat_id, item_id, "。"))
         self.assertFalse(restarted.is_manual_mode(chat_id))
         self.assertFalse(self.server.state["manual_mode"])
 
         # 再发一次句号（自动→人工）：方向同样同步 Java
-        asyncio.run(restarted.handle_seller_toggle(chat_id, item_id))
+        asyncio.run(process_seller_event(restarted, chat_id, item_id, "。"))
         self.assertTrue(restarted.is_manual_mode(chat_id))
         self.assertTrue(self.server.state["manual_mode"])
 
@@ -508,14 +561,24 @@ class TestRestartRecovery(unittest.TestCase):
         self.assertTrue(restarted.is_manual_mode(chat_id))
 
     def test_echo_mode_never_writes_state_file(self):
-        """ECHO 模式无 Java 语义，状态切换不得往仓库工作目录写文件。"""
-        echo = make_live()
-        self.assertIsNone(echo.state_file)
-        echo.toggle_manual_mode("70009")
-        self.assertFalse(Path("data/sidecar-state.json").exists())
+        """已有状态文件和空目录下，ECHO 模式都不能创建或覆盖状态。"""
+        for existing in (False, True):
+            with self.subTest(existing=existing), tempfile.TemporaryDirectory() as directory:
+                state_file = Path(directory) / "sidecar-state.json"
+                original = b'{"existing": "bridge state"}'
+                if existing:
+                    state_file.write_bytes(original)
+                with patch.dict("os.environ", {"SIDECAR_STATE_FILE": str(state_file)}):
+                    echo = make_live()
+                    self.assertIsNone(echo.state_file)
+                    echo.toggle_manual_mode("70009")
+                if existing:
+                    self.assertEqual(original, state_file.read_bytes())
+                else:
+                    self.assertFalse(state_file.exists())
 
 
-class TestFactsSyncGuard(unittest.TestCase):
+class TestFactsSyncGuard(OfflineTestCase):
     """事实同步闸门（三轮问题 3 + 四轮加固）：已读到但未同步成功的事实进入
     pending_facts（落盘），TTL 到期、平台读取失败、侧车重启都不丢；期间一律
     暂缓自动报价（含改价——不以"库存大于零"放行），成功同步后恢复。"""
@@ -529,6 +592,7 @@ class TestFactsSyncGuard(unittest.TestCase):
 
     def tearDown(self):
         self.server.shutdown()
+        self.server.server_close()
         self.tmp.cleanup()
 
     def _bridge_live(self):
@@ -608,9 +672,8 @@ class TestFactsSyncGuard(unittest.TestCase):
         self.live.get_item_snapshot("90115")  # 读到售出，推送失败
         self.live.item_cache_ttl = 300
 
-        reply, handoff = asyncio.run(self.live.compose_reply("66001", "90115", "250可以成交"))
-        self.assertIsNone(reply)  # 暂缓：等待卖家/下一轮同步成功
-        self.assertFalse(handoff)
+        with self.assertRaises(ConnectionError):
+            asyncio.run(self.live.compose_reply("66001", "90115", "250可以成交"))
         # 关键断言：根本没有调 /api/chat/send（不按旧库存报价）
         self.assertEqual(len(self._chat_calls()), 0)
 
@@ -639,9 +702,8 @@ class TestFactsSyncGuard(unittest.TestCase):
         self.live.item_cache_ttl = 300
 
         # 买家议价：暂缓——库存>0 不再放行（不能按旧价 ¥290 承诺成交价）
-        reply, handoff = asyncio.run(self.live.compose_reply("66001", "90116", "270可以吗"))
-        self.assertIsNone(reply)
-        self.assertFalse(handoff)
+        with self.assertRaises(ConnectionError):
+            asyncio.run(self.live.compose_reply("66001", "90116", "270可以吗"))
         self.assertEqual(len(self._chat_calls()), 0)
 
         # 推送恢复：买家下一条消息重试成功，自动报价恢复且以新价同步
@@ -668,9 +730,8 @@ class TestFactsSyncGuard(unittest.TestCase):
         self.live.item_cache_ttl = 300
 
         # 闸门重试仍失败：继续拦截（修复前缺失库存默认 1 → 放行，chat 被调用）
-        reply, handoff = asyncio.run(self.live.compose_reply("66001", "90117", "250可以成交"))
-        self.assertIsNone(reply)
-        self.assertFalse(handoff)
+        with self.assertRaises(ConnectionError):
+            asyncio.run(self.live.compose_reply("66001", "90117", "250可以成交"))
         self.assertEqual(len(self._chat_calls()), 0)
 
         # 推送恢复：重试成功解除拦截，回复照常（带已售事实）
@@ -702,9 +763,8 @@ class TestFactsSyncGuard(unittest.TestCase):
         self._flaky_push(fail2, live=restarted)
         self._fake_platform(quantity=1, price=25000, live=restarted)
         restarted.item_cache_ttl = 300
-        reply, handoff = asyncio.run(restarted.compose_reply("66001", "90118", "260出吗"))
-        self.assertIsNone(reply)
-        self.assertFalse(handoff)
+        with self.assertRaises(ConnectionError):
+            asyncio.run(restarted.compose_reply("66001", "90118", "260出吗"))
         self.assertEqual(len(self._chat_calls()), 0)
 
         # 推送恢复：下一条消息重试成功，自动报价恢复
@@ -719,7 +779,7 @@ if __name__ == "__main__":
     unittest.main(verbosity=2)
 
 
-class TestImpersonationFallback(unittest.TestCase):
+class TestImpersonationFallback(OfflineTestCase):
     """TLS 指纹伪装改造（2026-09-09）的回归测试：不触网。
 
     阿里 SM 风控按 TLS 指纹拦截 Python requests，XianyuApis 会话须优先用

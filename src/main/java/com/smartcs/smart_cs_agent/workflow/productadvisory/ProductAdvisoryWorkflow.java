@@ -472,9 +472,9 @@ public class ProductAdvisoryWorkflow implements AgentWorkflow {
             answer.append(i + 1).append(". ")
                     .append(safeText(product.getName(), "未命名商品"))
                     .append("（").append(safeText(product.getProductId(), "无编号")).append("）")
-                    .append("\n   价格：").append(product.getPrice()).append(" 元")
+                    .append("\n   价格：").append(product.displayPrice())
                     .append(" | 库存：")
-                    .append(product.isInStock() ? product.getStock() + " 件" : "暂时无货");
+                    .append(product.displayStock());
             if (!product.getDescription().isBlank()) {
                 answer.append("\n   特点：").append(product.getDescription());
             }
@@ -519,7 +519,7 @@ public class ProductAdvisoryWorkflow implements AgentWorkflow {
 
     private String latestProductPreference(TurnContext context) {
         String userId = context.getRequest().getUserId();
-        UserMemorySnapshot snapshot = userMemoryStore.getSnapshot(userId);
+        UserMemorySnapshot snapshot = userMemoryStore.getSnapshot(context.getRequest().getTenantId(), userId);
         if (!snapshot.hasProductPreferences()) {
             return null;
         }

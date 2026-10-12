@@ -1,0 +1,15 @@
+id: xianyu-trade
+version: 1.0.0
+description: 闲鱼交易安排和卖家确认，避免套用商城订单或退货接口
+workflow: xianyu_trade
+priority: 175
+triggers:
+  - 什么时候发货
+  - 带哪些配件
+  - 支持自提吗
+  - 想申请退货
+allowed_capabilities:
+  - handoff.request
+risk_level: side_effect
+confirmation_policy: seller-authorized-only
+prompt: SKILL.md

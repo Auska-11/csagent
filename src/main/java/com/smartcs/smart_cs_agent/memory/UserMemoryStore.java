@@ -25,10 +25,10 @@ import java.util.Map;
 public class UserMemoryStore {
 
     /**
-     * userId -> 用户长期记忆，accessOrder=true 表示读取或写入后会移动到末尾。
+     * tenantId + userId -> 用户长期记忆，accessOrder=true 表示读取或写入后会移动到末尾。
      * 达到 maxUsers 时，迭代器最前面的用户就是最久未使用者。
      */
-    private final Map<String, MutableUserMemory> memories = new LinkedHashMap<>(16, 0.75f, true);
+    private final Map<UserMemoryKey, MutableUserMemory> memories = new LinkedHashMap<>(16, 0.75f, true);
 
     private final long preferenceTtlMs;
     private final int maxUsers;
@@ -64,8 +64,8 @@ public class UserMemoryStore {
      *
      * @return true 表示新增了偏好；false 表示重复偏好，或输入因为空/敏感信息被拒绝
      */
-    public boolean rememberProductPreference(String userId, String preference) {
-        return rememberProductPreferenceSafely(userId, preference).added();
+    public boolean rememberProductPreference(String tenantId, String userId, String preference) {
+        return rememberProductPreferenceSafely(tenantId, userId, preference).added();
     }
 
     /**
@@ -75,12 +75,14 @@ public class UserMemoryStore {
      * preference 写进 Trace、任务状态或回复。</p>
      */
     public synchronized UserMemoryWriteResult rememberProductPreferenceSafely(
+            String tenantId,
             String userId,
             String preference) {
         String normalizedUserId = normalizeUserId(userId);
         if (normalizedUserId == null || preference == null || preference.isBlank()) {
             return UserMemoryWriteResult.rejected();
         }
+        UserMemoryKey key = new UserMemoryKey(tenantId, normalizedUserId);
 
         String normalizedPreference = SensitiveTextRedactor.normalizeSingleLine(preference);
         boolean sensitiveContentWasRedacted = SensitiveTextRedactor.containsRedactionMarker(
@@ -99,11 +101,11 @@ public class UserMemoryStore {
 
         long now = clock.millis();
         purgeExpiredUsers(now);
-        MutableUserMemory memory = memories.get(normalizedUserId);
+        MutableUserMemory memory = memories.get(key);
         if (memory == null) {
             evictOldestUserIfFull();
             memory = new MutableUserMemory(normalizedUserId);
-            memories.put(normalizedUserId, memory);
+            memories.put(key, memory);
         }
 
         boolean added = memory.remember(
@@ -120,20 +122,21 @@ public class UserMemoryStore {
      *
      * 即使用户还没有长期记忆，也返回一个空快照，避免调用方到处判空。
      */
-    public synchronized UserMemorySnapshot getSnapshot(String userId) {
+    public synchronized UserMemorySnapshot getSnapshot(String tenantId, String userId) {
         String normalizedUserId = normalizeUserId(userId);
         if (normalizedUserId == null) {
             return emptySnapshot(userId);
         }
 
-        MutableUserMemory memory = memories.get(normalizedUserId);
+        UserMemoryKey key = new UserMemoryKey(tenantId, normalizedUserId);
+        MutableUserMemory memory = memories.get(key);
         if (memory == null) {
             return emptySnapshot(normalizedUserId);
         }
 
         memory.purgeExpired(clock.millis(), preferenceTtlMs);
         if (memory.isEmpty()) {
-            memories.remove(normalizedUserId);
+            memories.remove(key);
             return emptySnapshot(normalizedUserId);
         }
         return memory.snapshot();
@@ -144,16 +147,16 @@ public class UserMemoryStore {
      *
      * 第一版先用于测试和调试；后续如果前端需要“清除记忆”按钮，可以直接复用。
      */
-    public synchronized boolean clear(String userId) {
+    public synchronized boolean clear(String tenantId, String userId) {
         String normalizedUserId = normalizeUserId(userId);
         if (normalizedUserId == null) {
             return false;
         }
-        return memories.remove(normalizedUserId) != null;
+        return memories.remove(new UserMemoryKey(tenantId, normalizedUserId)) != null;
     }
 
     private void purgeExpiredUsers(long now) {
-        Iterator<Map.Entry<String, MutableUserMemory>> iterator = memories.entrySet().iterator();
+        Iterator<Map.Entry<UserMemoryKey, MutableUserMemory>> iterator = memories.entrySet().iterator();
         while (iterator.hasNext()) {
             MutableUserMemory memory = iterator.next().getValue();
             memory.purgeExpired(now, preferenceTtlMs);
@@ -167,7 +170,7 @@ public class UserMemoryStore {
         if (memories.size() < maxUsers) {
             return;
         }
-        Iterator<String> iterator = memories.keySet().iterator();
+        Iterator<UserMemoryKey> iterator = memories.keySet().iterator();
         if (iterator.hasNext()) {
             iterator.next();
             iterator.remove();

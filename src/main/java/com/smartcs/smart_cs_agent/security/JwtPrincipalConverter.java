@@ -29,8 +29,13 @@ public final class JwtPrincipalConverter implements Converter<Jwt, AbstractAuthe
                 .toList();
 
         // credentials 保存 Jwt 只供安全基础设施审计；业务 Controller 只接收 principal。
-        return new UsernamePasswordAuthenticationToken(principal, jwt, authorities);
+        var authentication = new UsernamePasswordAuthenticationToken(principal, jwt, authorities);
+        // Spring erases credentials after authentication. Retain only safe verified identity metadata.
+        authentication.setDetails(new VerifiedIdentityDetails(jwt.getExpiresAt().toEpochMilli()));
+        return authentication;
     }
+
+    public record VerifiedIdentityDetails(long expiresAt) { }
 
     private Set<String> roles(Object rawRoles) {
         LinkedHashSet<String> result = new LinkedHashSet<>();

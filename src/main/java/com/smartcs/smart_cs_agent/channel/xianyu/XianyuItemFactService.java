@@ -3,12 +3,6 @@ package com.smartcs.smart_cs_agent.channel.xianyu;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeSearchProfile;
-import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeSearchRequest;
-import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeSearchResponse;
-import com.smartcs.smart_cs_agent.knowledge.model.KnowledgeType;
-import com.smartcs.smart_cs_agent.knowledge.service.KnowledgeSearchService;
-import com.smartcs.smart_cs_agent.tools.KnowledgeSearchResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -20,60 +14,24 @@ import java.nio.file.Path;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-/**
- * 闲鱼“当前商品”事实服务：从会话身份解析 itemId，并从审校入库的商品知识文档
- * （productcategory=xianyu）恢复该商品的结构化事实。
- *
- * <p>这是结构化商品上下文的唯一入口，取代“把商品信息拼进提示词”的做法：</p>
- * <ul>
- *     <li>itemId 来自 conversationId（{@code xianyu_{buyerId}_{itemId}}），由侧车 X2 会话
- *         注册生成、买家 JWT 无法篡改——平台身份与商品归属不由模型决定。</li>
- *     <li>价格解析为 {@link BigDecimal} 区间并保留“未知”状态：知识文档写“以商品页为准”
- *         或解析失败时绝不能折算成 0 元（旧 XianyuKnowledgeProductCatalog 的已知缺陷）。</li>
- *     <li>成色/功能未测试等实况描述与型号能力是两类事实，调用方（Workflow/Prompt 组装）
- *         拿到的是同一份 ItemFacts，不会交叉污染。</li>
- * </ul>
- *
- * <p>检索按 documentId 精确取回整篇商品文档（标题 + itemId 都是文档关键词，
- * 命中后按 documentId 过滤），不做语义排序——当前商品是确定的，不需要“猜”。</p>
- */
+/** Current item facts: reviewed profiles plus durable live price/stock. All consumers share this source. */
 @Component
 public class XianyuItemFactService {
-
-    static final String PRODUCT_DOC_PREFIX = "product/";
-    static final String PRODUCT_DOC_SUFFIX = ".md";
 
     private static final Pattern CONVERSATION_ITEM_ID =
             Pattern.compile("^xianyu_[A-Za-z0-9_-]{1,64}_([A-Za-z0-9_-]{1,64})$");
 
-    private static final Pattern PRICE_RANGE_PATTERN = Pattern.compile(
-            "价格[:：]\\s*¥?\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(?:[-–~到]\\s*¥?\\s*([0-9]+(?:\\.[0-9]+)?))?");
-    private static final Pattern STOCK_PATTERN = Pattern.compile("库存[:：]\\s*([0-9]+)");
-    private static final Pattern ITEM_ID_LINE = Pattern.compile("商品\\s*ID[:：]\\s*([0-9]+)");
-
-    private final KnowledgeSearchService knowledgeSearchService;
+    private final XianyuReviewedItemCatalog catalog;
+    private final XianyuItemProfileStore profiles;
     private final XianyuSidecarProperties sidecarProperties;
 
-    /**
-     * 运行时商品事实覆盖层（改价/售出等热更新），优先级高于已入库的知识文档。
-     *
-     * <p>知识索引在启动时一次性构建、没有热加载，商品改价或售出后靠这里对齐现势：
-     * 侧车在会话注册和后续事件里推送覆盖值，价格/库存以最新推送为准；标题、描述、
-     * 成色仍来自审校入库的文档（这些不随交易实时变化）。</p>
-     *
-     * <p>覆盖层是交易语义（“已售出”一旦丢失，重启后就会把无货商品当有货报价），
-     * 因此每次合并后同步落盘到 {@code item-snapshot-dir/overrides/}，服务重启时
-     * 在构造阶段整目录恢复；磁盘读写失败只降级为内存态并记 WARN，绝不阻断交易
-     * 主链路。会话注册携带的快照只做 <em>seed</em>：该商品已有覆盖（含重启恢复的）
-     * 时注册快照不得覆盖新状态。</p>
-     */
+    /** Durable live prices/stock have higher priority than reviewed prose. */
     private final ConcurrentHashMap<String, ItemFactOverride> liveOverrides = new ConcurrentHashMap<>();
 
     private static final Logger LOGGER = LoggerFactory.getLogger(XianyuItemFactService.class);
@@ -83,15 +41,23 @@ public class XianyuItemFactService {
     /** 覆盖层写盘串行化：更新频率是“改价/售出”级别，全局锁没有竞争问题。 */
     private final Object persistLock = new Object();
 
-    public XianyuItemFactService(KnowledgeSearchService knowledgeSearchService,
+    public XianyuItemFactService(XianyuReviewedItemCatalog catalog, XianyuItemProfileStore profiles,
                                  XianyuSidecarProperties sidecarProperties) {
-        this.knowledgeSearchService = knowledgeSearchService;
+        this.catalog = catalog;
+        this.profiles = profiles;
         this.sidecarProperties = sidecarProperties;
         loadPersistedOverrides();
     }
 
     /** 热更新的商品事实：价格与库存均可为 null 表示“本次推送不变”。 */
     public record ItemFactOverride(PriceRange price, Integer stock) {
+        public ItemFactOverride {
+            if (stock != null && stock < 0) throw new IllegalArgumentException("Live stock must be >= 0");
+            if (price != null && (!price.known() || price.min().signum() <= 0
+                    || price.max().compareTo(price.min()) < 0)) {
+                throw new IllegalArgumentException("Invalid live price range");
+            }
+        }
     }
 
     /**
@@ -104,12 +70,11 @@ public class XianyuItemFactService {
         }
         String key = itemId.trim();
         synchronized (persistLock) {
-            ItemFactOverride merged = liveOverrides.compute(key, (ignored, current) -> {
-                PriceRange nextPrice = price != null ? price : current == null ? null : current.price();
-                Integer nextStock = stock != null ? stock : current == null ? null : current.stock();
-                return new ItemFactOverride(nextPrice, nextStock);
-            });
+            ItemFactOverride current = liveOverrides.get(key);
+            ItemFactOverride merged = new ItemFactOverride(price != null ? price : current == null ? null : current.price(),
+                    stock != null ? stock : current == null ? null : current.stock());
             persistOverride(key, merged);
+            liveOverrides.put(key, merged);
         }
     }
 
@@ -128,8 +93,8 @@ public class XianyuItemFactService {
             if (liveOverrides.containsKey(key)) {
                 return false;
             }
-            liveOverrides.put(key, new ItemFactOverride(price, stock));
             persistOverride(key, new ItemFactOverride(price, stock));
+            liveOverrides.put(key, new ItemFactOverride(price, stock));
             return true;
         }
     }
@@ -183,172 +148,42 @@ public class XianyuItemFactService {
             "\\s*¥?\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(?:[-–~到]\\s*¥?\\s*([0-9]+(?:\\.[0-9]+)?))?\\s*");
 
     /**
-     * 恢复当前商品事实。知识文档未入库（快照草稿还在人工审校）时返回 empty，
-     * 调用方应按“商品信息暂未同步”处理，而不是编造。
+     * 读取审核资料并合并平台现势价格与库存。未审核的描述不参与回答，未知字段保持未知。
      */
     public Optional<ItemFacts> itemFacts(String itemId) {
-        if (itemId == null || itemId.isBlank()) {
-            return Optional.empty();
+        if (itemId == null || itemId.isBlank()) return Optional.empty();
+        String id = itemId.trim();
+        ItemFacts base = profiles.published(id).map(profile -> profile.toFacts(id))
+                .or(() -> catalog.find(id)).orElse(null);
+        ItemFactOverride live = liveOverrides.get(id);
+        if (base == null && live == null) return Optional.empty();
+        if (base == null) base = new ItemFacts(id, "", PriceRange.unknown(), -1, "", "");
+        ItemFacts imported = catalog.find(id).orElse(null);
+        if (imported != null && !base.price().known()) {
+            base = new ItemFacts(id, base.title(), imported.price(), imported.stock(), base.description(), base.condition(),
+                    base.productCategory(), base.productModel(), base.accessories());
         }
-        String trimmedItemId = itemId.trim();
-        String documentId = PRODUCT_DOC_PREFIX + trimmedItemId + PRODUCT_DOC_SUFFIX;
-        KnowledgeSearchResponse response = knowledgeSearchService.searchWithDiagnostics(
-                new KnowledgeSearchRequest(
-                        trimmedItemId,
-                        10,
-                        new KnowledgeSearchProfile(KnowledgeType.POLICY, "xianyu", "", "")
-                )
-        );
-        List<KnowledgeSearchResult> hits = response.results().stream()
-                .filter(hit -> documentId.equals(hit.getDocumentId()))
-                .toList();
-        ItemFactOverride override = liveOverrides.get(trimmedItemId);
-        if (hits.isEmpty()) {
-            // 文档未入库（草稿还在人工审校）但已有热更新事实：按覆盖值回答价格/库存，
-            // 标题/描述/成色保持未知，绝不编造。
-            if (override == null) {
-                return Optional.empty();
-            }
-            return Optional.of(new ItemFacts(
-                    trimmedItemId,
-                    "",
-                    override.price() == null ? PriceRange.unknown() : override.price(),
-                    override.stock() == null ? -1 : override.stock(),
-                    "",
-                    ""
-            ));
-        }
-        String title = titleOf(hits);
-        String content = String.join("\n", hits.stream()
-                .map(KnowledgeSearchResult::getSnippet)
-                .toList());
-        return Optional.of(new ItemFacts(
-                trimmedItemId,
-                title,
-                override != null && override.price() != null && override.price().known()
-                        ? override.price()
-                        : parsePrice(content),
-                override != null && override.stock() != null ? override.stock() : parseStock(content),
-                descriptionOf(hits, title),
-                conditionOf(content)
-        ));
+        // Publishing prose cannot roll back live prices or stock, including stock=0.
+        PriceRange price = live != null && live.price() != null ? live.price() : base.price();
+        int stock = live != null && live.stock() != null ? live.stock() : base.stock();
+        return Optional.of(new ItemFacts(id, base.title(), price, stock, base.description(), base.condition(),
+                base.productCategory(), base.productModel(), base.accessories()));
+    }
+
+    public List<ItemFacts> listedItems() {
+        java.util.Set<String> ids = new java.util.TreeSet<>(catalog.itemIds());
+        ids.addAll(profiles.itemIds());
+        ids.addAll(liveOverrides.keySet());
+        return ids.stream().map(this::itemFacts).flatMap(Optional::stream).toList();
+    }
+
+    public boolean isXianyuTenant(String tenantId) {
+        return tenantId != null && sidecarProperties.getTenantId().equalsIgnoreCase(tenantId.trim());
     }
 
     /** 便捷入口：直接按会话 ID 取当前商品事实。 */
     public Optional<ItemFacts> currentItemFacts(String conversationId) {
         return currentItemId(conversationId).flatMap(this::itemFacts);
-    }
-
-    private String titleOf(List<KnowledgeSearchResult> hits) {
-        String chunkTitle = hits.get(0).getTitle();
-        int separator = chunkTitle.indexOf(" / ");
-        return separator > 0 ? chunkTitle.substring(0, separator) : chunkTitle;
-    }
-
-    /**
-     * 价格解析为区间；匹配不到数字（如“以商品页为准”）返回 unknown。
-     * 区间两端相等时折叠为单值。这里绝不返回 0——未知价格宁可不说。
-     */
-    private PriceRange parsePrice(String content) {
-        Matcher matcher = PRICE_RANGE_PATTERN.matcher(content);
-        if (!matcher.find()) {
-            return PriceRange.unknown();
-        }
-        try {
-            BigDecimal min = new BigDecimal(matcher.group(1));
-            BigDecimal max = matcher.group(2) == null ? min : new BigDecimal(matcher.group(2));
-            if (max.compareTo(min) < 0) {
-                BigDecimal swap = min;
-                min = max;
-                max = swap;
-            }
-            return new PriceRange(min, max);
-        } catch (NumberFormatException ignored) {
-            return PriceRange.unknown();
-        }
-    }
-
-    /** 库存解析；文档没有库存数字时返回 -1 表示未知（不能当作“无货”）。 */
-    private int parseStock(String content) {
-        Matcher matcher = STOCK_PATTERN.matcher(content);
-        if (!matcher.find()) {
-            return -1;
-        }
-        try {
-            return Integer.parseInt(matcher.group(1));
-        } catch (NumberFormatException ignored) {
-            return -1;
-        }
-    }
-
-    /** 描述取“商品描述”小节；没有时用非基本信息块的片段兜底。 */
-    private String descriptionOf(List<KnowledgeSearchResult> hits, String title) {
-        for (KnowledgeSearchResult hit : hits) {
-            if (hit.getTitle().contains("/ 商品描述")) {
-                return stripLeadingTitle(hit.getSnippet(), title);
-            }
-        }
-        for (KnowledgeSearchResult hit : hits) {
-            if (!hit.getTitle().contains("/ 基本信息")) {
-                return stripLeadingTitle(hit.getSnippet(), title);
-            }
-        }
-        return "";
-    }
-
-    /**
-     * 成色/实况提取：保留含标记词的<strong>整句原文</strong>。
-     *
-     * <p>型号支持什么功能（如“支持蓝牙连接”）不等于这一件的实际状态，Workflow 生成
-     * 回复时必须把两者区分开。早期实现按标记词拼接（“没有划痕”被压成“划痕”），
-     * 否定关系丢失后等于凭空捏造缺陷；成色描述宁可保留原句，也不能改写语义。</p>
-     */
-    private String conditionOf(String content) {
-        String lower = content.toLowerCase(Locale.ROOT);
-        String[] conditionMarkers = {
-                "功能未测试", "未测试", "测试正常", "功能正常", "一切正常",
-                "使用痕迹", "磨损", "划痕", "瑕疵", "成色", "95新", "99新", "9成新", "几乎全新", "全新",
-                "进过水", "维修过", "拆修", "更换过", "电池健康", "屏幕有"
-        };
-        StringBuilder condition = new StringBuilder();
-        for (String segment : CONDITION_SEGMENT_SPLIT.split(lower)) {
-            String sentence = segment.strip();
-            if (sentence.isEmpty() || !containsAnyMarker(sentence, conditionMarkers)) {
-                continue;
-            }
-            if (!condition.isEmpty()) {
-                condition.append("；");
-            }
-            condition.append(sentence);
-        }
-        return condition.toString();
-    }
-
-    private static boolean containsAnyMarker(String sentence, String[] markers) {
-        for (String marker : markers) {
-            if (sentence.contains(marker.toLowerCase(Locale.ROOT))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** 成色相关句子按标点切分；顿号/分号/句号/换行都视为句子边界。 */
-    private static final Pattern CONDITION_SEGMENT_SPLIT =
-            Pattern.compile("[\\n。；;，,]");
-
-    private String stripLeadingTitle(String description, String title) {
-        if (title == null || title.isBlank() || description == null) {
-            return description == null ? "" : description;
-        }
-        String text = description.strip();
-        if (!text.startsWith(title.strip())) {
-            return text;
-        }
-        String stripped = text.substring(title.strip().length())
-                .replaceFirst("^[\\s，。：:、,.;；\\-—]+", "")
-                .strip();
-        return stripped.isBlank() ? text : stripped;
     }
 
     // --- 覆盖层持久化：重启不回退“已售出/已改价” ---
@@ -357,14 +192,11 @@ public class XianyuItemFactService {
         return Path.of(sidecarProperties.getItemSnapshotDir(), "overrides");
     }
 
-    /** 覆盖值写盘：临时文件 + 原子替换，失败只降级为内存态（WARN），不影响交易链路。 */
+    /** Persist before acknowledgment. A failed write keeps the previous confirmed state. */
     private void persistOverride(String itemId, ItemFactOverride override) {
         Path file = persistableFile(itemId);
         if (file == null) {
-            // itemId 形如 "../etc" 的无法安全落盘：内存覆盖照常生效，重启丢失可接受
-            // （能走到这里的调用方已被 Controller 校验，这是双保险）。
-            LOGGER.warn("闲鱼覆盖层跳过落盘（itemId 非法）: item={}", itemId);
-            return;
+            throw new IllegalArgumentException("Invalid itemId");
         }
         try {
             Files.createDirectories(file.getParent());
@@ -389,11 +221,11 @@ public class XianyuItemFactService {
                 Files.deleteIfExists(temp);
             }
         } catch (IOException exception) {
-            LOGGER.warn("闲鱼覆盖层落盘失败（继续以内存态运行，重启将丢失该项）: item={}", itemId, exception);
+            throw new IllegalStateException("Live item facts could not be saved", exception);
         }
     }
 
-    /** 启动恢复：整目录读取覆盖文件；单个文件损坏只跳过该项，不阻断启动。 */
+    /** 启动恢复；损坏的事实文件阻断启动，避免已售商品回退到旧库存。 */
     private void loadPersistedOverrides() {
         Path dir = overridesDir();
         if (!Files.isDirectory(dir)) {
@@ -405,27 +237,33 @@ public class XianyuItemFactService {
                 try {
                     JsonNode node = JSON.readTree(Files.readString(file));
                     String itemId = node.path("itemId").asText("");
-                    if (itemId.isBlank() || persistableFile(itemId) == null) {
-                        continue;
+                    if (persistableFile(itemId) == null || !file.getFileName().toString().equals(itemId + ".json")) {
+                        throw new IllegalArgumentException("Live facts file does not match its itemId");
                     }
                     PriceRange price = null;
                     JsonNode min = node.path("priceMin");
                     JsonNode max = node.path("priceMax");
                     if (min.isNumber() && max.isNumber()) {
                         price = new PriceRange(min.decimalValue(), max.decimalValue());
+                    } else if (!min.isMissingNode() || !max.isMissingNode()) {
+                        throw new IllegalArgumentException("Invalid persisted price");
                     }
-                    Integer stock = node.path("stock").isNumber() ? node.path("stock").asInt() : null;
+                    JsonNode stockNode = node.path("stock");
+                    if (!stockNode.isMissingNode() && (!stockNode.isIntegralNumber() || !stockNode.canConvertToInt())) {
+                        throw new IllegalArgumentException("Invalid persisted stock");
+                    }
+                    Integer stock = stockNode.isMissingNode() ? null : stockNode.asInt();
                     if (price == null && stock == null) {
-                        continue;
+                        throw new IllegalArgumentException("Empty persisted live facts");
                     }
                     liveOverrides.put(itemId, new ItemFactOverride(price, stock));
                     restored++;
                 } catch (Exception perFile) {
-                    LOGGER.warn("闲鱼覆盖层文件损坏，跳过: file={}", file, perFile);
+                    throw new IllegalStateException("Live item facts could not be restored: " + file.getFileName(), perFile);
                 }
             }
         } catch (IOException exception) {
-            LOGGER.warn("闲鱼覆盖层目录读取失败，按无持久化启动", exception);
+            throw new IllegalStateException("Live item facts directory could not be read", exception);
         }
         if (restored > 0) {
             LOGGER.info("闲鱼商品事实覆盖层已从磁盘恢复 {} 项", restored);
@@ -447,8 +285,14 @@ public class XianyuItemFactService {
             PriceRange price,
             int stock,
             String description,
-            String condition
+            String condition,
+            String productCategory,
+            String productModel,
+            String accessories
     ) {
+        public ItemFacts(String itemId, String title, PriceRange price, int stock, String description, String condition) {
+            this(itemId, title, price, stock, description, condition, "", "", "");
+        }
 
         public boolean stockKnown() {
             return stock >= 0;

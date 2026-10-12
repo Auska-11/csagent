@@ -19,17 +19,20 @@
 | `main.py` | 上游 `main.py` 移植 | 协议骨架保留，大脑替换为转发（改动清单见下） |
 | `requirements.txt` | 上游裁剪 | 移除 `openai`（侧车不调 LLM） |
 | `.env.example` | 重写 | 侧车自有配置项 |
-| `tests/test_offline.py` | 新增 | 离线单元测试（不触网） |
+| `client.py` | 本项目提取 | 从 main 提取 Java HTTP 桥接与买家 JWT 缓存 |
+| `protocol.py` | 本项目新增 | 批量解码、业务事件标识 |
+| `delivery.py` | 本项目新增 | SQLite 消息收件箱与固定并发任务；不保存 Agent 业务状态 |
+| `tests/test_offline.py`、`tests/test_delivery.py` | 本项目新增 | 离线回归（临时数据、本地模拟服务） |
 
 ## 删除的上游组件（及去向）
 
 | 上游组件 | 作用 | 处置 |
 | --- | --- | --- |
-| `XianyuAgent.py` | OpenAI 客户端 + 4 个领域 Agent（classify/price/tech/default）+ 意图路由 | **整体删除**。对应职责由 Java 侧 `WorkflowRouter` + 10 个 Workflow 承担（对照实验已证明差异，见 docs-77） |
+| `XianyuAgent.py` | OpenAI 客户端 + 4 个领域 Agent（classify/price/tech/default）+ 意图路由 | **整体删除**。对应职责由 Java 侧 `WorkflowRouter` 和独立 Workflow 承担 |
 | `prompts/*.txt` | 4 套系统提示词 | **删除**。提示词与话术决策都在 Java 侧 |
-| `context_manager.py` | SQLite 对话历史 + 商品表 + 议价计数 | **删除**。对话状态由 Java `ConversationStore` 管理；议价 v2 再加（docs-76 §5.2 决策） |
+| `context_manager.py` | SQLite 对话历史 + 商品表 + 议价计数 | **删除**。对话状态由 Java `ConversationStore` 管理，议价由 `BargainWorkflow` 管理 |
 | `_safe_filter`（XianyuAgent.py 内） | 站外联系方式关键词过滤（微信/QQ/支付宝/银行卡/线下） | **随大脑删除**。X4 已在 Java 出站侧以 `OutboundSafetyFilter` 重新实现：从平台裸关键词收窄为"联系方式交换意图"正则（如 `加.{0,4}微信`），因为本项目知识库的排查话术会合法提及"微信不提醒"等平台名词，裸关键词会误杀；对所有渠道生效，不只闲鱼 |
-| 阶梯降价/议价策略 | 价格 Agent 的动态 temperature | **删除**（v2 议价 Workflow 时以 Skill Package 形式回到 Java 侧） |
+| 阶梯降价/议价策略 | 价格 Agent 的动态 temperature | **删除**。本项目议价由 Java 按卖家授权规则确定性执行 |
 
 ## 保留的上游逻辑（协议层）
 
@@ -44,9 +47,9 @@ WebSocket 连接与注册（`/reg` + token）、心跳维护与超时重连、to
    ECHO 模式本地回显（X1 验证协议）；BRIDGE 模式经 `CsAgentClient` 转发
    `POST /api/chat/send`，回复原文发回闲鱼。**商品标题/描述不塞进消息正文**
    （防止污染 Java 侧路由与检索评分），改为会话注册时携带 `itemSnapshot`，
-   由 Java 侧生成商品知识文档（docs-76 §5.2 设计点 2）。
+   由 Java 侧生成待审核的商品资料，工作台发布后生效。
 2. **会话映射外移**：上游 `context_manager` 按 chat_id 记 SQLite 历史；
-   本侧车无状态，`conversationId = xianyu_{buyerId}_{itemId}` 直接由
+   业务状态保留在 Java；侧车保存接入、暂停及消息投递状态。`conversationId = xianyu_{buyerId}_{itemId}` 由
    `(buyer, item)` 组合生成，Java 侧幂等注册（buyerId → `USER-XY-{hash}`）。
 3. **商品信息**：上游 SQLite 持久化商品表 → 进程内 dict 缓存；获取失败不
    阻塞回复（上游失败直接 return 丢单）。
@@ -65,7 +68,8 @@ WebSocket 连接与注册（`/reg` + token）、心跳维护与超时重连、to
 9. **订单状态消息**：上游仅记录；本侧车同样只记录并显式注明"人工处理，
    v1 不自动接单"（docs-76 §5.2 设计点 5）。
 10. **日志默认级别** DEBUG → INFO（常驻进程降噪）。
-11. 卖家人工接管开关、心跳/token/重连参数、模拟打字等协议层行为原样保留。
+11. 心跳/token/重连和发送帧保留；卖家接管改为明确的暂停/恢复状态，恢复需 Java 确认。
+12. **2026-10-07 消息执行收口**：整包处理、先入库再应答；固定工作任务代替接收循环等待业务。事件键跨外层包重投保持稳定，Java 回放已完成结果；连接写入结果未知停止补发，接管取消过时回复。旧卖家消息处理分支删除。
 
 ## XianyuApis.py 相对上游的改动
 

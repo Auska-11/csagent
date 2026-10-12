@@ -17,8 +17,11 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../../features/auth/AuthProvider';
 import { Button } from '../ui/Button';
 import { StatePanel } from '../ui/StatePanel';
+import { TokenLogin } from '../../features/auth/TokenLogin';
+import { Dialog } from '../ui/Dialog';
 
 const adminLinks = [
+  { to: '/admin/xianyu', label: '闲鱼卖家', icon: Bot },
   { to: '/admin/monitor', label: '运行监控', icon: LayoutDashboard },
   { to: '/admin/handoffs', label: '人工复核', icon: Headphones },
   { to: '/admin/evals', label: '评测', icon: ClipboardCheck },
@@ -28,6 +31,7 @@ const adminLinks = [
 export function AppShell() {
   const { identities, identity, loading, error, refresh, selectIdentity, hasRole } = useAuth();
   const [navOpen, setNavOpen] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
   const navTriggerRef = useRef<HTMLButtonElement>(null);
   const navCloseRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -56,12 +60,13 @@ export function AppShell() {
     return (
       <main className="auth-state">
         <StatePanel
-          title="无法登录 Demo 工作台"
-          description={`${error ?? '未找到可用身份'}。请确认 Spring Boot 已在 8080 端口运行且 Demo issuer 已开启。`}
+          title="登录工作台"
+          description={error ?? '请使用卖家账号的登录凭据'}
           icon={Activity}
           actionLabel="重新连接"
           onAction={() => void refresh()}
         />
+        <TokenLogin />
       </main>
     );
   }
@@ -71,13 +76,13 @@ export function AppShell() {
       <a className="skip-link" href="#main-content">跳到主内容</a>
       <aside id="primary-navigation" className={`app-rail ${navOpen ? 'app-rail--open' : ''}`} aria-label="主导航">
         <button ref={navCloseRef} className="mobile-nav-close" aria-label="关闭导航" onClick={() => setNavOpen(false)}><X size={20} /></button>
-        <NavLink to="/workspace" className="brand-lockup" title="Smart CS">
+        <NavLink to="/" className="brand-lockup" title="Smart CS">
           <span className="brand-mark"><Sparkles size={21} /></span>
           <span className="brand-copy"><strong>Smart CS</strong><small>Agent Console</small></span>
         </NavLink>
         <nav className="rail-nav">
           <NavLink to="/workspace" onClick={() => setNavOpen(false)} className={({ isActive }) => `rail-link ${isActive ? 'active' : ''}`}>
-            <Bot size={20} /><span>工作台</span>
+            <Bot size={20} /><span>对话调试</span>
           </NavLink>
           {hasRole('ADMIN')
             ? adminLinks.map(({ to, label, icon: Icon }) => (
@@ -87,7 +92,7 @@ export function AppShell() {
               ))
             : null}
         </nav>
-        <div className="rail-status" title="当前 Demo 凭据已签发"><span />系统在线</div>
+        <div className="rail-status" title="登录凭据已验证"><span />已登录</div>
       </aside>
 
       <section className="app-main">
@@ -95,13 +100,13 @@ export function AppShell() {
           <button ref={navTriggerRef} className="mobile-nav-trigger" aria-label="打开导航" aria-expanded={navOpen} aria-controls="primary-navigation" onClick={() => setNavOpen(true)}><Menu size={21} /></button>
           <div className="app-header__title">
             <span className="eyebrow">Smart CS Agent</span>
-            <strong>智能客服控制台</strong>
+            <strong>{identity.channel === 'xianyu' ? '闲鱼卖家助手' : '智能客服调试台'}</strong>
           </div>
           <div className="identity-switcher">
             <span className="avatar avatar--small">{identity.name.slice(0, 1).toUpperCase()}</span>
             <div>
               <span>{identity.name}</span>
-              <small>{identity.roles.includes('ADMIN') ? '管理员 · Demo' : '客服访客 · Demo'}</small>
+              <small>{identity.roles.includes('ADMIN') ? '管理员' : '客服访客'}</small>
             </div>
             <ChevronDown size={15} />
             <select
@@ -116,11 +121,13 @@ export function AppShell() {
           <Button variant="ghost" className="refresh-token" icon={<RefreshCw size={15} />} onClick={() => void refresh()}>
             刷新凭据
           </Button>
+          <Button variant="ghost" onClick={() => setLoginOpen(true)}>切换登录</Button>
           <span className="token-expiry"><LogOut size={14} />内存会话</span>
         </header>
         <Outlet />
       </section>
       {navOpen ? <button className="nav-backdrop" aria-label="关闭导航" onClick={() => setNavOpen(false)} /> : null}
+      <Dialog open={loginOpen} title="切换登录凭据" onClose={() => setLoginOpen(false)}><TokenLogin onSuccess={() => setLoginOpen(false)} /></Dialog>
     </div>
   );
 }

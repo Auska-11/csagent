@@ -1,6 +1,8 @@
 package com.smartcs.smart_cs_agent.eval.baseline;
 
 import dev.langchain4j.data.message.ChatMessage;
+import com.smartcs.smart_cs_agent.agent.context.ConversationKey;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -19,25 +21,26 @@ import java.util.concurrent.ConcurrentHashMap;
  * 与 ConversationStore 的定位一致，不引入外部依赖。</p>
  */
 @Component
+@ConditionalOnProperty(name = "smartcs.eval.baseline.enabled", havingValue = "true")
 public class BaselineConversationStore {
 
     private static final int MAX_HISTORY_MESSAGES = 400;
 
-    private final Map<String, List<ChatMessage>> conversations = new ConcurrentHashMap<>();
+    private final Map<ConversationKey, List<ChatMessage>> conversations = new ConcurrentHashMap<>();
 
     /** 取出指定会话的完整历史（可能为空列表）；返回的是可变副本，供本轮追加后写回。 */
-    public synchronized List<ChatMessage> historyOf(String conversationId) {
-        return new ArrayList<>(conversations.getOrDefault(conversationId, List.of()));
+    public synchronized List<ChatMessage> historyOf(ConversationKey key) {
+        return new ArrayList<>(conversations.getOrDefault(key, List.of()));
     }
 
     /** 追加一条消息并写回；超过上限时按 FIFO 丢弃最早的消息（防内存无限增长的最低护栏）。 */
-    public synchronized void append(String conversationId, ChatMessage message) {
+    public synchronized void append(ConversationKey key, ChatMessage message) {
         List<ChatMessage> history = new ArrayList<>(
-                conversations.getOrDefault(conversationId, List.of()));
+                conversations.getOrDefault(key, List.of()));
         history.add(message);
         if (history.size() > MAX_HISTORY_MESSAGES) {
             history = new ArrayList<>(history.subList(history.size() - MAX_HISTORY_MESSAGES, history.size()));
         }
-        conversations.put(conversationId, history);
+        conversations.put(key, history);
     }
 }

@@ -15,6 +15,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 必须放行，否则双层转人工的暂停标志位永不触发（设计点 4）；其他租户不受影响。</p>
  */
 class CapabilityTenantPolicyTest {
+    @Test
+    void namedChannelAllowlistFollowsConfiguredTenantAndClosesNewCapabilities() {
+        var policy = new CapabilityTenantPolicy();
+        var rules = new CapabilityTenantPolicy.TenantRules();
+        rules.setTenantId("seller-tenant");
+        rules.setAllowedCapabilities(Set.of("knowledge.search", "handoff.request"));
+        policy.getTenantPolicies().put("xianyu", rules);
+        assertFalse(policy.isBlocked("SELLER-TENANT", "knowledge_search"));
+        assertTrue(policy.isBlocked("seller-tenant", "return.apply"));
+        assertTrue(policy.isBlocked("seller-tenant", "future.new-capability"));
+        assertFalse(policy.isBlocked("default", "return.apply"));
+        rules.setAllowedCapabilities(Set.of());
+        assertTrue(policy.isBlocked("seller-tenant", "knowledge.search"));
+    }
 
     @Test
     void shouldBlockReturnApplyForXianyuTenantOnly() {

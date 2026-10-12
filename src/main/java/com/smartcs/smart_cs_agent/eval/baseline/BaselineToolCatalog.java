@@ -6,6 +6,7 @@ import dev.langchain4j.agent.tool.ToolParameters;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -25,6 +26,7 @@ import java.util.Map;
  * 并在构造时校验映射不产生碰撞（碰撞即启动失败，静默错配比失败更糟）。</p>
  */
 @Component
+@ConditionalOnProperty(name = "smartcs.eval.baseline.enabled", havingValue = "true")
 public class BaselineToolCatalog {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(BaselineToolCatalog.class);

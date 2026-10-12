@@ -140,13 +140,15 @@ public class HttpSecurityConfiguration {
                         .requestMatchers(HttpMethod.POST, "/api/integrations/v1/sla-results").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/monitor/feedback")
                         .hasAnyRole(SecurityRoles.CUSTOMER, SecurityRoles.ADMIN)
+                        .requestMatchers("/api/auth/me").authenticated()
                         .requestMatchers("/api/chat/**")
                         .hasAnyRole(SecurityRoles.CUSTOMER, SecurityRoles.ADMIN)
                         .requestMatchers(
                                 "/api/admin/pending-handoffs",
                                 "/api/admin/pending-handoffs/**",
                                 "/api/admin/sla-results",
-                                "/api/admin/sla-results/**"
+                                "/api/admin/sla-results/**",
+                                "/api/admin/xianyu/**"
                         ).hasRole(SecurityRoles.ADMIN)
                         .requestMatchers("/api/monitor/**", "/api/eval/**", "/api/tools/**", "/api/demo/**")
                         .hasRole(SecurityRoles.ADMIN)

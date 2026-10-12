@@ -242,7 +242,7 @@ class ChatApiControllerTest {
         CustomerServiceAgent agent = mock(CustomerServiceAgent.class);
         MonitorService monitorService = mock(MonitorService.class);
         UserMemoryStore userMemoryStore = new UserMemoryStore();
-        userMemoryStore.rememberProductPreference("USER-001", "蓝牙耳机");
+        userMemoryStore.rememberProductPreference("default", "USER-001", "蓝牙耳机");
         ChatApiController controller = new ChatApiController(
                 agent,
                 monitorService,
@@ -281,7 +281,7 @@ class ChatApiControllerTest {
         CustomerServiceAgent agent = mock(CustomerServiceAgent.class);
         MonitorService monitorService = mock(MonitorService.class);
         UserMemoryStore userMemoryStore = new UserMemoryStore();
-        userMemoryStore.rememberProductPreference("USER-001", "蓝牙耳机");
+        userMemoryStore.rememberProductPreference("default", "USER-001", "蓝牙耳机");
         ChatApiController controller = new ChatApiController(
                 agent,
                 monitorService,
@@ -294,7 +294,7 @@ class ChatApiControllerTest {
         assertEquals("user", response.getScope());
         assertEquals("USER-001", response.getTargetId());
         assertEquals(true, response.isCleared());
-        assertEquals(0, userMemoryStore.getSnapshot("USER-001").getProductPreferences().size());
+        assertEquals(0, userMemoryStore.getSnapshot("default", "USER-001").getProductPreferences().size());
     }
 
     @Test
